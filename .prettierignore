@@ -1,0 +1,7 @@
+out
+dist
+src/renderer/public
+pnpm-lock.yaml
+LICENSE.md
+tsconfig.json
+tsconfig.*.json

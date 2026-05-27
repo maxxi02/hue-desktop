@@ -1,0 +1,96 @@
+:root {
+  --bg:          #080D1A;
+  /* RGB channels of --bg, so the floating card can paint it at a configurable
+     alpha (--bg-alpha, driven by the windowOpacity setting). */
+  --bg-rgb:      8, 13, 26;
+  --bg-alpha:    0.9;
+  --bg-card:     #111827;
+  --bg-elevated: #1E293B;
+  --border:      rgba(255, 255, 255, 0.08);
+
+  /* Custom easing curves — stronger than the built-in CSS keywords, so motion
+     reads as intentional. ease-out for enter/exit, drawer curve for panels. */
+  --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  --text:        #F1F5F9;
+  --text-muted:  #64748B;
+
+  --green:       #22C55E;
+  --green-glow:  rgba(34,  197, 94,  0.25);
+  --amber:       #F59E0B;
+  --amber-glow:  rgba(245, 158, 11,  0.25);
+  --indigo:      #818CF8;
+  --indigo-glow: rgba(129, 140, 248, 0.25);
+  --blue:        #60A5FA;
+  --blue-glow:   rgba(96,  165, 250, 0.25);
+  --red:         #EF4444;
+  --red-glow:    rgba(239, 68,  68,  0.25);
+}
+
+@keyframes pulse-green {
+  0%, 100% { box-shadow: 0 0 0  0 var(--green-glow), 0 0 20px var(--green-glow); }
+  50%       { box-shadow: 0 0 0 16px transparent,     0 0 40px var(--green-glow); }
+}
+@keyframes pulse-blue {
+  0%, 100% { box-shadow: 0 0 0  0 var(--blue-glow), 0 0 16px var(--blue-glow); }
+  50%       { box-shadow: 0 0 0 10px transparent,    0 0 32px var(--blue-glow); }
+}
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.06); }
+}
+@keyframes dot-bounce {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40%            { opacity: 1;   transform: scale(1); }
+}
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes app-enter {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* Transparent so the chromeless window shows the desktop through the gap
+     around the floating card; the card (.app) paints the visible background. */
+  background: transparent;
+  color: var(--text);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  height: 100vh;
+  user-select: none;
+}
+
+/* Motion sickness: keep opacity/fades, drop position/scale movement. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 120ms !important;
+  }
+}
+
+h1, h2, h3, h4 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  line-height: 1.3;
+}
