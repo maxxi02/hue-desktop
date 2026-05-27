@@ -16,21 +16,22 @@ const ctx = self as unknown as WorkerScope
 // Always pull the model from the HF hub (no local model files bundled).
 env.allowLocalModels = false
 
-// Force single-threaded onnxruntime-web. The app is NOT cross-origin isolated
-// (see main/index.ts), so there's no SharedArrayBuffer and any numThreads > 1
-// would make pthread_create fail and hang. Pinning to 1 keeps inference purely
-// single-threaded — slower than threaded, but it never freezes the UI and works
-// without cross-origin isolation.
+// The wasm fallback must stay single-threaded: the app is NOT cross-origin
+// isolated (see main/index.ts), so there's no SharedArrayBuffer and any
+// numThreads > 1 would make pthread_create fail and hang. WebGPU runs on the GPU
+// and is unaffected by this limit — which is why it's the preferred device below.
 if (env.backends.onnx.wasm) {
   env.backends.onnx.wasm.numThreads = 1
 }
 
 const MODEL_ID = 'Xenova/whisper-base.en'
 
+type Device = 'webgpu' | 'wasm'
+
 type InMessage = { type: 'load' } | { type: 'transcribe'; id: number; audio: Float32Array }
 
 type OutMessage =
-  | { type: 'ready' }
+  | { type: 'ready'; device: Device }
   | { type: 'progress'; data: ProgressInfo }
   | { type: 'result'; id: number; text: string }
   | { type: 'error'; id: number; message: string }
@@ -38,26 +39,49 @@ type OutMessage =
 const post = (msg: OutMessage): void => ctx.postMessage(msg)
 
 let transcriberPromise: Promise<AutomaticSpeechRecognitionPipeline> | null = null
+let activeDevice: Device = 'wasm'
+
+function build(device: Device): Promise<AutomaticSpeechRecognitionPipeline> {
+  // WebGPU runs fp32 on the GPU: parallel (no single-thread cap) and free of the
+  // q4/q8 quantization landmines below, since fp32 has no quantized weights at all.
+  // The wasm fallback keeps the proven q8 path.
+  const dtype = device === 'webgpu' ? 'fp32' : 'q8'
+  return pipeline('automatic-speech-recognition', MODEL_ID, {
+    dtype,
+    device,
+    // Disable graph optimization. The onnxruntime-web build bundled with
+    // transformers v4 runs the QDQ "TransposeDQWeightsForMatMulNBits" pass at
+    // session creation. Whisper's decoder weight-ties embed_tokens to the
+    // output projection, and that pass mis-identifies a tied 8-bit DQ weight as a
+    // 4-bit MatMulNBits candidate, then aborts because an 8-bit weight has no
+    // per-block scale ("Missing required scale ... embed_tokens.weight_merged_0_scale"),
+    // so the session never creates. Only 'disabled' skips that basic-level pass.
+    session_options: { graphOptimizationLevel: 'disabled' },
+    progress_callback: (data: ProgressInfo) => post({ type: 'progress', data })
+  }) as Promise<AutomaticSpeechRecognitionPipeline>
+}
+
+async function createTranscriber(): Promise<AutomaticSpeechRecognitionPipeline> {
+  // Prefer WebGPU. Fall back to single-threaded wasm if there's no GPU adapter or
+  // session creation fails (driver quirks, unsupported hardware).
+  const hasWebGpu = typeof navigator !== 'undefined' && 'gpu' in navigator
+  if (hasWebGpu) {
+    try {
+      const t = await build('webgpu')
+      activeDevice = 'webgpu'
+      return t
+    } catch (err) {
+      console.warn('[whisper] WebGPU init failed, falling back to wasm:', err)
+    }
+  }
+  const t = await build('wasm')
+  activeDevice = 'wasm'
+  return t
+}
 
 function getTranscriber(): Promise<AutomaticSpeechRecognitionPipeline> {
   if (!transcriberPromise) {
-    transcriberPromise = pipeline('automatic-speech-recognition', MODEL_ID, {
-      // Force q8 for EVERY module (a single string applies to all files) and pin
-      // the device so dtype resolution is fully deterministic.
-      dtype: 'q8',
-      device: 'wasm',
-      // Disable graph optimization. The onnxruntime-web build bundled with
-      // transformers v4 runs the QDQ "TransposeDQWeightsForMatMulNBits" pass at
-      // session creation. Whisper's decoder weight-ties embed_tokens to the
-      // output projection, and that pass mis-identifies the tied 8-bit DQ weight
-      // as a 4-bit MatMulNBits candidate, then aborts because an 8-bit weight has
-      // no per-block scale ("Missing required scale ...
-      // embed_tokens.weight_merged_0_scale"), so the session never creates. The
-      // pass runs at the basic optimization level, so only 'disabled' skips it;
-      // the q8 ops then just execute unfused (correct, slightly slower load).
-      session_options: { graphOptimizationLevel: 'disabled' },
-      progress_callback: (data: ProgressInfo) => post({ type: 'progress', data })
-    }) as Promise<AutomaticSpeechRecognitionPipeline>
+    transcriberPromise = createTranscriber()
   }
   return transcriberPromise
 }
@@ -68,7 +92,7 @@ ctx.onmessage = async (e: MessageEvent): Promise<void> => {
   if (msg.type === 'load') {
     try {
       await getTranscriber()
-      post({ type: 'ready' })
+      post({ type: 'ready', device: activeDevice })
     } catch (err) {
       post({ type: 'error', id: -1, message: err instanceof Error ? err.message : String(err) })
     }

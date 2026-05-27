@@ -9,11 +9,11 @@ export interface TranscriptionResult {
 export type ModelLoadState =
   | { status: 'idle' }
   | { status: 'loading'; progress: number; file?: string }
-  | { status: 'ready' }
+  | { status: 'ready'; device?: 'webgpu' | 'wasm' }
   | { status: 'error'; message: string }
 
 type WorkerOut =
-  | { type: 'ready' }
+  | { type: 'ready'; device: 'webgpu' | 'wasm' }
   | { type: 'progress'; data: { status: string; file?: string; progress?: number } }
   | { type: 'result'; id: number; text: string }
   | { type: 'error'; id: number; message: string }
@@ -43,7 +43,8 @@ function getWorker(): Worker {
     const msg = e.data
     switch (msg.type) {
       case 'ready':
-        setLoadState({ status: 'ready' })
+        console.info(`[whisper] on-device model ready on ${msg.device}`)
+        setLoadState({ status: 'ready', device: msg.device })
         break
       case 'progress':
         if (msg.data.status === 'progress') {

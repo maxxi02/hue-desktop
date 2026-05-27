@@ -19,4 +19,13 @@ Question raised: how to make on-device transcribing faster, and is 8 GB RAM enou
 - **WebGPU + base.en is the best local/offline path** — keeps accuracy, big speedup, no cross-origin isolation required.
 - **tiny.en** only as a fallback if the GPU path is flaky.
 
-Nothing implemented yet — this is a decision record pending the user's chosen direction.
+## Implemented (2026-05-27): WebGPU offline path
+`src/renderer/src/workers/whisper.worker.ts` now prefers WebGPU and falls back to wasm:
+- WebGPU device uses `dtype: 'fp32'` (GPU-parallel, no single-thread cap, and fp32 has no quantized weights so it sidesteps the q4/q8 weight-tied-decoder landmines in `onnxruntime_web_gotchas.md`).
+- wasm fallback keeps the proven `dtype: 'q8'`, `numThreads = 1` path. Used when `navigator.gpu` is absent or WebGPU session creation throws.
+- `graphOptimizationLevel: 'disabled'` kept for both.
+- Worker `ready` message now carries `device: 'webgpu' | 'wasm'`; `transcription.ts` logs it (`[whisper] on-device model ready on …`) and exposes it on `ModelLoadState`.
+- First WebGPU run downloads the fp32 decoder (~290MB, larger than q8) — one-time, cached in CacheStorage.
+- NOT yet live-tested on this hardware; needs a full `pnpm dev` restart (clear `out/` + `node_modules/.vite`, worker bundles don't hot-reload).
+
+Cloud (Groq) remains the fastest overall when online; WebGPU is the best offline path.
