@@ -6,3 +6,8 @@ src/renderer/public
 .DS_Store
 .eslintcache
 *.log*
+
+# Obsidian per-machine UI state (track the rest of docs/.obsidian: plugins, templates, graph)
+docs/.obsidian/workspace.json
+docs/.obsidian/workspace-mobile.json
+docs/.obsidian/cache
