@@ -70,13 +70,22 @@ export function useVoiceMode(): UseVoiceMode {
     // A greeting may still be streaming/speaking; stop it so it doesn't overlap.
     cancelGreetingRef.current?.()
     cancelGreetingRef.current = null
-    // Warm up the models so the first turn isn't slow.
-    preloadOnDeviceModel()
-    preloadTtsModel()
 
     const settings = await window.hue.settings.get()
     setMode(settings.hueMode)
     setAudioSource(settings.audioSource)
+
+    // Warm up the models so the first turn isn't slow. In companion mode (a live
+    // call) we deliberately keep both models off the GPU: the call's WebRTC stack
+    // already saturates it, and piling fp32 models on top has exhausted VRAM and
+    // frozen underpowered machines mid-interview.
+    //   - TTS (Kokoro) is SKIPPED entirely: companion replies are text-only
+    //     (VoicePipeline.speakResponses is false), so loading it is pure waste.
+    //   - ASR (Whisper) still runs, but is pinned to the wasm/CPU path so it
+    //     never competes with the call for the GPU.
+    const companion = settings.hueMode === 'companion'
+    preloadOnDeviceModel({ preferWasm: companion })
+    if (!companion) preloadTtsModel()
     const pipeline = new VoicePipeline(settings, {
       onStateChange: setState,
       onUserTranscript: (text, tier, latencyMs) => {

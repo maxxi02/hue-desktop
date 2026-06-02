@@ -28,7 +28,14 @@ const MODEL_ID = 'Xenova/whisper-base.en'
 
 type Device = 'webgpu' | 'wasm'
 
-type InMessage = { type: 'load' } | { type: 'transcribe'; id: number; audio: Float32Array }
+// `preferWasm` forces the single-threaded wasm/CPU path and skips WebGPU. It's
+// set in companion mode (a live call): the call's WebRTC stack is already
+// saturating the GPU, so loading an fp32 model onto the same GPU can exhaust
+// VRAM and trigger a driver reset (TDR) that freezes the whole machine. Keeping
+// ASR on the CPU there leaves the GPU to the call. See useVoiceMode.ts.
+type InMessage =
+  | { type: 'load'; preferWasm?: boolean }
+  | { type: 'transcribe'; id: number; audio: Float32Array }
 
 type OutMessage =
   | { type: 'ready'; device: Device }
@@ -40,6 +47,10 @@ const post = (msg: OutMessage): void => ctx.postMessage(msg)
 
 let transcriberPromise: Promise<AutomaticSpeechRecognitionPipeline> | null = null
 let activeDevice: Device = 'wasm'
+// Which device preference the current transcriberPromise was built for, so a
+// later load with a different preference (e.g. entering a companion call) can
+// tear down the resident model and rebuild on the right device.
+let loadedPreferWasm: boolean | null = null
 
 function build(device: Device): Promise<AutomaticSpeechRecognitionPipeline> {
   // WebGPU runs fp32 on the GPU: parallel (no single-thread cap) and free of the
@@ -61,11 +72,11 @@ function build(device: Device): Promise<AutomaticSpeechRecognitionPipeline> {
   }) as Promise<AutomaticSpeechRecognitionPipeline>
 }
 
-async function createTranscriber(): Promise<AutomaticSpeechRecognitionPipeline> {
-  // Prefer WebGPU. Fall back to single-threaded wasm if there's no GPU adapter or
+async function createTranscriber(preferWasm: boolean): Promise<AutomaticSpeechRecognitionPipeline> {
+  // Prefer WebGPU unless the caller asked to stay on the CPU (companion/live-call
+  // mode). Fall back to single-threaded wasm if there's no usable GPU adapter or
   // session creation fails (driver quirks, unsupported hardware).
-  const hasWebGpu = typeof navigator !== 'undefined' && 'gpu' in navigator
-  if (hasWebGpu) {
+  if (!preferWasm && (await hasUsableWebGpu())) {
     try {
       const t = await build('webgpu')
       activeDevice = 'webgpu'
@@ -79,9 +90,37 @@ async function createTranscriber(): Promise<AutomaticSpeechRecognitionPipeline> 
   return t
 }
 
-function getTranscriber(): Promise<AutomaticSpeechRecognitionPipeline> {
+// `'gpu' in navigator` only tells us the API surface exists — the browser may
+// still hand us no adapter (no GPU, blocked driver, headless boot, software
+// rasterizer). Without calling requestAdapter() we'd push the fp32 model into a
+// non-existent device, which has hung the GPU process on weak/integrated GPUs.
+async function hasUsableWebGpu(): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !('gpu' in navigator)) return false
+  try {
+    const gpu = (navigator as unknown as { gpu: { requestAdapter: () => Promise<unknown> } }).gpu
+    const adapter = await gpu.requestAdapter()
+    return adapter !== null && adapter !== undefined
+  } catch {
+    return false
+  }
+}
+
+function getTranscriber(
+  preferWasm: boolean = loadedPreferWasm ?? false
+): Promise<AutomaticSpeechRecognitionPipeline> {
+  // If a model is already loaded for a different device preference, tear it down
+  // first. This is what frees the fp32 GPU model's VRAM when a companion call
+  // starts after an earlier interviewer session left Whisper resident on WebGPU.
+  if (transcriberPromise && loadedPreferWasm !== preferWasm) {
+    const old = transcriberPromise
+    transcriberPromise = null
+    void old
+      .then((t) => (t as { dispose?: () => Promise<void> }).dispose?.())
+      .catch(() => {})
+  }
   if (!transcriberPromise) {
-    transcriberPromise = createTranscriber()
+    loadedPreferWasm = preferWasm
+    transcriberPromise = createTranscriber(preferWasm)
   }
   return transcriberPromise
 }
@@ -91,7 +130,7 @@ ctx.onmessage = async (e: MessageEvent): Promise<void> => {
 
   if (msg.type === 'load') {
     try {
-      await getTranscriber()
+      await getTranscriber(msg.preferWasm ?? false)
       post({ type: 'ready', device: activeDevice })
     } catch (err) {
       post({ type: 'error', id: -1, message: err instanceof Error ? err.message : String(err) })

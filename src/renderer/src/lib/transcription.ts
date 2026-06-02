@@ -24,6 +24,10 @@ const pending = new Map<number, { resolve: (text: string) => void; reject: (e: E
 
 let loadState: ModelLoadState = { status: 'idle' }
 const loadListeners = new Set<(s: ModelLoadState) => void>()
+// Last device preference we asked the worker to load with (null = never asked).
+// Tracked so a mode change (e.g. interviewer → companion call) re-issues the
+// load and actually moves Whisper off the GPU rather than no-opping on 'ready'.
+let lastPreferWasm: boolean | null = null
 
 function setLoadState(s: ModelLoadState): void {
   loadState = s
@@ -74,12 +78,21 @@ function getWorker(): Worker {
   return worker
 }
 
-/** Kick off the on-device model download/initialisation early (e.g. on app start). */
-export function preloadOnDeviceModel(): void {
-  if (loadState.status === 'idle' || loadState.status === 'error') {
-    setLoadState({ status: 'loading', progress: 0 })
-    getWorker().postMessage({ type: 'load' })
-  }
+/**
+ * Kick off the on-device model download/initialisation early (e.g. on app start).
+ *
+ * `preferWasm` forces the CPU/wasm path and is set in companion mode so Whisper
+ * doesn't compete for the GPU with a live call's video pipeline (a known
+ * machine-freezing crash). Re-issues the load when the preference changes so the
+ * worker can move the model off the GPU even if it was already 'ready' there.
+ */
+export function preloadOnDeviceModel(opts?: { preferWasm?: boolean }): void {
+  const preferWasm = opts?.preferWasm ?? false
+  const changed = lastPreferWasm !== preferWasm
+  lastPreferWasm = preferWasm
+  if (!changed && (loadState.status === 'loading' || loadState.status === 'ready')) return
+  setLoadState({ status: 'loading', progress: 0 })
+  getWorker().postMessage({ type: 'load', preferWasm })
 }
 
 /** On-device tier: Whisper-base.en running locally in a Web Worker. */
