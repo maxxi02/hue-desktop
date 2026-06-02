@@ -4,10 +4,12 @@ import { StreamingTTSQueue } from './streamingTTS'
 import type {
   HueSettings,
   LlmMessage,
+  LlmContentBlock,
   LlmDeltaEvent,
   LlmDoneEvent,
   LlmErrorEvent,
-  ResolvedTier
+  ResolvedTier,
+  ScreenCapture
 } from '@shared/types'
 
 export type PipelineState =
@@ -21,6 +23,8 @@ export type PipelineState =
 export interface PipelineCallbacks {
   onStateChange?: (state: PipelineState) => void
   onUserTranscript?: (text: string, tier: ResolvedTier, latencyMs: number) => void
+  /** Fired when a screen capture has been taken and attached as the user's turn. */
+  onScreenCapture?: (capture: ScreenCapture) => void
   /** Fired as the assistant response streams in (cumulative text). */
   onAssistantText?: (text: string) => void
   onError?: (message: string) => void
@@ -44,12 +48,35 @@ export class VoicePipeline {
   private unsubscribe: Array<() => void> = []
 
   /**
+   * The full getDisplayMedia stream backing system/loopback audio. We hand the
+   * VAD an audio-only stream but must keep this (with its live video track)
+   * referenced for the whole session — Chromium binds the loopback audio to the
+   * desktop-capture session the video track represents, so if that track is
+   * stopped or garbage-collected the audio goes silent. Stopped in stop().
+   */
+  private systemStream: MediaStream | null = null
+
+  /**
+   * Index into `messages` of a screen-capture turn whose image is still attached
+   * and awaiting its first answer. Once Hue replies, the image is stripped (it
+   * would otherwise be re-sent in full on every later turn). null when none pends.
+   */
+  private pendingCaptureIndex: number | null = null
+
+  /**
    * Whether Hue's responses are spoken aloud. True in interviewer mode (Hue asks
    * questions out loud). False in companion mode — the response is a suggested
    * answer shown as text, so speaking it would talk over the user or be heard by
    * the real interviewer.
    */
   private readonly speakResponses: boolean
+
+  /**
+   * Whether the *current* in-flight response should be spoken. Defaults to
+   * speakResponses, but screen-capture answers force it off — they're typically
+   * long/code-heavy and meant to be read, not read aloud.
+   */
+  private currentSpeak = false
 
   constructor(settings: HueSettings, callbacks: PipelineCallbacks = {}) {
     this.settings = settings
@@ -126,17 +153,28 @@ export class VoicePipeline {
   private async getStream(): Promise<MediaStream> {
     if (this.settings.audioSource === 'system') {
       // getDisplayMedia routes to the main-process loopback handler. Chromium
-      // requires a video track to be requested even for audio-only capture, so
-      // we drop the video and keep just the loopback audio. No echo cancellation
-      // here — it's a clean digital tap, not a microphone.
-      const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
-      display.getVideoTracks().forEach((t) => t.stop())
+      // requires a video track to be requested even for audio-only capture. We
+      // ask for a 1fps video track to keep capture cost negligible. No echo
+      // cancellation here — it's a clean digital tap, not a microphone.
+      const display = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 1 },
+        audio: true
+      })
       const audioTracks = display.getAudioTracks()
       if (audioTracks.length === 0) {
+        display.getTracks().forEach((t) => t.stop())
         throw new Error(
           'No system audio was captured. System-audio loopback is supported on Windows; on other platforms use the microphone source.'
         )
       }
+      // The loopback audio is bound to the desktop-capture session that the video
+      // track represents: if that track is stopped — or garbage-collected because
+      // nothing references it — Chromium tears the session down and the audio goes
+      // silent, so the VAD hears nothing (the orb never reacts). Keep the FULL
+      // stream (live video track included) referenced for the whole session, and
+      // hand the VAD only an audio-only stream so its MediaStreamSource gets a
+      // clean tap. systemStream is stopped in stop().
+      this.systemStream = display
       return new MediaStream(audioTracks)
     }
     // Microphone. Echo cancellation keeps Hue's own spoken audio (interviewer
@@ -151,6 +189,12 @@ export class VoicePipeline {
     if (this.vad) {
       await this.vad.destroy()
       this.vad = null
+    }
+    // vad.destroy() only stops the audio-only stream we handed it; the loopback's
+    // backing display stream (with its video track) is ours to tear down.
+    if (this.systemStream) {
+      this.systemStream.getTracks().forEach((t) => t.stop())
+      this.systemStream = null
     }
     this.unsubscribe.forEach((u) => u())
     this.unsubscribe = []
@@ -171,6 +215,7 @@ export class VoicePipeline {
     this.abortResponse()
     this.messages = []
     this.assistantText = ''
+    this.pendingCaptureIndex = null
     if (this.vad) this.setState('listening')
   }
 
@@ -206,24 +251,58 @@ export class VoicePipeline {
     }
 
     this.messages.push({ role: 'user', content: text })
-    this.startResponse()
+    this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
+  }
+
+  /**
+   * Capture the primary screen and ask the assistant about it (e.g. a coding
+   * prompt the interviewer is screen-sharing). The answer is shown as text only,
+   * never spoken, and gets a larger token budget for code/long explanations.
+   * Behaves like a normal turn otherwise: any in-flight reply is aborted first.
+   */
+  async captureScreen(): Promise<void> {
+    if (!this.vad) {
+      this.callbacks.onError?.('Start a session before capturing the screen.')
+      return
+    }
+    this.abortResponse()
+    this.setState('thinking')
+
+    let shot: ScreenCapture
+    try {
+      shot = await window.hue.capture.screen()
+    } catch (e) {
+      this.callbacks.onError?.(e instanceof Error ? e.message : String(e))
+      this.setState('listening')
+      return
+    }
+
+    const content: LlmContentBlock[] = [
+      { type: 'image', mediaType: shot.mediaType, dataBase64: shot.dataBase64 },
+      { type: 'text', text: captureInstruction(this.settings) }
+    ]
+    this.messages.push({ role: 'user', content })
+    this.pendingCaptureIndex = this.messages.length - 1
+    this.callbacks.onScreenCapture?.(shot)
+    this.startResponse({ speak: false, maxTokens: 1024 })
   }
 
   /** Interviewer mode: seed the conversation so Hue asks the opening question. */
   private kickoffInterview(): void {
     this.messages.push({ role: 'user', content: 'Please begin the interview with your first question.' })
-    this.startResponse()
+    this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
   }
 
-  private startResponse(): void {
+  private startResponse(opts: { speak: boolean; maxTokens: number }): void {
     this.setState('thinking')
     this.assistantText = ''
+    this.currentSpeak = opts.speak
     const streamId = crypto.randomUUID()
     this.currentStreamId = streamId
     void window.hue.llm.start(streamId, {
       messages: this.messages,
       system: buildSystemPrompt(this.settings),
-      maxTokens: 500
+      maxTokens: opts.maxTokens
     })
   }
 
@@ -240,7 +319,7 @@ export class VoicePipeline {
     if (e.streamId !== this.currentStreamId) return
     if (this.state !== 'speaking') this.setState('speaking')
     this.assistantText += e.text
-    if (this.speakResponses) this.tts.appendText(e.text)
+    if (this.currentSpeak) this.tts.appendText(e.text)
     this.callbacks.onAssistantText?.(this.assistantText)
   }
 
@@ -252,9 +331,16 @@ export class VoicePipeline {
       this.setState('listening')
       return
     }
-    if (this.speakResponses) this.tts.flush()
+    if (this.currentSpeak) this.tts.flush()
     if (this.assistantText) {
       this.messages.push({ role: 'assistant', content: this.assistantText })
+    }
+    // Hue has now answered the capture once; drop the screenshot from history so
+    // the full PNG isn't re-sent to the provider on every subsequent turn. The
+    // paired text instruction is kept so the turn still reads coherently.
+    if (this.pendingCaptureIndex !== null) {
+      this.messages[this.pendingCaptureIndex] = stripCaptureImage(this.messages[this.pendingCaptureIndex])
+      this.pendingCaptureIndex = null
     }
     this.setState('listening')
   }
@@ -286,6 +372,37 @@ const HUMAN_VOICE_GUIDANCE = `Sound like a real person, not an AI:
 - Use commas or periods instead of em dashes; they sound awkward read aloud.
 - Use contractions and talk the way a sharp, warm person actually speaks.
 - Write in natural, conversational Philippine English — relaxed and friendly, the way a Filipino speaks English in a real conversation, not stiff or formal. It's fine to open casually ("So,", "Honestly,", "Yeah,") and keep an easygoing tone. Stay in clean, grammatical English — do NOT mix in Tagalog or Taglish words.`
+
+/**
+ * Collapse a captured-screen turn to plain text, dropping the image block(s) and
+ * keeping the paired instruction. Called once Hue has answered the capture so the
+ * large screenshot isn't re-sent to the provider on every later turn.
+ */
+function stripCaptureImage(msg: LlmMessage): LlmMessage {
+  if (typeof msg.content === 'string') return msg
+  const text = msg.content
+    .filter((b): b is Extract<LlmContentBlock, { type: 'text' }> => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+  return { role: msg.role, content: `[Screen capture omitted to save tokens]\n${text}` }
+}
+
+/**
+ * The instruction paired with a screen capture. Framed for companion mode (the
+ * common case — the interviewer is sharing a prompt) and lightly adjusted when
+ * Hue is the interviewer so the screenshot reads as context rather than a task.
+ */
+function captureInstruction(s: HueSettings): string {
+  if (s.hueMode === 'interviewer') {
+    return 'This is a screenshot of my screen. Use it as context for the interview if relevant.'
+  }
+  return (
+    "This is a screenshot of the interviewer's shared screen — likely a coding problem, " +
+    'system-design prompt, or question. Read it carefully and help me solve or answer it: give a ' +
+    "clear approach, and if it's a coding task include concise, correct code plus a short " +
+    'explanation I can talk through.'
+  )
+}
 
 function buildSystemPrompt(s: HueSettings): string {
   return s.hueMode === 'interviewer'

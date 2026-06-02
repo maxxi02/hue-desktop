@@ -53,18 +53,13 @@ function build(device: Device): Promise<KokoroTTS> {
 }
 
 async function createTTS(): Promise<KokoroTTS> {
-  // Prefer WebGPU. Fall back to single-threaded wasm if there's no GPU adapter or
-  // session creation fails (driver quirks, unsupported hardware).
-  const hasWebGpu = typeof navigator !== 'undefined' && 'gpu' in navigator
-  if (hasWebGpu) {
-    try {
-      const t = await build('webgpu')
-      activeDevice = 'webgpu'
-      return t
-    } catch (err) {
-      console.warn('[kokoro] WebGPU init failed, falling back to wasm:', err)
-    }
-  }
+  // Pin Kokoro to single-threaded wasm (q8). The fp32 WebGPU path produces
+  // distorted, breathy/"whispering" audio — the synthesized voice loses its
+  // vocal tone — on many GPUs/drivers via the kokoro-js/transformers.js onnx
+  // WebGPU backend, while the wasm q8 path sounds correct. TTS clips are short
+  // and the streaming queue tolerates wasm's slower-but-steady synthesis, so we
+  // trade a little speed for reliable audio quality. (Whisper ASR still uses
+  // WebGPU; see whisper.worker.ts — only the TTS voice is affected by this bug.)
   const t = await build('wasm')
   activeDevice = 'wasm'
   return t
