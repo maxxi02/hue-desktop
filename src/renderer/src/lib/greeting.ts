@@ -42,7 +42,15 @@ export function isLlmConfigured(s: HueSettings): boolean {
  * starts a session before it finishes) so its audio never overlaps the session.
  */
 export function playGreeting(settings: HueSettings, callbacks: GreetingCallbacks = {}): () => void {
-  const tts = new StreamingTTSQueue({ voice: settings.ttsVoice, speed: settings.ttsSpeed })
+  // In companion mode the greeting is text-only. Two reasons: (1) companion is
+  // for use during a live call, where any audio Hue plays could be heard by the
+  // interviewer, and (2) initializing Kokoro pulls hundreds of MB into GPU
+  // memory — doing that alongside Whisper and the call's own WebRTC stack has
+  // crashed underpowered GPUs mid-interview.
+  const speak = settings.hueMode === 'interviewer'
+  const tts = speak
+    ? new StreamingTTSQueue({ voice: settings.ttsVoice, speed: settings.ttsSpeed })
+    : null
   const streamId = crypto.randomUUID()
   let text = ''
   const unsubscribe: Array<() => void> = []
@@ -56,18 +64,18 @@ export function playGreeting(settings: HueSettings, callbacks: GreetingCallbacks
     window.hue.llm.onDelta((e: LlmDeltaEvent) => {
       if (e.streamId !== streamId) return
       text += e.text
-      tts.appendText(e.text)
+      tts?.appendText(e.text)
       callbacks.onText?.(text)
     }),
     window.hue.llm.onDone((e: LlmDoneEvent) => {
       if (e.streamId !== streamId) return
-      tts.flush()
+      tts?.flush()
       cleanup()
       callbacks.onDone?.()
     }),
     window.hue.llm.onError((e: LlmErrorEvent) => {
       if (e.streamId !== streamId) return
-      tts.interrupt()
+      tts?.interrupt()
       cleanup()
       callbacks.onError?.(e.message)
     })
@@ -88,7 +96,7 @@ export function playGreeting(settings: HueSettings, callbacks: GreetingCallbacks
 
   return (): void => {
     window.hue.llm.abort(streamId)
-    tts.interrupt()
+    tts?.interrupt()
     cleanup()
   }
 }

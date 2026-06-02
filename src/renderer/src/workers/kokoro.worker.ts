@@ -53,10 +53,9 @@ function build(device: Device): Promise<KokoroTTS> {
 }
 
 async function createTTS(): Promise<KokoroTTS> {
-  // Prefer WebGPU. Fall back to single-threaded wasm if there's no GPU adapter or
-  // session creation fails (driver quirks, unsupported hardware).
-  const hasWebGpu = typeof navigator !== 'undefined' && 'gpu' in navigator
-  if (hasWebGpu) {
+  // Prefer WebGPU. Fall back to single-threaded wasm if there's no usable GPU
+  // adapter or session creation fails (driver quirks, unsupported hardware).
+  if (await hasUsableWebGpu()) {
     try {
       const t = await build('webgpu')
       activeDevice = 'webgpu'
@@ -68,6 +67,21 @@ async function createTTS(): Promise<KokoroTTS> {
   const t = await build('wasm')
   activeDevice = 'wasm'
   return t
+}
+
+// `'gpu' in navigator` only tells us the API surface exists — the browser may
+// still hand us no adapter (no GPU, blocked driver, headless boot, software
+// rasterizer). Without calling requestAdapter() we'd push the fp32 model into a
+// non-existent device, which has hung the GPU process on weak/integrated GPUs.
+async function hasUsableWebGpu(): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !('gpu' in navigator)) return false
+  try {
+    const gpu = (navigator as unknown as { gpu: { requestAdapter: () => Promise<unknown> } }).gpu
+    const adapter = await gpu.requestAdapter()
+    return adapter !== null && adapter !== undefined
+  } catch {
+    return false
+  }
 }
 
 function getTTS(): Promise<KokoroTTS> {
