@@ -81,6 +81,12 @@ export interface HueSettings {
    * startSessionHotkey (keyboard accelerator, single key, or "Mouse:<Button>").
    */
   summonHotkey: string
+  /**
+   * Global trigger that grabs the primary screen and asks the assistant about it
+   * (e.g. a coding prompt the interviewer is screen-sharing). Same encoding as
+   * the other hotkeys. Only fires while a session is active.
+   */
+  captureScreenHotkey: string
 }
 
 export const DEFAULT_SETTINGS: HueSettings = {
@@ -110,7 +116,8 @@ export const DEFAULT_SETTINGS: HueSettings = {
   hueMode: 'companion',
   audioSource: 'microphone',
   startSessionHotkey: 'CommandOrControl+Shift+Enter',
-  summonHotkey: 'CommandOrControl+Shift+Space'
+  summonHotkey: 'CommandOrControl+Shift+Space',
+  captureScreenHotkey: 'CommandOrControl+Shift+S'
 }
 
 /** Keys that are sensitive and stored encrypted at rest via Electron safeStorage. */
@@ -124,9 +131,44 @@ export const SECRET_SETTING_KEYS = [
   'cohereApiKey'
 ] as const
 
+/** A plain-text part of a message. */
+export interface LlmTextBlock {
+  type: 'text'
+  text: string
+}
+
+/** An image part of a message (e.g. a screen capture), base64-encoded. */
+export interface LlmImageBlock {
+  type: 'image'
+  /** A base64-supported image type, e.g. 'image/png'. */
+  mediaType: ImageMediaType
+  /** Raw base64 (no data: URI prefix). */
+  dataBase64: string
+}
+
+export type LlmContentBlock = LlmTextBlock | LlmImageBlock
+
+/** Image formats every vision-capable provider here accepts. */
+export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
+
 export interface LlmMessage {
   role: 'user' | 'assistant'
-  content: string
+  /**
+   * Either a plain string (text-only turn, the common case) or an ordered list of
+   * content blocks for multimodal turns (text + image). Kept as a union so every
+   * existing text turn stays a bare string and only screen-capture turns carry blocks.
+   */
+  content: string | LlmContentBlock[]
+}
+
+/** A screenshot captured in the main process, ready to attach to a message. */
+export interface ScreenCapture {
+  /** Raw base64 PNG (no data: URI prefix). */
+  dataBase64: string
+  mediaType: ImageMediaType
+  /** Pixel dimensions of the (possibly downscaled) capture. */
+  width: number
+  height: number
 }
 
 export interface LlmStreamRequest {

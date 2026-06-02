@@ -3,12 +3,18 @@ import { VoicePipeline, type PipelineState } from '../lib/pipeline'
 import { preloadOnDeviceModel } from '../lib/transcription'
 import { preloadTtsModel } from '../lib/streamingTTS'
 import { isLlmConfigured, playGreeting } from '../lib/greeting'
-import type { AudioSource, HueMode, ResolvedTier } from '@shared/types'
+import type { AudioSource, HueMode, ResolvedTier, ScreenCapture } from '@shared/types'
 
 export interface VoiceTurn {
   text: string
   tier: ResolvedTier
   latencyMs: number
+}
+
+/** A screen capture, tagged with a unique id so repeats still register as new. */
+export interface CaptureTurn {
+  shot: ScreenCapture
+  id: number
 }
 
 export interface UseVoiceMode {
@@ -17,6 +23,8 @@ export interface UseVoiceMode {
   /** True while the session is starting up (downloading models / initializing the VAD). */
   connecting: boolean
   userTranscript: VoiceTurn | null
+  /** Most recent screen capture taken during the session (for the transcript thumbnail). */
+  capture: CaptureTurn | null
   assistantText: string
   /** LLM-generated launch greeting from Hue (streamed). Empty until Hue has greeted. */
   greetingText: string
@@ -28,6 +36,8 @@ export interface UseVoiceMode {
   reloadConfig: () => void
   start: () => Promise<void>
   stop: () => Promise<void>
+  /** Capture the screen and ask the assistant about it (no-op if no session). */
+  captureScreen: () => Promise<void>
   /** Wipe the conversation: LLM history, last transcript, and the launch greeting. */
   clear: () => void
 }
@@ -35,6 +45,7 @@ export interface UseVoiceMode {
 export function useVoiceMode(): UseVoiceMode {
   const [state, setState] = useState<PipelineState>('idle')
   const [userTranscript, setUserTranscript] = useState<VoiceTurn | null>(null)
+  const [capture, setCapture] = useState<CaptureTurn | null>(null)
   const [assistantText, setAssistantText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<HueMode>('companion')
@@ -83,6 +94,10 @@ export function useVoiceMode(): UseVoiceMode {
         setUserTranscript({ text, tier, latencyMs })
         setAssistantText('')
       },
+      onScreenCapture: (shot) => {
+        setCapture({ shot, id: Date.now() })
+        setAssistantText('')
+      },
       onAssistantText: setAssistantText,
       onError: setError
     })
@@ -103,9 +118,14 @@ export function useVoiceMode(): UseVoiceMode {
     await pipeline.stop()
   }, [])
 
+  const captureScreen = useCallback(async (): Promise<void> => {
+    await pipelineRef.current?.captureScreen()
+  }, [])
+
   const clear = useCallback((): void => {
     pipelineRef.current?.clearHistory()
     setUserTranscript(null)
+    setCapture(null)
     setAssistantText('')
     setGreetingText('')
   }, [])
@@ -124,11 +144,20 @@ export function useVoiceMode(): UseVoiceMode {
     })
   }, [start, stop])
 
+  // Global capture-screen hotkey: snapshot the screen and ask about it. Only acts
+  // while a session is running (the pipeline owns the LLM wiring and history).
+  useEffect(() => {
+    return window.hue.hotkey.onCaptureScreen(() => {
+      if (pipelineRef.current) void captureScreen()
+    })
+  }, [captureScreen])
+
   return {
     state,
     active: state !== 'idle',
     connecting: state === 'connecting',
     userTranscript,
+    capture,
     assistantText,
     greetingText,
     error,
@@ -137,6 +166,7 @@ export function useVoiceMode(): UseVoiceMode {
     reloadConfig,
     start,
     stop,
+    captureScreen,
     clear
   }
 }

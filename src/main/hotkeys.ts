@@ -49,6 +49,15 @@ export function toggleSession(): void {
   win?.webContents.send('hue:hotkey:toggle-session')
 }
 
+/**
+ * Tell the renderer to capture the screen and ask the assistant about it. We
+ * deliberately do NOT bring Hue forward first: the main process hides Hue during
+ * the grab anyway, and surfacing it would only flash the overlay mid-call.
+ */
+export function triggerCaptureScreen(): void {
+  resolveWindow()?.webContents.send('hue:hotkey:capture-screen')
+}
+
 // Map a uIOhook mouse button number to our internal name. On Windows libuiohook
 // reports: 1=left, 2=right, 3=middle, 4=X1 (Back), 5=X2 (Forward).
 function uiohookButtonName(button: number): string {
@@ -110,6 +119,7 @@ export function applyHotkeys(): void {
   const s = getSettings()
   registerTrigger(s.summonHotkey, toggleVisibility)
   registerTrigger(s.startSessionHotkey, toggleSession)
+  registerTrigger(s.captureScreenHotkey, triggerCaptureScreen)
 }
 
 /** Start the input hook and bind the saved summon + start-session triggers. */

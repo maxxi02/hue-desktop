@@ -1,7 +1,29 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { WebContents } from 'electron'
 import { getSettings } from './settings'
-import type { LlmStreamRequest } from '../shared/types'
+import type { LlmMessage, LlmStreamRequest } from '../shared/types'
+
+/** Translate our provider-neutral messages into Anthropic's content-block shape. */
+function toAnthropicMessages(messages: LlmMessage[]): Anthropic.MessageParam[] {
+  return messages.map((m) => ({
+    role: m.role,
+    content:
+      typeof m.content === 'string'
+        ? m.content
+        : m.content.map((b) =>
+            b.type === 'text'
+              ? { type: 'text' as const, text: b.text }
+              : {
+                  type: 'image' as const,
+                  source: {
+                    type: 'base64' as const,
+                    media_type: b.mediaType,
+                    data: b.dataBase64
+                  }
+                }
+          )
+  }))
+}
 
 let client: Anthropic | null = null
 let clientKey = ''
@@ -53,7 +75,7 @@ export function startLlmStream(sender: WebContents, streamId: string, req: LlmSt
         model,
         max_tokens: req.maxTokens ?? 300,
         system: req.system,
-        messages: req.messages
+        messages: toAnthropicMessages(req.messages)
       },
       { signal: aborter.signal }
     )

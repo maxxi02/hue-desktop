@@ -7,7 +7,8 @@ import type {
   LlmDoneEvent,
   LlmErrorEvent,
   CloudAsrResult,
-  OpenAiCompatProvider
+  OpenAiCompatProvider,
+  ScreenCapture
 } from '../shared/types'
 
 function sub<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -39,9 +40,15 @@ const hue = {
     cloud: (pcm16: ArrayBuffer): Promise<CloudAsrResult> =>
       ipcRenderer.invoke('hue:asr:cloud', pcm16)
   },
+  capture: {
+    /** Grab the primary screen (Hue hides itself for the shot) as a base64 PNG. */
+    screen: (): Promise<ScreenCapture> => ipcRenderer.invoke('hue:capture:screen')
+  },
   hotkey: {
     /** Fired by the configurable start-session shortcut (or the tray) to start/stop a session. */
-    onToggleSession: (cb: () => void): (() => void) => sub('hue:hotkey:toggle-session', cb)
+    onToggleSession: (cb: () => void): (() => void) => sub('hue:hotkey:toggle-session', cb),
+    /** Fired by the configurable capture-screen shortcut to snapshot the screen. */
+    onCaptureScreen: (cb: () => void): (() => void) => sub('hue:hotkey:capture-screen', cb)
   }
 }
 

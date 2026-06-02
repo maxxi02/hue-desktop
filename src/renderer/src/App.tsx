@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useVoiceMode } from './hooks/useVoiceMode'
 import type { PipelineState } from './lib/pipeline'
-import type { VoiceTurn } from './hooks/useVoiceMode'
+import type { VoiceTurn, CaptureTurn } from './hooks/useVoiceMode'
+import type { ScreenCapture } from '@shared/types'
 import { Settings } from './components/Settings'
 
 // ── Icons ──
@@ -51,6 +52,24 @@ function ClearIcon(): React.JSX.Element {
       <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
       <line x1="10" y1="11" x2="10" y2="17" />
       <line x1="14" y1="11" x2="14" y2="17" />
+    </svg>
+  )
+}
+
+function CameraIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+      <circle cx="12" cy="13" r="4" />
     </svg>
   )
 }
@@ -140,6 +159,8 @@ interface Message {
   text: string
   tier?: string
   latencyMs?: number
+  /** Present on a user turn that was a screen capture; rendered as a thumbnail. */
+  image?: ScreenCapture
 }
 
 // ── App ──
@@ -153,6 +174,7 @@ export default function App(): React.JSX.Element {
   const [messages, setMessages] = useState<Message[]>([])
   const transcriptRef = useRef<HTMLDivElement>(null)
   const prevTranscriptTextRef = useRef<string | undefined>(undefined)
+  const prevCaptureIdRef = useRef<number | undefined>(undefined)
 
   // Drive the floating card's translucency from the saved windowOpacity setting.
   // Re-applied when the settings drawer closes so the slider takes effect live.
@@ -174,6 +196,16 @@ export default function App(): React.JSX.Element {
       { role: 'user', text: t.text, tier: String(t.tier), latencyMs: t.latencyMs }
     ])
   }, [voice.userTranscript])
+
+  useEffect(() => {
+    const c: CaptureTurn | null = voice.capture
+    if (!c || c.id === prevCaptureIdRef.current) return
+    prevCaptureIdRef.current = c.id
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', text: 'Shared a screen capture', image: c.shot }
+    ])
+  }, [voice.capture])
 
   useEffect(() => {
     const text = voice.assistantText
@@ -199,6 +231,7 @@ export default function App(): React.JSX.Element {
     voice.clear()
     setMessages([])
     prevTranscriptTextRef.current = undefined
+    prevCaptureIdRef.current = undefined
   }
 
   const hasConversation = messages.length > 0 || Boolean(voice.greetingText)
@@ -264,7 +297,15 @@ export default function App(): React.JSX.Element {
             messages.map((msg, i) => (
               <div key={i} className={`bubble bubble--${msg.role}`}>
                 <div className="bubble-label">{msg.role === 'user' ? userLabel : assistantLabel}</div>
-                <div className="bubble-text">{msg.text}</div>
+                {msg.image ? (
+                  <img
+                    className="bubble-capture"
+                    src={`data:${msg.image.mediaType};base64,${msg.image.dataBase64}`}
+                    alt="Captured screen sent to Hue"
+                  />
+                ) : (
+                  <div className="bubble-text">{msg.text}</div>
+                )}
                 {msg.role === 'user' && msg.tier && (
                   <div className="bubble-meta">
                     {msg.tier} · {msg.latencyMs}ms
@@ -309,7 +350,19 @@ export default function App(): React.JSX.Element {
             </>
           )}
         </button>
-        <div className="footer-meta" />
+        <div className="footer-meta footer-meta--right">
+          {voice.active && !voice.connecting && (
+            <button
+              className="capture-btn"
+              onClick={() => void voice.captureScreen()}
+              disabled={voice.state === 'transcribing' || voice.state === 'thinking'}
+              title="Capture the screen and ask Hue about it (e.g. a shared coding prompt)"
+            >
+              <CameraIcon />
+              Capture screen
+            </button>
+          )}
+        </div>
       </footer>
 
       {settingsOpen && (

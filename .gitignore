@@ -6,3 +6,7 @@ src/renderer/public
 .DS_Store
 .eslintcache
 *.log*
+# TypeScript incremental build cache
+*.tsbuildinfo
+# Obsidian vault config (personal workspace state, not project content)
+.obsidian/

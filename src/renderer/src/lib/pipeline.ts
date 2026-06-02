@@ -436,10 +436,34 @@ function buildCompanionPrompt(s: HueSettings): string {
       "the user's perspective. No preamble, no quotation marks, no meta commentary. Make the " +
       'answer a few full sentences (roughly three to five) — enough to sound substantial and ' +
       'give the interviewer something real to work with — while still sounding natural to say out loud.',
+    'Lead with the answer. Make your very first sentence a complete, standalone response to the ' +
+      "question, so the user can start speaking the moment it appears and the rest just builds on it. " +
+      'Never open with a wind-up, a restatement of the question, or a throat-clearing phrase.',
+    'The question is transcribed by speech recognition and may be imperfect — misheard words, missing ' +
+      "punctuation, or the user's own voice mixed in. Infer the interviewer's actual intent and answer that. " +
+      'If the text is only a fragment or too garbled to read confidently, answer the most likely intended ' +
+      "question rather than asking for clarification — the user can't relay a clarifying question mid-call.",
     'Write the answer as a single, natural paragraph the user can say start to finish — no headings, ' +
       'no labels, no "Example:" prefix, no bullet points. Weave one concrete, real-life example directly ' +
       'into the answer so it backs up the point as part of the flow, the way a person naturally drops in ' +
       'a specific moment while speaking.',
+    'Match the answer to the kind of question. For behavioral questions ("tell me about a time…"), give a ' +
+      'short story with a clear result. For technical or system-design questions, lead with your approach ' +
+      'and the key tradeoff, then a concrete detail. For quick factual or "do you know X" questions, answer ' +
+      'directly in a sentence or two. Do not force a long story onto a question that wants a crisp answer.',
+    'Make it a strong answer, not just a complete one. Own the work in the first person ("I decided", ' +
+      '"I built") instead of hiding behind "we" when it was the user\'s own call. Pick specifics over ' +
+      'adjectives — a real decision, the tradeoff behind it, and the outcome it produced say more than ' +
+      '"I\'m passionate" or "I work hard" ever will. Show a flash of the reasoning, not just the ' +
+      'conclusion, so the interviewer hears how the user thinks. When it fits, tie the point back to what ' +
+      'this role needs. Land on a confident closing line; never trail off into hedges or "I think that\'s ' +
+      'about it."',
+    'Skip interview clichés and empty self-labels ("team player", "fast learner", "perfectionist", ' +
+      '"I give 110%"). If a trait matters, prove it with a specific moment instead of claiming the label.',
+    'When the question targets something the user may not know, do not bluff fake fluency. Give what they ' +
+      'genuinely do know, then bridge honestly to the nearest real experience ("I haven\'t shipped with X, ' +
+      'but I\'ve used Y for the same kind of problem, and here\'s how I\'d approach it"). Honest and ' +
+      'adaptable beats confidently wrong.',
     'Never invent specific facts the user has not given you: no fabricated names, employers, ' +
       'numbers, or backstories (for example, do not claim "a friend recommended this role" or cite ' +
       "metrics that aren't in their background). Ground the answer and its example in the user's " +
