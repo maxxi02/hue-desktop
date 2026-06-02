@@ -1,6 +1,31 @@
 import type { WebContents } from 'electron'
 import { getSettings } from './settings'
-import type { HueSettings, LlmStreamRequest, OpenAiCompatProvider } from '../shared/types'
+import type {
+  HueSettings,
+  LlmMessage,
+  LlmStreamRequest,
+  OpenAiCompatProvider
+} from '../shared/types'
+
+/**
+ * OpenAI-format message content: a bare string, or (for multimodal turns) an
+ * array of text / image_url parts. Images ride as base64 data URIs.
+ */
+type OpenAiContent =
+  | string
+  | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>
+
+function toOpenAiContent(content: LlmMessage['content']): OpenAiContent {
+  if (typeof content === 'string') return content
+  return content.map((b) =>
+    b.type === 'text'
+      ? { type: 'text' as const, text: b.text }
+      : {
+          type: 'image_url' as const,
+          image_url: { url: `data:${b.mediaType};base64,${b.dataBase64}` }
+        }
+  )
+}
 
 /**
  * Google Gemini, Groq, Mistral and Cohere all expose an OpenAI-compatible
@@ -136,7 +161,7 @@ export function startOpenAiCompatStream(
       // OpenAI format carries the system prompt as a leading system-role message.
       const messages = [
         ...(req.system ? [{ role: 'system', content: req.system }] : []),
-        ...req.messages.map((m) => ({ role: m.role, content: m.content }))
+        ...req.messages.map((m) => ({ role: m.role, content: toOpenAiContent(m.content) }))
       ]
 
       const response = await fetch(`${PROVIDERS[provider].baseUrl}/chat/completions`, {

@@ -104,7 +104,7 @@ export function playGreeting(settings: HueSettings, callbacks: GreetingCallbacks
 function buildGreetingPrompt(s: HueSettings): string {
   const role = s.jobTitle ? ` The user is preparing for a ${s.jobTitle} interview.` : ''
   return (
-    'You are Hue, a friendly real-time interview coach.' +
+    'You are Hue, a friendly real-time interview companion.' +
     role +
     ' Greet the user warmly and concisely, speaking in the first person as Hue. Output only the greeting.'
   )

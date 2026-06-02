@@ -1,6 +1,23 @@
 import type { WebContents } from 'electron'
 import { getSettings } from './settings'
-import type { LlmStreamRequest } from '../shared/types'
+import type { LlmMessage, LlmStreamRequest } from '../shared/types'
+
+/**
+ * Ollama's chat format keeps text in `content` and images in a separate `images`
+ * array of base64 strings (for vision models like llava/llama3.2-vision). Flatten
+ * our content blocks accordingly; text-only turns stay a plain string.
+ */
+function toOllamaMessage(m: LlmMessage): { role: string; content: string; images?: string[] } {
+  if (typeof m.content === 'string') return { role: m.role, content: m.content }
+  const text = m.content
+    .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+  const images = m.content
+    .filter((b): b is Extract<typeof b, { type: 'image' }> => b.type === 'image')
+    .map((b) => b.dataBase64)
+  return images.length > 0 ? { role: m.role, content: text, images } : { role: m.role, content: text }
+}
 
 interface ActiveStream {
   abort: () => void
@@ -71,7 +88,7 @@ export function startOllamaStream(
       // Ollama takes the system prompt as a leading system-role message.
       const messages = [
         ...(req.system ? [{ role: 'system', content: req.system }] : []),
-        ...req.messages.map((m) => ({ role: m.role, content: m.content }))
+        ...req.messages.map(toOllamaMessage)
       ]
 
       const response = await fetch(`${baseUrl}/api/chat`, {

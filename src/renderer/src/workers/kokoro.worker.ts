@@ -53,35 +53,16 @@ function build(device: Device): Promise<KokoroTTS> {
 }
 
 async function createTTS(): Promise<KokoroTTS> {
-  // Prefer WebGPU. Fall back to single-threaded wasm if there's no usable GPU
-  // adapter or session creation fails (driver quirks, unsupported hardware).
-  if (await hasUsableWebGpu()) {
-    try {
-      const t = await build('webgpu')
-      activeDevice = 'webgpu'
-      return t
-    } catch (err) {
-      console.warn('[kokoro] WebGPU init failed, falling back to wasm:', err)
-    }
-  }
+  // Pin Kokoro to single-threaded wasm (q8). The fp32 WebGPU path produces
+  // distorted, breathy/"whispering" audio — the synthesized voice loses its
+  // vocal tone — on many GPUs/drivers via the kokoro-js/transformers.js onnx
+  // WebGPU backend, while the wasm q8 path sounds correct. TTS clips are short
+  // and the streaming queue tolerates wasm's slower-but-steady synthesis, so we
+  // trade a little speed for reliable audio quality. (Whisper ASR still uses
+  // WebGPU; see whisper.worker.ts — only the TTS voice is affected by this bug.)
   const t = await build('wasm')
   activeDevice = 'wasm'
   return t
-}
-
-// `'gpu' in navigator` only tells us the API surface exists — the browser may
-// still hand us no adapter (no GPU, blocked driver, headless boot, software
-// rasterizer). Without calling requestAdapter() we'd push the fp32 model into a
-// non-existent device, which has hung the GPU process on weak/integrated GPUs.
-async function hasUsableWebGpu(): Promise<boolean> {
-  if (typeof navigator === 'undefined' || !('gpu' in navigator)) return false
-  try {
-    const gpu = (navigator as unknown as { gpu: { requestAdapter: () => Promise<unknown> } }).gpu
-    const adapter = await gpu.requestAdapter()
-    return adapter !== null && adapter !== undefined
-  } catch {
-    return false
-  }
 }
 
 function getTTS(): Promise<KokoroTTS> {

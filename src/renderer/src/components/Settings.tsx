@@ -672,6 +672,18 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                 key combo, a single key, or a mouse button (Back/Forward, etc.).
               </span>
             </div>
+            <div className="settings-field">
+              <label className="settings-label">Capture screen</label>
+              <HotkeyRecorder
+                value={s.captureScreenHotkey}
+                onChange={(v) => set('captureScreenHotkey', v)}
+              />
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                During a session, snapshots your screen and asks Hue about it — handy when the
+                interviewer shares a coding prompt. Hue hides itself for the shot; the image is sent
+                only to your configured AI provider and never saved to disk.
+              </span>
+            </div>
           </div>
 
           <div className="settings-section">

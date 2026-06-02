@@ -6,6 +6,8 @@ src/renderer/public
 .DS_Store
 .eslintcache
 *.log*
+# TypeScript incremental build cache
+*.tsbuildinfo
 
 # Obsidian per-machine UI state (track the rest of docs/.obsidian: plugins, templates, graph)
 docs/.obsidian/workspace.json

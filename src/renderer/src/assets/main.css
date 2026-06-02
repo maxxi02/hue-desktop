@@ -289,6 +289,18 @@
   opacity: 0.65;
 }
 
+/* Screen-capture thumbnail shown in a user bubble. */
+.bubble-capture {
+  max-width: 240px;
+  width: 100%;
+  height: auto;
+  border-radius: 12px 12px 4px 12px;
+  border: 1px solid rgba(96, 165, 250, 0.25);
+  display: block;
+  /* A touch gentler than the bubble's own enter so the image settles in. */
+  animation: fade-in-up 280ms var(--ease-out);
+}
+
 .error-msg {
   align-self: center;
   padding: 9px 16px;
@@ -312,6 +324,42 @@
 
 .footer-meta {
   min-width: 140px;
+}
+.footer-meta--right {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Compact secondary action in the footer for taking a screen capture. */
+.capture-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 200ms var(--ease-out), color 200ms var(--ease-out),
+    border-color 200ms var(--ease-out), transform 160ms var(--ease-out);
+}
+.capture-btn:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-color: rgba(96, 165, 250, 0.35);
+  transform: translateY(-1px);
+}
+.capture-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.capture-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .latency-badge {
