@@ -369,6 +369,10 @@ const HUMAN_VOICE_GUIDANCE = `Sound like a real person, not an AI:
 - Trim filler: "in order to" becomes "to"; "due to the fact that" becomes "because".
 - Say things once; don't stack hedges like "could potentially possibly".
 - Vary your rhythm; don't force every list into a group of three.
+- Mix sentence lengths the way people actually talk: a short, punchy sentence next to a longer, looser one. Uniform, polished prose reads as scripted.
+- Have a take. Commit to one angle instead of covering every side evenly — people answer with opinions, not surveys.
+- Never close with a tidy summary ("Overall…", "In short…", "At the end of the day…"); just end on your last real point.
+- One light spoken touch per answer is fine when it fits naturally ("honestly", "you know", "I mean") — at most one, never forced.
 - Use commas or periods instead of em dashes; they sound awkward read aloud.
 - Use contractions and talk the way a sharp, warm person actually speaks.
 - Write in natural, conversational Philippine English — relaxed and friendly, the way a Filipino speaks English in a real conversation, not stiff or formal. It's fine to open casually ("So,", "Honestly,", "Yeah,") and keep an easygoing tone. Stay in clean, grammatical English — do NOT mix in Tagalog or Taglish words.`
@@ -447,6 +451,10 @@ function buildCompanionPrompt(s: HueSettings): string {
       'no labels, no "Example:" prefix, no bullet points. Weave one concrete, real-life example directly ' +
       'into the answer so it backs up the point as part of the flow, the way a person naturally drops in ' +
       'a specific moment while speaking.',
+    'Make it sound like the user thinking out loud mid-conversation, not reciting a prepared statement: ' +
+      'an occasional small aside ("which, honestly, was the hard part"), a real number or name where an ' +
+      'adjective would go, slightly uneven rhythm. An essay-perfect paragraph reads as scripted — leave ' +
+      'a human edge on it.',
     'Match the answer to the kind of question. For behavioral questions ("tell me about a time…"), give a ' +
       'short story with a clear result. For technical or system-design questions, lead with your approach ' +
       'and the key tradeoff, then a concrete detail. For quick factual or "do you know X" questions, answer ' +

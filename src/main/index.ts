@@ -4,6 +4,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/letter-h.png?asset'
 import { registerIpc } from './ipc'
 import { initHotkeys, summon, toggleSession, unregisterAllHotkeys } from './hotkeys'
+import { startPhoneMirror, stopPhoneMirror } from './phone-mirror'
+import { getSettings } from './settings'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -152,6 +154,12 @@ app.whenReady().then(() => {
   // configurable start-session shortcut starts/stops a session — both work from any app.
   initHotkeys(() => mainWindow)
 
+  // Resume the phone mirror if the user left it enabled (the QR URL changes per
+  // launch because the auth token is regenerated — re-scan from Settings).
+  if (getSettings().phoneMirrorEnabled) {
+    startPhoneMirror().catch((err) => console.error('phone mirror failed to start:', err))
+  }
+
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
@@ -172,6 +180,7 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   unregisterAllHotkeys()
+  stopPhoneMirror()
 })
 
 // In this file you can include the rest of your app's specific main process

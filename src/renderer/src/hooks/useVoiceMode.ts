@@ -97,17 +97,27 @@ export function useVoiceMode(): UseVoiceMode {
     const companion = settings.hueMode === 'companion'
     preloadOnDeviceModel({ preferWasm: companion })
     if (!companion) preloadTtsModel()
+    // Each UI update is also mirrored to the phone page (no-op while the
+    // phone-mirror server is off — the main process just drops the event).
     const pipeline = new VoicePipeline(settings, {
-      onStateChange: setState,
+      onStateChange: (st) => {
+        setState(st)
+        window.hue.phone.event({ type: 'state', text: st })
+      },
       onUserTranscript: (text, tier, latencyMs) => {
         setUserTranscript({ text, tier, latencyMs })
         setAssistantText('')
+        window.hue.phone.event({ type: 'question', text })
       },
       onScreenCapture: (shot) => {
         setCapture({ shot, id: Date.now() })
         setAssistantText('')
+        window.hue.phone.event({ type: 'question', text: 'Shared a screen capture' })
       },
-      onAssistantText: setAssistantText,
+      onAssistantText: (text) => {
+        setAssistantText(text)
+        window.hue.phone.event({ type: 'answer', text })
+      },
       onError: setError
     })
     pipelineRef.current = pipeline
@@ -137,6 +147,7 @@ export function useVoiceMode(): UseVoiceMode {
     setCapture(null)
     setAssistantText('')
     setGreetingText('')
+    window.hue.phone.event({ type: 'clear' })
   }, [])
 
   // Configurable global start-session hotkey (and the tray's "Start / stop"):

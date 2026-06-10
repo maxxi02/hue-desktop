@@ -3,26 +3,40 @@ import type { WebContents } from 'electron'
 import { getSettings } from './settings'
 import type { LlmMessage, LlmStreamRequest } from '../shared/types'
 
-/** Translate our provider-neutral messages into Anthropic's content-block shape. */
+/** Block types this app actually sends; both accept cache_control. */
+type SentBlock = Anthropic.TextBlockParam | Anthropic.ImageBlockParam
+
+/**
+ * Translate our provider-neutral messages into Anthropic's content-block shape.
+ * The final block of the final message carries a cache breakpoint so the whole
+ * prefix (system prompt + every prior turn) is served from cache on the next
+ * turn — each request then pays full input price only for what was appended
+ * since the last one. Earlier breakpoints stay valid, so hits accrue as the
+ * conversation grows. Below the model's minimum cacheable prefix the marker is
+ * a silent no-op, so short conversations lose nothing.
+ */
 function toAnthropicMessages(messages: LlmMessage[]): Anthropic.MessageParam[] {
-  return messages.map((m) => ({
-    role: m.role,
-    content:
+  return messages.map((m, i) => {
+    const blocks: SentBlock[] =
       typeof m.content === 'string'
-        ? m.content
+        ? [{ type: 'text', text: m.content }]
         : m.content.map((b) =>
             b.type === 'text'
-              ? { type: 'text' as const, text: b.text }
-              : {
-                  type: 'image' as const,
+              ? ({ type: 'text', text: b.text } as const)
+              : ({
+                  type: 'image',
                   source: {
-                    type: 'base64' as const,
+                    type: 'base64',
                     media_type: b.mediaType,
                     data: b.dataBase64
                   }
-                }
+                } as const)
           )
-  }))
+    if (i === messages.length - 1 && blocks.length > 0) {
+      blocks[blocks.length - 1].cache_control = { type: 'ephemeral' }
+    }
+    return { role: m.role, content: blocks }
+  })
 }
 
 let client: Anthropic | null = null
@@ -74,7 +88,14 @@ export function startLlmStream(sender: WebContents, streamId: string, req: LlmSt
       {
         model,
         max_tokens: req.maxTokens ?? 300,
-        system: req.system,
+        // Cache breakpoint on the system prompt: it's deterministic for the
+        // whole session (built once per turn from the same settings), so after
+        // the first turn it's read from cache instead of re-processed at full
+        // price. A second breakpoint rides on the last message block (see
+        // toAnthropicMessages) to cache the growing conversation incrementally.
+        system: [
+          { type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }
+        ],
         messages: toAnthropicMessages(req.messages)
       },
       { signal: aborter.signal }

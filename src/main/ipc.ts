@@ -11,7 +11,25 @@ import {
 } from './openai-compat'
 import { transcribeCloud } from './asr-cloud'
 import { applyHotkeys } from './hotkeys'
-import type { HueSettings, LlmStreamRequest, OpenAiCompatProvider } from '../shared/types'
+import {
+  startPhoneMirror,
+  stopPhoneMirror,
+  getPhoneMirrorStatus,
+  broadcastPhoneEvent
+} from './phone-mirror'
+import type {
+  HueSettings,
+  LlmStreamRequest,
+  OpenAiCompatProvider,
+  PhoneMirrorEvent
+} from '../shared/types'
+
+const PHONE_EVENT_TYPES: ReadonlySet<PhoneMirrorEvent['type']> = new Set([
+  'question',
+  'answer',
+  'state',
+  'clear'
+])
 
 let registered = false
 
@@ -58,6 +76,24 @@ export function registerIpc(): void {
   )
 
   ipcMain.handle('hue:asr:cloud', (_e, pcm: ArrayBuffer) => transcribeCloud(pcm))
+
+  // Phone mirror: the toggle persists the setting and starts/stops the server in
+  // one step, so the QR code appears immediately without a separate Save.
+  ipcMain.handle('hue:phone:status', () => getPhoneMirrorStatus())
+  ipcMain.handle('hue:phone:set-enabled', async (_e, enabled: boolean) => {
+    updateSettings({ phoneMirrorEnabled: Boolean(enabled) })
+    if (enabled) return startPhoneMirror()
+    stopPhoneMirror()
+    return getPhoneMirrorStatus()
+  })
+  // Session events from the renderer, fanned out to connected phones. The shape
+  // is validated here — the payload crosses a process boundary — and text is
+  // bounded so a runaway transcript can't balloon the SSE stream.
+  ipcMain.on('hue:phone:event', (_e, ev: PhoneMirrorEvent) => {
+    if (!ev || typeof ev !== 'object' || !PHONE_EVENT_TYPES.has(ev.type)) return
+    const text = typeof ev.text === 'string' ? ev.text.slice(0, 20_000) : undefined
+    broadcastPhoneEvent({ type: ev.type, text })
+  })
 
   // Grab the primary screen for the vision feature. Hue floats on top of every
   // app (alwaysOnTop), so it would photobomb its own screenshot — hide it for the

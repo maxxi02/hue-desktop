@@ -8,6 +8,8 @@ import type {
   LlmErrorEvent,
   CloudAsrResult,
   OpenAiCompatProvider,
+  PhoneMirrorEvent,
+  PhoneMirrorStatus,
   ScreenCapture
 } from '../shared/types'
 
@@ -43,6 +45,14 @@ const hue = {
   capture: {
     /** Grab the primary screen (Hue hides itself for the shot) as a base64 PNG. */
     screen: (): Promise<ScreenCapture> => ipcRenderer.invoke('hue:capture:screen')
+  },
+  phone: {
+    status: (): Promise<PhoneMirrorStatus> => ipcRenderer.invoke('hue:phone:status'),
+    /** Persists phoneMirrorEnabled and starts/stops the LAN server in one step. */
+    setEnabled: (enabled: boolean): Promise<PhoneMirrorStatus> =>
+      ipcRenderer.invoke('hue:phone:set-enabled', enabled),
+    /** Fire-and-forget mirror of a session event to any connected phones. */
+    event: (ev: PhoneMirrorEvent): void => ipcRenderer.send('hue:phone:event', ev)
   },
   hotkey: {
     /** Fired by the configurable start-session shortcut (or the tray) to start/stop a session. */

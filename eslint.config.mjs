@@ -18,6 +18,13 @@ export default defineConfig(
     }
   },
   {
+    // Return-type annotations are TS syntax and can't exist in plain JS scripts
+    files: ['**/*.{js,mjs}'],
+    rules: {
+      '@typescript-eslint/explicit-function-return-type': 'off'
+    }
+  },
+  {
     files: ['**/*.{ts,tsx}'],
     plugins: {
       'react-hooks': eslintPluginReactHooks,

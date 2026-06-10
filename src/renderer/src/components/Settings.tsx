@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import QRCode from 'qrcode'
 import type {
   HueSettings,
   AsrTier,
@@ -7,7 +8,8 @@ import type {
   HueMode,
   InterviewMode,
   LlmProvider,
-  OpenAiCompatProvider
+  OpenAiCompatProvider,
+  PhoneMirrorStatus
 } from '@shared/types'
 import { parseResume } from '../lib/resume'
 import { cleanResumeText } from '../lib/resumeCleanup'
@@ -286,6 +288,46 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   useEffect(() => {
     window.hue.settings.get().then(setS)
   }, [])
+
+  // Phone mirror: the toggle takes effect immediately (no Save needed) so the QR
+  // code shows up the moment it's enabled.
+  const [phone, setPhone] = useState<PhoneMirrorStatus | null>(null)
+  const [phoneQr, setPhoneQr] = useState('')
+  const [phoneBusy, setPhoneBusy] = useState(false)
+
+  useEffect(() => {
+    window.hue.phone.status().then(setPhone)
+  }, [])
+
+  // Render the connect URL as a QR data-URL whenever it changes.
+  useEffect(() => {
+    const url = phone?.url
+    let stale = false
+    const apply = (dataUrl: string): void => {
+      if (!stale) setPhoneQr(dataUrl)
+    }
+    if (url) {
+      void QRCode.toDataURL(url, { width: 320, margin: 2 }).then(apply, () => apply(''))
+    } else {
+      void Promise.resolve().then(() => apply(''))
+    }
+    return () => {
+      stale = true
+    }
+  }, [phone?.url])
+
+  const togglePhone = async (): Promise<void> => {
+    if (!phone) return
+    setPhoneBusy(true)
+    try {
+      const status = await window.hue.phone.setEnabled(!phone.running)
+      setPhone(status)
+      // Keep the form's copy of the setting in sync (it persists on Save too).
+      setS((prev) => (prev ? { ...prev, phoneMirrorEnabled: status.running } : prev))
+    } finally {
+      setPhoneBusy(false)
+    }
+  }
 
   // Auto-detect the models installed on the local Ollama server. Re-runnable from
   // the "Detect models" button; the sequence counter stops a slow/stale request
@@ -648,6 +690,57 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                   ? 'Captures the audio coming out of your speakers — e.g. the interviewer on a Zoom/Meet call. Supported on Windows; you may be asked to pick a screen to share.'
                   : 'Captures your microphone. In Companion mode, speak or relay the interviewer’s question for Hue to answer.'}
               </span>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">Phone mirror</div>
+            <div className="settings-field">
+              <label className="settings-label">Mirror the session to your phone</label>
+              <button
+                type="button"
+                className="icon-btn"
+                style={{ alignSelf: 'flex-start', width: 'auto', padding: '6px 12px', fontSize: 13 }}
+                onClick={() => void togglePhone()}
+                disabled={phoneBusy || !phone}
+              >
+                {phoneBusy ? 'Working…' : phone?.running ? 'Disable phone mirror' : 'Enable phone mirror'}
+              </button>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                Streams the interviewer’s question and Hue’s suggested answer to your phone’s
+                browser over your Wi-Fi — nothing leaves your network. Takes effect immediately.
+              </span>
+              {phone?.running && (
+                <>
+                  {phoneQr && (
+                    <img
+                      src={phoneQr}
+                      alt="QR code — scan with your phone to open Hue's mirror page"
+                      style={{
+                        width: 160,
+                        height: 160,
+                        borderRadius: 8,
+                        marginTop: 10,
+                        alignSelf: 'flex-start'
+                      }}
+                    />
+                  )}
+                  <span
+                    style={{
+                      fontSize: 12,
+                      marginTop: 8,
+                      userSelect: 'text',
+                      wordBreak: 'break-all'
+                    }}
+                  >
+                    {phone.url}
+                  </span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                    Scan with your phone (same Wi-Fi as this PC) and keep the page open. The link
+                    changes each time Hue restarts — re-scan if the phone says “reconnecting”.
+                  </span>
+                </>
+              )}
             </div>
           </div>
 

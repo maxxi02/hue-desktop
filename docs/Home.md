@@ -14,6 +14,7 @@ Knowledge base for **Hue**, a desktop interview assistant / companion overlay. T
 - [[LLM & ASR Providers]] — Claude, Ollama, OpenAI-compatible, cloud ASR
 - [[Tech Stack]] — frameworks, on-device ML, and tooling
 - [[Settings & Security]] — encrypted settings, key handling, hardening notes
+- [[Phone Mirror]] — stream companion Q&A to your phone over the LAN (QR + SSE)
 
 ## 🗂️ Tracking
 - [[Tasks]] — backlog and in-progress work

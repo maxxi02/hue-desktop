@@ -87,12 +87,17 @@ export interface HueSettings {
    * the other hotkeys. Only fires while a session is active.
    */
   captureScreenHotkey: string
+  /**
+   * Whether the phone-mirror server runs: a token-authenticated LAN HTTP server
+   * that streams the session (question + suggested answer) to a phone browser.
+   */
+  phoneMirrorEnabled: boolean
 }
 
 export const DEFAULT_SETTINGS: HueSettings = {
   llmProvider: 'anthropic',
   anthropicApiKey: '',
-  model: 'claude-opus-4-7',
+  model: 'claude-opus-4-8',
   ollamaBaseUrl: 'http://localhost:11434',
   ollamaModel: 'llama3.2',
   asrTier: 'auto',
@@ -117,7 +122,8 @@ export const DEFAULT_SETTINGS: HueSettings = {
   audioSource: 'microphone',
   startSessionHotkey: 'CommandOrControl+Shift+Enter',
   summonHotkey: 'CommandOrControl+Shift+Space',
-  captureScreenHotkey: 'CommandOrControl+Shift+S'
+  captureScreenHotkey: 'CommandOrControl+Shift+S',
+  phoneMirrorEnabled: false
 }
 
 /** Keys that are sensitive and stored encrypted at rest via Electron safeStorage. */
@@ -199,4 +205,22 @@ export interface LlmErrorEvent {
 export interface CloudAsrResult {
   text: string
   provider: CloudAsrProvider
+}
+
+/**
+ * An event mirrored to the phone page over SSE:
+ * - 'question': the interviewer's transcribed question (text).
+ * - 'answer': Hue's suggested answer so far — cumulative, the page replaces it.
+ * - 'state': the pipeline state name, for the phone's status pill.
+ * - 'clear': the conversation was reset; the page empties both blocks.
+ */
+export interface PhoneMirrorEvent {
+  type: 'question' | 'answer' | 'state' | 'clear'
+  text?: string
+}
+
+export interface PhoneMirrorStatus {
+  running: boolean
+  /** Full URL to open on the phone (includes the auth token); '' when stopped. */
+  url: string
 }
