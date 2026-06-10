@@ -19,6 +19,7 @@ created: 2026-06-02
 - [ ] _nothing tracked yet_
 
 ## ✅ Done
+- [x] Perf: warm Whisper/Kokoro at app launch (and on settings close) instead of session start, so the first session connects near-instantly ([[Performance Audit 2026-06-10]] #3)
 - [x] Fix: companion-mode live-call crash — keep Whisper on wasm/CPU (and skip Kokoro) so on-device models don't contend with the call's GPU and freeze the machine ([[Decisions|ADR-004]], [[Voice Pipeline]])
 - [x] Scaffold Electron + React 19 + Vite project
 - [x] Voice pipeline: VAD → ASR → LLM → TTS ([[Voice Pipeline]])

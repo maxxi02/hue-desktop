@@ -59,6 +59,17 @@ export function useVoiceMode(): UseVoiceMode {
     void window.hue.settings.get().then((s) => {
       setMode(s.hueMode)
       setAudioSource(s.audioSource)
+      // Warm the on-device models as soon as the saved settings are known (app
+      // launch, and again when the settings drawer closes) so the first session
+      // doesn't pay the model download/init cost while "Connecting". Follows the
+      // same companion rules as start() below; skipped while a session is
+      // running so a mid-session settings save can't move Whisper across
+      // devices under a live call (start() already loaded the right config).
+      if (!pipelineRef.current) {
+        const companion = s.hueMode === 'companion'
+        preloadOnDeviceModel({ preferWasm: companion })
+        if (!companion) preloadTtsModel()
+      }
       // Greet once, the first time a usable LLM config is seen (on launch or
       // right after the user saves a key). A successful streamed reply confirms
       // the LLM is reachable. Skipped while a session is running.

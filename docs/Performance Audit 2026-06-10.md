@@ -8,8 +8,10 @@ Parts check of the whole app (main process, renderer, workers, LLM layer, packag
 ## 2. ✅ DONE 2026-06-10 — Default model is stale
 `DEFAULT_SETTINGS.model` is `claude-opus-4-7` (`src/shared/types.ts:100`); current latest is `claude-opus-4-8` (same request surface, no breaking changes from 4.7).
 
-## 3. Models warm up at session start, not app launch
+## 3. ✅ DONE 2026-06-10 — Models warm up at session start, not app launch
 `useVoiceMode.start()` triggers Whisper/Kokoro preload, so the first session eats the whole download + init in the "Connecting" state. Saved settings are known at launch — preloading then (respecting the companion-mode `preferWasm` rule) would make the first session start near-instantly. Whisper/Kokoro also re-download from the HF hub per machine (`env.allowLocalModels = false`); they're cached by the browser cache afterwards, so this is first-run only.
+
+**Done:** `reloadConfig` in `useVoiceMode` now warms the models whenever saved settings are read — at launch and after the settings drawer closes — following the same companion rules as `start()` (Whisper pinned to wasm, Kokoro skipped). Guarded by `!pipelineRef.current` so a mid-session settings save can't move models across devices under a live call. Bonus: switching modes while idle now migrates Whisper on/off the GPU immediately (the worker disposes and rebuilds on preference change) instead of at the next session start. Note Kokoro is wasm-pinned anyway (whispering-voice bug, ADR in [[Decisions]]), so launch-preloading it costs CPU memory only, no VRAM.
 
 ## 4. Renderer transcript grows unbounded; screenshots live in state forever
 `App.tsx` keeps full-resolution base64 PNG captures (1–3 MB strings) in the `messages` array and re-creates the array on every streamed token, re-rendering every bubble. Fine for one interview; degrades over a long session with several captures. Cheap fixes: memo the bubble component, keep the streaming assistant text in its own state slot, store a downscaled thumbnail for display.
