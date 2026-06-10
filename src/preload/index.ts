@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
 import type {
   HueSettings,
   LlmStreamRequest,
@@ -64,16 +63,6 @@ const hue = {
 
 export type HueApi = typeof hue
 
-if (process.contextIsolated) {
-  try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
-    contextBridge.exposeInMainWorld('hue', hue)
-  } catch (error) {
-    console.error(error)
-  }
-} else {
-  // @ts-ignore (define in dts)
-  window.electron = electronAPI
-  // @ts-ignore (define in dts)
-  window.hue = hue
-}
+// The renderer is sandboxed with context isolation on (see createWindow), so the
+// bridge is the only surface exposed to page code — no generic ipcRenderer.
+contextBridge.exposeInMainWorld('hue', hue)

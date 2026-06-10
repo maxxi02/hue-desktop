@@ -25,10 +25,13 @@ created: 2026-06-02
 - **Hotkeys**: `startSessionHotkey`, summon/show-hide hotkey — Electron accelerator strings or `Mouse:Back`/`Forward`/`Middle` encodings.
 
 ## Security review notes (against global baseline)
-> [!note] Items to validate before shipping — see [[Tasks]] and [[Decisions]]
-> - `sandbox: false` on the renderer (`src/main/index.ts`). The renderer runs untrusted-ish model code and network-shaped data; re-evaluate enabling the sandbox with a strictly typed preload bridge.
-> - `setPermissionRequestHandler` / `setPermissionCheckHandler` **auto-grant all** permissions. Scope to only the media permissions actually needed.
-> - Confirm a strict **Content-Security-Policy** on the renderer HTML (no remote scripts).
+Hardened 2026-06-10 ([[Decisions|ADR-007]]):
+- ✅ Renderer runs with **`sandbox: true`**; the strictly typed `window.hue` contextBridge API is the only main-process surface (the generic `electronAPI`/raw `ipcRenderer` exposure was removed along with `@electron-toolkit/preload`).
+- ✅ Permission handlers **allowlist** exactly `media` (microphone) + `display-capture` (loopback audio); everything else is denied.
+- ✅ CSP confirmed strict (no remote scripts; `wasm-unsafe-eval` + HF hub `connect-src` only) and extended with `object-src 'none'; base-uri 'self'; form-action 'none'; frame-src 'none'`.
+- The app holds a **single-instance lock**: relaunching the EXE summons the running window instead of spawning a fresh instance (which used to silently reset the session).
+
+> [!note] Still open — see [[Tasks]]
 > - Validate/sanitize all third-party API responses (LLM/ASR providers) before use.
 > - Cross-origin isolation is intentionally off for performance — documented in [[Decisions]] (ADR-002).
 

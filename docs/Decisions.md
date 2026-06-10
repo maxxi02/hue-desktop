@@ -7,6 +7,15 @@ created: 2026-06-02
 
 Lightweight log of architecture decisions. Newest first.
 
+## ADR-007 — Renderer sandbox ON, permissions allowlisted, single typed bridge
+**Date:** 2026-06-10 · **Status:** Accepted
+**Context:** The renderer processes untrusted-ish data (LLM/ASR responses, downloaded model files) but ran with `sandbox: false`, auto-granted **every** Chromium permission, and exposed the generic `@electron-toolkit/preload` `electronAPI` (raw `ipcRenderer`) alongside the typed `window.hue` bridge.
+**Decision:** Enable `sandbox: true` — the preload only uses `contextBridge`/`ipcRenderer` and bundles to CJS, so it is fully sandbox-compatible. Drop the `electronAPI` exposure and the `@electron-toolkit/preload` dependency (the only consumer was the unused scaffold `Versions.tsx`, deleted); `window.hue` is now the renderer's *only* surface into the main process. Scope the permission request/check handlers to an allowlist of exactly what Hue uses: `media` (microphone) and `display-capture` (loopback audio). Harden the CSP with `object-src 'none'; base-uri 'self'; form-action 'none'; frame-src 'none'`.
+**Consequences:** A compromised renderer can no longer reach Node, invoke arbitrary IPC channels, or escalate via permission prompts. WebGPU/WASM model inference is unaffected (sandboxing doesn't touch GPU or WASM). Verified: typecheck + build clean, app launches with no preload errors. Remaining from the baseline: validate third-party API responses ([[Tasks]]).
+
+---
+
+
 ## ADR-006 — Humanizing companion answers: model size first, prompt second
 **Date:** 2026-06-10 · **Status:** Accepted
 **Context:** Companion answers read as obviously AI-generated. Root cause analysis: the prompt's humanizer guidance (`HUMAN_VOICE_GUIDANCE` in `src/renderer/src/lib/pipeline.ts`) bans AI-tell words but the dominant factor is model capability — an 8B model (`llama-3.1-8b-instant`) writes in a flat, generic register no prompt fully fixes.
@@ -54,5 +63,5 @@ Lightweight log of architecture decisions. Newest first.
 ---
 
 ## Open Questions
-- Enable the renderer `sandbox` with a typed preload bridge? Currently `false`. See [[Settings & Security]].
-- Scope down the auto-grant permission handlers?
+- ~~Enable the renderer `sandbox` with a typed preload bridge?~~ → Done, ADR-007.
+- ~~Scope down the auto-grant permission handlers?~~ → Done, ADR-007.

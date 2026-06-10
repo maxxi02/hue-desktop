@@ -38,7 +38,9 @@ function createWindow(): void {
     icon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      // The preload only talks to the typed contextBridge API (no Node access
+      // needed), so the renderer runs fully sandboxed.
+      sandbox: true
     }
   })
 
@@ -68,10 +70,31 @@ function createWindow(): void {
     if (mainWindow === win) mainWindow = null
   })
 
-  // Microphone access for the voice pipeline (getUserMedia inside the renderer).
+  // If the renderer process dies (GPU reset, OOM from the on-device models, …)
+  // the window would otherwise sit there blank and dead. Reload so Hue comes
+  // back usable; the in-memory session is lost either way. The timestamp guard
+  // stops a crash-on-boot from turning into a hot reload loop.
+  let lastRendererReload = 0
+  win.webContents.on('render-process-gone', (_e, details) => {
+    if (details.reason === 'clean-exit') return
+    console.error('renderer process gone:', details.reason, `(exit code ${details.exitCode})`)
+    const now = Date.now()
+    if (now - lastRendererReload > 10_000) {
+      lastRendererReload = now
+      win.webContents.reload()
+    }
+  })
+
+  // Grant only the two capabilities Hue actually uses: 'media' for the voice
+  // pipeline's microphone (getUserMedia) and 'display-capture' for system
+  // loopback audio (getDisplayMedia, handled below). Everything else —
+  // geolocation, notifications, clipboard, etc. — is denied.
+  const ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set(['media', 'display-capture'])
   const ses = win.webContents.session
-  ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(true))
-  ses.setPermissionCheckHandler(() => true)
+  ses.setPermissionRequestHandler((_wc, permission, callback) =>
+    callback(ALLOWED_PERMISSIONS.has(permission))
+  )
+  ses.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission))
 
   // System/loopback audio capture for Companion mode (the interviewer's voice on
   // a call). getDisplayMedia in the renderer routes here; we grant loopback audio
@@ -130,6 +153,16 @@ function createTray(): void {
   )
   tray.on('click', () => summon())
 }
+
+// Hue lives hidden in the tray, so it's easy to forget it's running and launch
+// it again from the Start menu / a pinned shortcut. Without this lock that
+// spawned a second instance with a fresh, empty session ("Hue reopened and my
+// session was cleared"). Instead, the duplicate launch exits immediately and
+// the running instance summons its window — session intact.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+}
+app.on('second-instance', () => summon())
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
