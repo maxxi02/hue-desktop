@@ -6,6 +6,9 @@
     "src/preload/**/*",
     "src/shared/**/*"
   ],
+  // node:test files import sibling modules with an explicit .ts extension (Node 24
+  // type stripping requires it); they are run by `node --test`, not built.
+  "exclude": ["src/**/*.test.ts"],
   "compilerOptions": {
     "composite": true,
     "types": ["electron-vite/node"]

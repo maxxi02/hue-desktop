@@ -9,7 +9,8 @@ import type {
   InterviewMode,
   LlmProvider,
   OpenAiCompatProvider,
-  PhoneMirrorStatus
+  PhoneMirrorStatus,
+  RelayStatus
 } from '@shared/types'
 import { parseResume } from '../lib/resume'
 import { cleanResumeText } from '../lib/resumeCleanup'
@@ -326,6 +327,49 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
       setS((prev) => (prev ? { ...prev, phoneMirrorEnabled: status.running } : prev))
     } finally {
       setPhoneBusy(false)
+    }
+  }
+
+  // Relay (phone app over the internet): like the phone mirror, the button takes
+  // effect immediately so the pairing QR appears without a Save round-trip.
+  const [relay, setRelay] = useState<RelayStatus | null>(null)
+  const [relayQr, setRelayQr] = useState('')
+  const [relayBusy, setRelayBusy] = useState(false)
+
+  useEffect(() => {
+    window.hue.relay.status().then(setRelay)
+  }, [])
+
+  // Render the pairing URI as a QR data-URL whenever it changes.
+  useEffect(() => {
+    const uri = relay?.pairingUri
+    let stale = false
+    const apply = (dataUrl: string): void => {
+      if (!stale) setRelayQr(dataUrl)
+    }
+    if (uri) {
+      void QRCode.toDataURL(uri, { width: 320, margin: 2 }).then(apply, () => apply(''))
+    } else {
+      void Promise.resolve().then(() => apply(''))
+    }
+    return () => {
+      stale = true
+    }
+  }, [relay?.pairingUri])
+
+  const toggleRelay = async (): Promise<void> => {
+    if (!relay) return
+    setRelayBusy(true)
+    try {
+      // The main process registers the room against the *saved* relay URL, so
+      // persist whatever is in the field before connecting.
+      if (!relay.running && s) await window.hue.settings.set({ relayBaseUrl: s.relayBaseUrl })
+      const status = await window.hue.relay.setEnabled(!relay.running)
+      setRelay(status)
+      // Keep the form's copy of the setting in sync (it persists on Save too).
+      setS((prev) => (prev ? { ...prev, relayEnabled: status.running } : prev))
+    } finally {
+      setRelayBusy(false)
     }
   }
 
@@ -694,7 +738,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Phone mirror</div>
+            <div className="settings-section-title">Phone mirror — opens a web page</div>
             <div className="settings-field">
               <label className="settings-label">Mirror the session to your phone</label>
               <button
@@ -736,8 +780,75 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                     {phone.url}
                   </span>
                   <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                    Scan with your phone (same Wi-Fi as this PC) and keep the page open. The link
-                    changes each time Hue restarts — re-scan if the phone says “reconnecting”.
+                    Scan with your phone’s <strong>browser</strong> (same Wi-Fi as this PC) and keep
+                    the page open. Not for the Hue app — that’s the “Phone app” code below. The
+                    link changes each time Hue restarts, so re-scan if the phone says
+                    “reconnecting”.
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">Phone app — scan this one in Hue</div>
+            <div className="settings-field">
+              <label className="settings-label">Relay URL</label>
+              <input
+                className="settings-input"
+                type="text"
+                value={s.relayBaseUrl}
+                placeholder="https://relay.hue.app"
+                onChange={(e) => set('relayBaseUrl', e.target.value)}
+              />
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                Where the Hue relay is running. Changing this takes effect the next time you
+                connect the phone app below.
+              </span>
+            </div>
+            <div className="settings-field">
+              <label className="settings-label">Mirror the session to the Hue phone app</label>
+              <button
+                type="button"
+                className="icon-btn"
+                style={{ alignSelf: 'flex-start', width: 'auto', padding: '6px 12px', fontSize: 13 }}
+                onClick={() => void toggleRelay()}
+                disabled={relayBusy || !relay}
+              >
+                {relayBusy
+                  ? 'Working…'
+                  : relay?.running
+                    ? 'Disconnect phone app'
+                    : 'Connect phone app'}
+              </button>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                Streams the interviewer’s question and Hue’s suggested answer to the Hue app on
+                your phone. Unlike the phone mirror above this works on mobile data — the
+                transcript passes through the relay you configured.
+              </span>
+              {relay?.error && (
+                <span style={{ color: 'var(--red)', fontSize: 12, marginTop: 6 }}>
+                  {relay.error}
+                </span>
+              )}
+              {relay?.running && (
+                <>
+                  {relayQr && (
+                    <img
+                      src={relayQr}
+                      alt="QR code — scan with the Hue app to pair your phone"
+                      style={{
+                        width: 160,
+                        height: 160,
+                        borderRadius: 8,
+                        marginTop: 10,
+                        alignSelf: 'flex-start'
+                      }}
+                    />
+                  )}
+                  <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                    Scan with the Hue app. The pairing changes every time Hue restarts — re-scan
+                    if the phone says “disconnected”.
                   </span>
                 </>
               )}

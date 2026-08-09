@@ -5,6 +5,7 @@ import icon from '../../resources/letter-h.png?asset'
 import { registerIpc } from './ipc'
 import { initHotkeys, summon, toggleSession, unregisterAllHotkeys } from './hotkeys'
 import { startPhoneMirror, stopPhoneMirror } from './phone-mirror'
+import { startRelay, stopRelay } from './relay-client'
 import { getSettings } from './settings'
 
 let mainWindow: BrowserWindow | null = null
@@ -193,6 +194,14 @@ app.whenReady().then(() => {
     startPhoneMirror().catch((err) => console.error('phone mirror failed to start:', err))
   }
 
+  // Resume the relay if the user left it enabled. A fresh room means the phone
+  // must re-scan after a desktop restart — same contract as the LAN mirror's URL.
+  if (getSettings().relayEnabled) {
+    startRelay(getSettings().relayBaseUrl).catch((err) =>
+      console.error('relay failed to start:', err)
+    )
+  }
+
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
@@ -214,6 +223,7 @@ app.on('before-quit', () => {
 app.on('will-quit', () => {
   unregisterAllHotkeys()
   stopPhoneMirror()
+  stopRelay()
 })
 
 // In this file you can include the rest of your app's specific main process

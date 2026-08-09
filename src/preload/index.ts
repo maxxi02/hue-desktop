@@ -9,6 +9,7 @@ import type {
   OpenAiCompatProvider,
   PhoneMirrorEvent,
   PhoneMirrorStatus,
+  RelayStatus,
   ScreenCapture
 } from '../shared/types'
 
@@ -52,6 +53,12 @@ const hue = {
       ipcRenderer.invoke('hue:phone:set-enabled', enabled),
     /** Fire-and-forget mirror of a session event to any connected phones. */
     event: (ev: PhoneMirrorEvent): void => ipcRenderer.send('hue:phone:event', ev)
+  },
+  relay: {
+    status: (): Promise<RelayStatus> => ipcRenderer.invoke('hue:relay:status'),
+    /** Persists relayEnabled and registers/tears down the relay room in one step. */
+    setEnabled: (enabled: boolean): Promise<RelayStatus> =>
+      ipcRenderer.invoke('hue:relay:set-enabled', enabled)
   },
   hotkey: {
     /** Fired by the configurable start-session shortcut (or the tray) to start/stop a session. */

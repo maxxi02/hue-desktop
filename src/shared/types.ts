@@ -92,6 +92,13 @@ export interface HueSettings {
    * that streams the session (question + suggested answer) to a phone browser.
    */
   phoneMirrorEnabled: boolean
+  /**
+   * Whether the session is mirrored to the Hue phone app through the cloud relay
+   * (works on cellular), as opposed to the LAN-only phone mirror above.
+   */
+  relayEnabled: boolean
+  /** Base URL of the hue-relay deployment, e.g. https://relay.hue.app */
+  relayBaseUrl: string
 }
 
 export const DEFAULT_SETTINGS: HueSettings = {
@@ -123,7 +130,9 @@ export const DEFAULT_SETTINGS: HueSettings = {
   startSessionHotkey: 'CommandOrControl+Shift+Enter',
   summonHotkey: 'CommandOrControl+Shift+Space',
   captureScreenHotkey: 'CommandOrControl+Shift+S',
-  phoneMirrorEnabled: false
+  phoneMirrorEnabled: false,
+  relayEnabled: false,
+  relayBaseUrl: 'http://localhost:8787'
 }
 
 /** Keys that are sensitive and stored encrypted at rest via Electron safeStorage. */
@@ -223,4 +232,23 @@ export interface PhoneMirrorStatus {
   running: boolean
   /** Full URL to open on the phone (includes the auth token); '' when stopped. */
   url: string
+}
+
+/**
+ * Everything a phone needs to subscribe to a relay room. Encoded into the QR
+ * code the desktop shows in Settings. The subscribe token grants read-only
+ * access to one session and dies with it.
+ */
+export interface RelayPairing {
+  relayBaseUrl: string
+  roomId: string
+  subscribeToken: string
+}
+
+export interface RelayStatus {
+  running: boolean
+  /** `hue://pair?...` URI for the QR code; '' when not running. */
+  pairingUri: string
+  /** Last registration/publish failure, surfaced in Settings; null when healthy. */
+  error: string | null
 }

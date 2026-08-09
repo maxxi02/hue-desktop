@@ -17,6 +17,7 @@ import {
   getPhoneMirrorStatus,
   broadcastPhoneEvent
 } from './phone-mirror'
+import { startRelay, stopRelay, getRelayStatus, publishRelayEvent } from './relay-client'
 import type {
   HueSettings,
   LlmStreamRequest,
@@ -86,6 +87,18 @@ export function registerIpc(): void {
     stopPhoneMirror()
     return getPhoneMirrorStatus()
   })
+
+  // Relay: same shape as the phone-mirror toggle, but the room lives on a remote
+  // service so the phone works off-LAN. Enabling registers a fresh room, which
+  // invalidates any previously scanned QR — that is deliberate.
+  ipcMain.handle('hue:relay:status', () => getRelayStatus())
+  ipcMain.handle('hue:relay:set-enabled', async (_e, enabled: boolean) => {
+    updateSettings({ relayEnabled: Boolean(enabled) })
+    if (enabled) return startRelay(getSettings().relayBaseUrl)
+    stopRelay()
+    return getRelayStatus()
+  })
+
   // Session events from the renderer, fanned out to connected phones. The shape
   // is validated here — the payload crosses a process boundary — and text is
   // bounded so a runaway transcript can't balloon the SSE stream.
@@ -93,6 +106,9 @@ export function registerIpc(): void {
     if (!ev || typeof ev !== 'object' || !PHONE_EVENT_TYPES.has(ev.type)) return
     const text = typeof ev.text === 'string' ? ev.text.slice(0, 20_000) : undefined
     broadcastPhoneEvent({ type: ev.type, text })
+    // Both transports get every event: the LAN mirror for offline use, the relay
+    // for the phone app on mobile data. Neither blocks the voice pipeline.
+    publishRelayEvent({ type: ev.type, text })
   })
 
   // Grab the primary screen for the vision feature. Hue floats on top of every

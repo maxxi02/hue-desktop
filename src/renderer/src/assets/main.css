@@ -434,10 +434,9 @@
 }
 
 .drawer {
-  width: 360px;
+  width: 100%;
   height: 100%;
   background: var(--bg-card);
-  border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   animation: slide-in-right 280ms var(--ease-drawer);
@@ -456,10 +455,15 @@
 .drawer-body {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
+  padding: 20px 24px;
+  /* Full width would otherwise stretch one column of fields across the whole
+     window. Flow the sections into columns instead, and let each section keep
+     its own natural height rather than stretching to match its row. */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-content: start;
+  align-items: start;
+  gap: 22px 28px;
   scrollbar-width: thin;
   scrollbar-color: var(--bg-elevated) transparent;
 }
