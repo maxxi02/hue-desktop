@@ -13,3 +13,6 @@ src/renderer/public
 docs/.obsidian/workspace.json
 docs/.obsidian/workspace-mobile.json
 docs/.obsidian/cache
+
+# Subagent-driven-development scratch (briefs, ledger, review packages)
+.superpowers/
