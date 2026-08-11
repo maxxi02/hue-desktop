@@ -178,9 +178,25 @@ precisely the failure this check exists to prevent. The check is now:
    script had already been rejected.
 2. The cue's tokens must appear in the script **in order**, as a subsequence.
    This defeats scrambling.
-3. Every negation token within the script span the cue covers must also appear in
-   the cue. This defeats omission — the inverted example above is a valid
-   subsequence, and is caught only by this rule.
+3. Every negation token from the **start of the script** through the cue's last
+   matched token must also appear in the cue. This defeats omission — the
+   inverted example above is a valid subsequence, and is caught only by this rule.
+
+   The span must start at the beginning of the script, not at the cue's first
+   matched token. An earlier draft of this correction said "the span the cue
+   covers", meaning `firstIdx..lastIdx`, and that is wrong: in `[not, cut,
+   costs]` the cue "Cut costs" matches indices 1–2, so a `firstIdx`-anchored span
+   excludes the very `not` that inverts it. The negation would slip through and
+   the Critical bug would be live again.
+
+   **Known cost, deferred to Task 12.** Anchoring at 0 over-rejects: a script
+   reading "I have never been to Paris. I cut costs by renegotiating contracts."
+   drops the faithful cue "Cut costs by renegotiating contracts" because of an
+   unrelated earlier negation. This fails safe, but on multi-sentence scripts it
+   will thin cards out. The principled fix is to scope the span to the sentence
+   containing the cue, which needs sentence-aware tokenisation the current
+   `cueTokens` discards. Measure the false-rejection rate against the corpus
+   first — if it is low, the conservative rule stays.
 
 Negation words are deliberately excluded from `STOPWORDS`; adding one there would
 silently re-open the inversion hole.
