@@ -24,9 +24,13 @@ export function sheetsDir(): string {
 }
 
 function fileFor(dir: string, id: string): string {
-  // Ids are minted by ingest, but a path separator arriving here would write
-  // outside the directory, so the name is derived rather than trusted.
-  return join(dir, `${id.replace(/[^a-zA-Z0-9-]/g, '')}.json`)
+  // Ids must be validated, not laundered, so two distinct ids can never address
+  // the same file. A malformed id is a bug upstream in ingest; throwing here
+  // surfaces that bug rather than silently mangling the id and hiding it.
+  if (!id.match(/^[a-zA-Z0-9-]+$/)) {
+    throw new Error(`Invalid cue sheet id: ${id}`)
+  }
+  return join(dir, `${id}.json`)
 }
 
 export function saveSheet(dir: string, sheet: CueSheet): void {

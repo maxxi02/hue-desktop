@@ -47,3 +47,80 @@ test('delete removes only the named sheet', () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('id containing a path separator throws', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cue-'))
+  try {
+    assert.throws(
+      () => saveSheet(dir, { ...sheet, id: 'a/b' }),
+      /Invalid cue sheet id/
+    )
+    assert.throws(
+      () => saveSheet(dir, { ...sheet, id: '../escape' }),
+      /Invalid cue sheet id/
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('empty id throws', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cue-'))
+  try {
+    assert.throws(
+      () => saveSheet(dir, { ...sheet, id: '' }),
+      /Invalid cue sheet id/
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('two distinct ids that would previously collide no longer both resolve', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cue-'))
+  try {
+    // First id with a slash would previously collide with second id
+    assert.throws(
+      () => saveSheet(dir, { ...sheet, id: 'a/b' }),
+      /Invalid cue sheet id/
+    )
+    // The second id that would have collided should still work
+    saveSheet(dir, { ...sheet, id: 'ab' })
+    const sheets = listSheets(dir)
+    assert.equal(sheets.length, 1)
+    assert.equal(sheets[0].id, 'ab')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a normal UUID-shaped id round-trips unchanged', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cue-'))
+  try {
+    const uuidSheet = { ...sheet, id: '550e8400-e29b-41d4-a716-446655440000' }
+    saveSheet(dir, uuidSheet)
+    const retrieved = listSheets(dir)
+    assert.equal(retrieved.length, 1)
+    assert.equal(retrieved[0].id, uuidSheet.id)
+    deleteSheet(dir, uuidSheet.id)
+    assert.equal(listSheets(dir).length, 0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a file in the directory whose name does not match the pattern does not break listSheets', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cue-'))
+  try {
+    saveSheet(dir, sheet)
+    // Write files with bad names but invalid sheet structure - they should be skipped
+    writeFileSync(join(dir, 'malformed-name!!!.json'), '{ "not": "a sheet" }')
+    writeFileSync(join(dir, 'another@bad.json'), '{ "id": "test" }')
+    // listSheets should skip the invalid files and return only the valid sheet
+    const sheets = listSheets(dir)
+    assert.equal(sheets.length, 1)
+    assert.equal(sheets[0].id, 'abc')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
