@@ -15,6 +15,7 @@ import type {
   WindowAnchor
 } from '@shared/types'
 import { describeBundle, parseProfileBundle } from '../../../shared/profile'
+import type { CueSheet } from '@shared/cuesheet'
 
 const KOKORO_VOICES = ['af_heart', 'af_bella', 'af_nicole', 'am_michael', 'bf_emma', 'bm_george']
 
@@ -312,6 +313,20 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   const [llmModels, setLlmModels] = useState<string[]>([])
   const [llmStatus, setLlmStatus] = useState<'idle' | 'detecting' | 'ok' | 'unreachable'>('idle')
   const [resumeStatus, setResumeStatus] = useState<string | null>(null)
+  const [cueSheets, setCueSheets] = useState<CueSheet[]>([])
+  const [cueSheetStatus, setCueSheetStatus] = useState<string | null>(null)
+  // Set once a file is picked; cleared once its ingest is confirmed or
+  // cancelled. Holding the label here (rather than ingesting immediately on
+  // pick) is what lets the user see and edit the default before it's sent.
+  const [pendingCueFile, setPendingCueFile] = useState<File | null>(null)
+  const [pendingCueLabel, setPendingCueLabel] = useState('')
+  const [cueIngesting, setCueIngesting] = useState(false)
+  const cueFileInputRef = useRef<HTMLInputElement>(null)
+  // Tracks whether unmount has already happened, so a slow ingest that finishes
+  // after the pane closes can't set state on it or leave onProgress subscribed
+  // into a stale closure.
+  const mountedRef = useRef(true)
+  const cueStopProgressRef = useRef<(() => void) | null>(null)
   // Parsed from the settings field rather than held separately, so there is one
   // source of truth and a hand-edited settings file can't put the pane and the
   // prompt builder out of step.
@@ -324,6 +339,21 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   useEffect(() => {
     window.hue.settings.get().then(setS)
   }, [])
+
+  const loadCueSheets = useCallback(async (): Promise<void> => {
+    const list = await window.hue.cueSheet.list()
+    if (mountedRef.current) setCueSheets(list)
+  }, [])
+
+  useEffect(() => {
+    void loadCueSheets()
+    return () => {
+      mountedRef.current = false
+      // If a pane close races an in-flight ingest, drop the listener too —
+      // otherwise it fires progress into a component that's gone.
+      cueStopProgressRef.current?.()
+    }
+  }, [loadCueSheets])
 
   // Phone mirror: the toggle takes effect immediately (no Save needed) so the QR
   // code shows up the moment it's enabled.
@@ -583,6 +613,100 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
     } else {
       setResumeStatus(outcome.message)
     }
+  }
+
+  // Derives the default label from a filename by stripping its extension —
+  // shared by the initial pick (to pre-fill the editable field) and the
+  // confirm step (as the fallback when the field is left blank).
+  const defaultCueLabel = (filename: string): string => filename.replace(/\.[^./\\]+$/, '')
+
+  // A file has been picked; stage it and pre-fill the editable label rather
+  // than ingesting immediately — the user needs to see and change the name
+  // before it's sent, since "notes-final-v2" isn't something they can pick
+  // between under pressure later.
+  const onCueFilePicked = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-selecting the same file
+    if (!file) return
+    setPendingCueFile(file)
+    setPendingCueLabel(defaultCueLabel(file.name))
+    setCueSheetStatus(null)
+  }
+
+  const onCancelCueSheet = (): void => {
+    setPendingCueFile(null)
+    setPendingCueLabel('')
+  }
+
+  /**
+   * Uploads the staged cue sheet document and refreshes the list on success.
+   *
+   * Ingest can fail for ordinary reasons — no API key configured, an
+   * unreadable document, or a model response that yields zero usable cards —
+   * so every path (throw, or a sheet with an empty `cards` array) has to land
+   * on screen rather than leaving the progress line stuck mid-upload.
+   */
+  const onConfirmCueSheet = async (): Promise<void> => {
+    const file = pendingCueFile
+    if (!file || cueIngesting) return
+
+    // Blank/whitespace-only falls back to the filename default rather than
+    // creating an unnamed sheet; always trimmed before it's sent.
+    const trimmed = pendingCueLabel.trim()
+    const label = trimmed || defaultCueLabel(file.name)
+
+    setCueIngesting(true)
+    setPendingCueFile(null)
+    setPendingCueLabel('')
+    setCueSheetStatus(`Uploading ${file.name}…`)
+    // Subscribed before the call, not after: ingest takes a while, and the
+    // first progress event fires immediately.
+    const stopProgress = window.hue.cueSheet.onProgress((p) => {
+      if (!mountedRef.current) return
+      setCueSheetStatus(`${p.phase}… ${Math.round(p.pct)}%`)
+    })
+    cueStopProgressRef.current = stopProgress
+
+    try {
+      const buf = await file.arrayBuffer()
+      const sheet = await window.hue.cueSheet.ingest(buf, file.name, label)
+      if (!mountedRef.current) return
+      setCueSheetStatus(
+        sheet.cards.length === 0
+          ? `"${sheet.label}" uploaded, but no usable cue cards were found in it. Try a ` +
+            'document with clearer question-and-answer sections.'
+          : `"${sheet.label}" ready — ${sheet.cards.length} cue card` +
+            `${sheet.cards.length === 1 ? '' : 's'}.`
+      )
+      await loadCueSheets()
+    } catch (err) {
+      if (mountedRef.current) setCueSheetStatus(err instanceof Error ? err.message : String(err))
+    } finally {
+      stopProgress()
+      if (cueStopProgressRef.current === stopProgress) cueStopProgressRef.current = null
+      if (mountedRef.current) setCueIngesting(false)
+    }
+  }
+
+  // Both of these take ONLY `selectedCueSheetId` off the persisted object and
+  // merge it into whatever is in the drawer right now. Assigning the whole
+  // returned settings object with `setS(next)` would overwrite every unsaved
+  // edit the user has open — a half-typed API key, a moved slider — because
+  // the persisted copy predates them. Matches the functional-partial-update
+  // pattern the phone/stealth/relay toggles in this file already use.
+  const onSelectCueSheet = async (id: string): Promise<void> => {
+    const next = await window.hue.cueSheet.select(id)
+    setS((prev) => (prev ? { ...prev, selectedCueSheetId: next.selectedCueSheetId } : prev))
+  }
+
+  const onDeleteCueSheet = async (id: string): Promise<void> => {
+    await window.hue.cueSheet.delete(id)
+    // The main process clears the selection server-side if it was selected;
+    // re-fetch settings so the radio group doesn't keep pointing at a sheet
+    // that no longer exists.
+    const next = await window.hue.settings.get()
+    setS((prev) => (prev ? { ...prev, selectedCueSheetId: next.selectedCueSheetId } : prev))
+    await loadCueSheets()
   }
 
   return (
@@ -1082,6 +1206,143 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                   rows={3}
                   placeholder="Upload a résumé above, or type a few sentences about your background…"
                 />
+              )}
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">Cue sheets</div>
+            <div className="settings-field">
+              <label className="settings-label">Prepared answers</label>
+              <input
+                ref={cueFileInputRef}
+                type="file"
+                accept=".pdf,.docx,.txt,.md"
+                style={{ display: 'none' }}
+                onChange={onCueFilePicked}
+              />
+              <button
+                type="button"
+                className="icon-btn"
+                style={{
+                  alignSelf: 'flex-start',
+                  width: 'auto',
+                  padding: '6px 12px',
+                  fontSize: 13
+                }}
+                onClick={() => cueFileInputRef.current?.click()}
+                disabled={cueIngesting}
+              >
+                Upload PDF / DOCX / TXT / MD
+              </button>
+              {pendingCueFile && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    alignItems: 'flex-start'
+                  }}
+                >
+                  <label className="settings-label">Name this cue sheet</label>
+                  <input
+                    className="settings-input"
+                    value={pendingCueLabel}
+                    onChange={(e) => setPendingCueLabel(e.target.value)}
+                    placeholder={defaultCueLabel(pendingCueFile.name)}
+                  />
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      style={{ width: 'auto', padding: '6px 12px', fontSize: 13 }}
+                      onClick={() => void onConfirmCueSheet()}
+                      disabled={cueIngesting}
+                    >
+                      Add cue sheet
+                    </button>
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={onCancelCueSheet}
+                      disabled={cueIngesting}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+              {cueSheetStatus && (
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  {cueSheetStatus}
+                </span>
+              )}
+              {cueSheets.length === 0 ? (
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 8 }}>
+                  Upload the notes you prepared for this interview. Hue will show your own answer
+                  when it hears a question you prepared for, and fall back to generating one when
+                  it doesn&apos;t.
+                </span>
+              ) : (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontSize: 13,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="cueSheetSelection"
+                      checked={s.selectedCueSheetId === ''}
+                      onChange={() => void onSelectCueSheet('')}
+                    />
+                    None — always generate an answer
+                  </label>
+                  {cueSheets.map((sheet) => (
+                    <div
+                      key={sheet.id}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}
+                    >
+                      <label
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          flex: 1,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          name="cueSheetSelection"
+                          checked={s.selectedCueSheetId === sheet.id}
+                          onChange={() => void onSelectCueSheet(sheet.id)}
+                        />
+                        <span>
+                          {sheet.label}
+                          <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                            {' — '}
+                            {sheet.cards.length} card{sheet.cards.length === 1 ? '' : 's'}
+                            {' · '}
+                            {new Date(sheet.createdAt).toLocaleDateString()}
+                          </span>
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        className="link-btn"
+                        onClick={() => void onDeleteCueSheet(sheet.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>

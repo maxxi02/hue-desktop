@@ -205,6 +205,8 @@ export interface HueSettings {
    * the failure the scheduler's `self` speaker guard exists to prevent.
    */
   speculativeDrafting: boolean
+  /** Which cue sheet is armed for the next session. Empty means none. */
+  selectedCueSheetId: string
 }
 
 export const DEFAULT_SETTINGS: HueSettings = {
@@ -247,7 +249,8 @@ export const DEFAULT_SETTINGS: HueSettings = {
   relayEnabled: false,
   relayBaseUrl: 'http://localhost:8787',
   stealthMode: false,
-  speculativeDrafting: false
+  speculativeDrafting: false,
+  selectedCueSheetId: ''
 }
 
 /** Keys that are sensitive and stored encrypted at rest via Electron safeStorage. */

@@ -4,6 +4,7 @@ import type { PipelineState } from './lib/pipeline'
 import type { VoiceTurn, CaptureTurn } from './hooks/useVoiceMode'
 import type { ScreenCapture } from '@shared/types'
 import { describeStory, type Grounding } from '@shared/grounding'
+import type { CueCard } from '@shared/cuesheet'
 import { parseProfileBundle, type ProfileBundle } from '@shared/profile'
 import { describeReview, reviewSession, type SessionReview } from '@shared/session-review'
 import {
@@ -277,6 +278,51 @@ function Receipt({ grounding }: { grounding: Grounding }): React.JSX.Element {
       <span className="receipt-mark" aria-hidden="true" />
       Not anchored to your history — improvise from this, don’t read it off the screen.
     </div>
+  )
+}
+
+/**
+ * The user's own prepared answer, latched onto the current question.
+ *
+ * Rendered in place of a generated answer, never beside one — the pipeline
+ * enforces that itself by aborting generation the instant a card latches (see
+ * VoicePipeline.applyFinalCommands), so there is never a competing assistant
+ * turn for this to conflict with; callers just need to stop showing whatever
+ * they showed before and show this instead.
+ *
+ * `cues` get the exact text-block treatment the generated answer already uses
+ * (passed in as `textClass` — `bubble-text` in the transcript, `glance-text`
+ * in glance mode), just bolded per line, so the user is not learning a second
+ * layout under pressure. `script` sits behind a disclosure that starts
+ * collapsed: an open paragraph invites reading verbatim, which is the exact
+ * failure mode the cue format exists to prevent. Callers must mount this
+ * keyed on `card.id` — the collapsed state lives in this component's own
+ * `useState`, and without a fresh key a second question would inherit the
+ * first question's already-open script.
+ */
+function CueCardBody({ card, textClass }: { card: CueCard; textClass: string }): React.JSX.Element {
+  const [scriptOpen, setScriptOpen] = useState(false)
+  return (
+    <>
+      <div className="bubble-label">Prepared answer</div>
+      <div className={textClass}>
+        {card.cues.map((cue, i) => (
+          <div key={i}>
+            <strong>{cue}</strong>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="review-close"
+        onClick={() => setScriptOpen((v) => !v)}
+        aria-expanded={scriptOpen}
+        title={scriptOpen ? 'Hide the full prepared script' : 'Show the full prepared script'}
+      >
+        {scriptOpen ? 'Hide full script' : 'Show full script'}
+      </button>
+      {scriptOpen && <div className={textClass}>{card.script}</div>}
+    </>
   )
 }
 
@@ -676,7 +722,7 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     const el = transcriptRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [messages, voice.greetingText])
+  }, [messages, voice.greetingText, voice.cueCard])
 
   /**
    * File the review when the session ends.
@@ -773,13 +819,21 @@ export default function App(): React.JSX.Element {
       prevGlanceTextRef.current = undefined
       return
     }
+    if (voice.cueCard) {
+      // A cue card lands whole rather than streaming in, so it is never a
+      // "continuation" of whatever text was on screen before — every card is
+      // read from the top, the same as a genuinely new generated answer.
+      prevGlanceTextRef.current = undefined
+      el.scrollTop = 0
+      return
+    }
     const text = latestAnswer?.text ?? ''
     const prev = prevGlanceTextRef.current
     const continuation =
       prev !== undefined && prev !== '' && (text.startsWith(prev) || prev.startsWith(text))
     prevGlanceTextRef.current = text
     if (!continuation) el.scrollTop = 0
-  }, [latestAnswer?.text, glance])
+  }, [latestAnswer?.text, glance, voice.cueCard])
 
   // Escape leaves glance mode. Getting back to the full transcript has to be a
   // reflex, not a hunt for the toggle — and Escape is already free here, since
@@ -898,7 +952,11 @@ export default function App(): React.JSX.Element {
          */
         <main className="app-main app-main--glance">
           <div className="glance" ref={glanceRef}>
-            {latestAnswer ? (
+            {voice.cueCard ? (
+              // The user's own prepared answer takes the whole surface — never
+              // alongside a generated one, see CueCardBody's doc comment.
+              <CueCardBody key={voice.cueCard.id} card={voice.cueCard} textClass="glance-text" />
+            ) : latestAnswer ? (
               <div className="glance-text">{latestAnswer.text}</div>
             ) : (
               <div className="glance-text glance-text--waiting">
@@ -908,7 +966,9 @@ export default function App(): React.JSX.Element {
               </div>
             )}
             {voice.error && <div className="error-msg">{voice.error}</div>}
-            {latestAnswer?.grounding && (
+            {/* No receipt for a cue card: it is the user's own prepared answer,
+                not a generated one, so there is nothing to ground. */}
+            {!voice.cueCard && latestAnswer?.grounding && (
               <div className="glance-receipt">
                 <Receipt grounding={latestAnswer.grounding} />
               </div>
@@ -984,6 +1044,15 @@ export default function App(): React.JSX.Element {
                   )}
                 </div>
               ))
+            )}
+            {/* The prepared answer for the question just asked. There is never
+                a generated bubble to sit beside — the pipeline aborts
+                generation the moment a card latches — so this simply appears
+                where that bubble would otherwise have gone. */}
+            {voice.cueCard && (
+              <div className="bubble bubble--assistant">
+                <CueCardBody key={voice.cueCard.id} card={voice.cueCard} textClass="bubble-text" />
+              </div>
             )}
             {voice.error && <div className="error-msg">{voice.error}</div>}
           </div>
