@@ -285,12 +285,10 @@ import type { Command } from './speculation'
 export interface LatchState {
   /** The card currently on screen, or null. Holds until the next question. */
   cardId: string | null
-  /** True when generation was skipped for the question now in progress. */
-  suppressedQuestion: boolean
 }
 
 export function newLatchState(): LatchState {
-  return { cardId: null, suppressedQuestion: false }
+  return { cardId: null }
 }
 
 export interface GateDecision {
@@ -308,7 +306,18 @@ export interface GateDecision {
  * So the rules live out here, on the caller's side of the boundary.
  *
  * Returns the commands to actually perform, plus whether the caller must call
- * `scheduler.reset()` afterwards — see the note on suppression above.
+ * `scheduler.reset()` afterwards when a mid-question fire is suppressed.
+ *
+ * ## Suppression recovery
+ *
+ * When a speculative fire is suppressed mid-question, the scheduler believes a
+ * draft is in flight (its `draft` is set), but we never sent it. Without a reset,
+ * the scheduler's `accepts(specId)` will reject the deltas we *do* want, and
+ * later when the final arrives, `onFinal` emits a fire for endpoint-then-generate.
+ *
+ * At the final, a fire is the only possible recovery — never suppress it.
+ * Suppressing the endpoint fire leaves the question blank, the worst outcome
+ * this feature exists to prevent.
  */
 export function gateCommands(
   commands: Command[],
@@ -323,8 +332,10 @@ export function gateCommands(
   for (const command of commands) {
     switch (command.kind) {
       case 'fire':
-        if (decision.suppress) {
-          state.suppressedQuestion = true
+        // A mid-question fire can be suppressed if a cue card matched. At the final,
+        // a fire is the endpoint-then-generate recovery and must pass through —
+        // there is no other path to an answer.
+        if (decision.suppress && !decision.isFinal) {
           resetScheduler = true
           continue
         }
@@ -332,10 +343,11 @@ export function gateCommands(
         break
 
       case 'regenerate':
-        // A latched card is the answer. Regenerating over it would replace the
-        // user's own prepared words with the model's, which is the whole thing
-        // this feature exists to avoid.
-        if (state.cardId !== null && decision.latch !== null) continue
+        // A latched card is the answer. While it is on screen, regenerating over
+        // it would replace the user's own prepared words with the model's, which is
+        // the whole thing this feature exists to avoid. A new question (reset)
+        // clears the latch, so the next question generates normally.
+        if (state.cardId !== null) continue
         out.push(command)
         break
 
@@ -344,7 +356,6 @@ export function gateCommands(
         // the card stable for the entire duration of the user's answer and no
         // longer.
         state.cardId = null
-        state.suppressedQuestion = false
         out.push(command)
         break
 
@@ -354,8 +365,6 @@ export function gateCommands(
         out.push(command)
     }
   }
-
-  if (decision.isFinal && decision.latch === null) state.suppressedQuestion = false
 
   return { commands: out, resetScheduler }
 }

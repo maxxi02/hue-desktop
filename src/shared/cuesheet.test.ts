@@ -91,6 +91,7 @@ test('suppress threshold is stricter than render threshold', () => {
 
 import { gateCommands, newLatchState } from './cuesheet.ts'
 import type { Command } from './speculation.ts'
+import { SpeculationScheduler } from './speculation.ts'
 
 test('suppression drops fire and asks for a scheduler reset', () => {
   const state = newLatchState()
@@ -98,7 +99,6 @@ test('suppression drops fire and asks for a scheduler reset', () => {
   const out = gateCommands(fire, state, { suppress: true, latch: null, isFinal: false })
   assert.deepEqual(out.commands, [])
   assert.equal(out.resetScheduler, true, 'dropping fire without a reset desyncs the scheduler')
-  assert.equal(state.suppressedQuestion, true)
 })
 
 test('abort, commit and reset always pass through', () => {
@@ -112,15 +112,36 @@ test('abort, commit and reset always pass through', () => {
   assert.deepEqual(out.commands, cmds)
 })
 
-test('a suppressed question that fails to latch still regenerates', () => {
+test('suppression at the final never drops the endpoint fire', () => {
+  const scheduler = new SpeculationScheduler()
   const state = newLatchState()
-  gateCommands([{ kind: 'fire', specId: 1, text: 'x' }], state, {
-    suppress: true, latch: null, isFinal: false
-  })
-  const out = gateCommands([{ kind: 'regenerate', specId: 2, text: 'full question' }], state, {
-    suppress: false, latch: null, isFinal: true
-  })
-  assert.deepEqual(out.commands, [{ kind: 'regenerate', specId: 2, text: 'full question' }])
+  let now = 1000
+
+  // Drive scheduler to fire: feed 8+ words stable for 400ms
+  const interim = 'why do you want to leave your current role'
+  let lastCommand: Command[] = []
+
+  scheduler.onInterim(interim, 'interviewer', now)
+  now += 500
+  lastCommand = scheduler.onTick(now)
+
+  // Confirm we got a fire
+  assert.ok(lastCommand.some((c) => c.kind === 'fire'), 'scheduler should emit fire after stable interim')
+
+  // Suppress the speculative fire mid-question
+  const suppressed = gateCommands(lastCommand, state, { suppress: true, latch: null, isFinal: false })
+  assert.equal(suppressed.resetScheduler, true)
+  scheduler.reset()
+
+  // At the final, the scheduler emits an endpoint fire (not regenerate)
+  const finalText = 'why do you want to leave your current role and start at our company'
+  const finalCommands = scheduler.onFinal(finalText, 'interviewer', now)
+
+  // Gatekeeper must NOT suppress the endpoint fire even with suppress=true
+  const gated = gateCommands(finalCommands, state, { suppress: true, latch: null, isFinal: true })
+  assert.ok(gated.commands.length > 0, 'endpoint fire must reach the pipeline to prevent blank screen')
+  assert.ok(gated.commands.some((c) => c.kind === 'fire'), 'endpoint fire must pass through')
+  assert.equal(gated.resetScheduler, false, 'endpoint fire does not trigger scheduler reset')
 })
 
 test('a latch drops the regenerate that would overwrite it', () => {
@@ -137,4 +158,19 @@ test('a new question clears the previous latch', () => {
   gateCommands([], state, { suppress: false, latch: 'c-support', isFinal: true })
   gateCommands([{ kind: 'reset' }], state, { suppress: false, latch: null, isFinal: false })
   assert.equal(state.cardId, null)
+})
+
+test('a standing latch from a prior call still blocks a later regenerate', () => {
+  const state = newLatchState()
+
+  // Set a latch in the first call
+  gateCommands([], state, { suppress: false, latch: 'c-support', isFinal: true })
+  assert.equal(state.cardId, 'c-support')
+
+  // Later, a stray regenerate arrives in a new gateCommands call with latch: null
+  // The standing latch must still protect it
+  const out = gateCommands([{ kind: 'regenerate', specId: 2, text: 'different question' }], state, {
+    suppress: false, latch: null, isFinal: false
+  })
+  assert.deepEqual(out.commands, [], 'standing latch must still block the regenerate')
 })
