@@ -172,6 +172,54 @@ test('a standing latch from a prior call still blocks a later regenerate', () =>
   assert.deepEqual(out.commands, [], 'standing latch must still block the regenerate')
 })
 
+test('a latched final drops the endpoint fire and asks for a scheduler reset', () => {
+  const state = newLatchState()
+  const fire: Command[] = [{ kind: 'fire', specId: 3, text: 'why do you want this role' }]
+  const out = gateCommands(fire, state, { suppress: false, latch: 'c-support', isFinal: true })
+  assert.deepEqual(out.commands, [], 'a card matched this final; the endpoint fire must not start a competing generation')
+  assert.equal(out.resetScheduler, true, 'dropping the fire without a reset leaves a phantom draft blocking the next question')
+})
+
+test('a final with no latch still lets the endpoint fire through (recovery must not regress)', () => {
+  const state = newLatchState()
+  const fire: Command[] = [{ kind: 'fire', specId: 4, text: 'why do you want this role' }]
+  const out = gateCommands(fire, state, { suppress: false, latch: null, isFinal: true })
+  assert.ok(out.commands.some((c) => c.kind === 'fire'), 'no card matched; the endpoint fire is the only recovery and must pass through')
+  assert.equal(out.resetScheduler, false)
+})
+
+test('a second question that matches nothing clears the first question\'s latch, so its regenerate is not dropped', () => {
+  const state = newLatchState()
+
+  // Q1's final latches card1.
+  gateCommands([], state, { suppress: false, latch: 'c-support', isFinal: true })
+  assert.equal(state.cardId, 'c-support')
+
+  // Q2's final matches nothing. Before Q2's regenerate is evaluated, the
+  // stale latch from Q1 must already be cleared.
+  const out = gateCommands(
+    [{ kind: 'regenerate', specId: 5, text: 'a different question' }],
+    state,
+    { suppress: false, latch: null, isFinal: true }
+  )
+  assert.equal(state.cardId, null, 'a non-matching final must clear the stale latch from the previous question')
+  assert.ok(out.commands.some((c) => c.kind === 'regenerate'), 'Q2 must get its regenerate, not be silently dropped by a stale latch')
+})
+
+test('an interim with no latch does not clear a standing latch mid-answer', () => {
+  const state = newLatchState()
+
+  // A final latches a card.
+  gateCommands([], state, { suppress: false, latch: 'c-support', isFinal: true })
+  assert.equal(state.cardId, 'c-support')
+
+  // While the user is answering, interims keep arriving with latch: null
+  // (the interim path never latches — see `decide()` in pipeline.ts). The
+  // card must stay on screen for the whole answer, not flicker off.
+  gateCommands([], state, { suppress: false, latch: null, isFinal: false })
+  assert.equal(state.cardId, 'c-support', 'an interim must never clear a standing latch')
+})
+
 const source = 'I see it less as switching away from development and more as bringing my background into a different contribution. I shipped a lead scoring engine.'
 
 test('an extractive script is accepted', () => {

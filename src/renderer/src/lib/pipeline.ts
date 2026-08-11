@@ -14,8 +14,7 @@ import {
   newLatchState,
   type CueSheet,
   type CueCard,
-  type GateDecision,
-  type MatchResult
+  type GateDecision
 } from '../../../shared/cuesheet'
 import type {
   HueSettings,
@@ -167,8 +166,6 @@ export class VoicePipeline {
   private matcher: CueMatcher | null = null
   /** Which card (if any) is latched onto the current question. */
   private latch = newLatchState()
-  /** The matcher's verdict on the most recent text seen, kept for inspection/debugging. */
-  private lastMatch: MatchResult | null = null
 
   /** The in-flight speculative LLM stream, if any. Never `currentStreamId`. */
   private specStreamId: string | null = null
@@ -354,11 +351,6 @@ export class VoicePipeline {
     return this.state
   }
 
-  /** The matcher's verdict on the most recently seen text. Exposed for debugging/inspection. */
-  getLastCueMatch(): MatchResult | null {
-    return this.lastMatch
-  }
-
   /**
    * Wipe the conversation history so the next turn starts with a clean slate.
    * Aborts any in-flight reply first (and stops its audio) so a streaming
@@ -533,7 +525,6 @@ export class VoicePipeline {
       return { suppress: false, latch: null, isFinal }
     }
     const result = this.matcher.match(text)
-    this.lastMatch = result
     if (!isFinal) {
       return { suppress: this.matcher.suppresses(result), latch: null, isFinal }
     }
@@ -572,6 +563,9 @@ export class VoicePipeline {
 
   /** Commands produced by the final transcript, which knows what was really asked. */
   private applyFinalCommands(commands: SpeculationCommand[], finalText: string): void {
+    // Captured before gateCommands mutates `this.latch` in place, so it reads
+    // as "what was on screen a moment ago" for the transition check below.
+    const previousLatch = this.latch.cardId
     const decision = this.decide(finalText, true)
     const gated = gateCommands(commands, this.latch, decision)
     if (gated.resetScheduler) this.scheduler?.reset()
@@ -584,6 +578,14 @@ export class VoicePipeline {
       this.abortSpeculation()
       this.specId = null
       this.callbacks.onCueCard?.(this.matcher?.card(decision.latch) ?? null)
+    } else if (previousLatch !== null) {
+      // A final is a question boundary: it either latches a new card or
+      // clears whatever was standing (see gateCommands). This final matched
+      // nothing, but a card was on screen from a previous question — tell the
+      // UI so the stale card doesn't linger through the next question. Not
+      // fired when nothing was ever latched, so an ordinary unmatched
+      // question doesn't spam the callback.
+      this.callbacks.onCueCard?.(null)
     }
 
     for (const command of commands) {

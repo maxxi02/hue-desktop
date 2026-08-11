@@ -336,9 +336,26 @@ export interface GateDecision {
  * the scheduler's `accepts(specId)` will reject the deltas we *do* want, and
  * later when the final arrives, `onFinal` emits a fire for endpoint-then-generate.
  *
- * At the final, a fire is the only possible recovery — never suppress it.
- * Suppressing the endpoint fire leaves the question blank, the worst outcome
- * this feature exists to prevent.
+ * At the final, a fire is the only possible recovery when NO card matched —
+ * suppressing that endpoint fire leaves the question blank, the worst outcome
+ * this feature exists to prevent. But when a card DID match this final
+ * (`decision.latch !== null`), the fire is not a recovery at all: it is the
+ * ordinary endpoint-then-generate path about to start a competing model
+ * generation alongside the user's own prepared card. That fire is dropped
+ * too, with the same `resetScheduler` obligation — `onFinal`'s `fireCommand()`
+ * has already set the scheduler's `draft`, and left alone that phantom draft
+ * blocks the scheduler from firing on the next question ("one in flight,
+ * ever").
+ *
+ * ## The latch is a per-question boundary
+ *
+ * A final always either latches a new card or clears whatever was standing —
+ * never leaves it untouched. Interims never touch the latch: only a final
+ * closes the question. Without this, a card that matched question 1 would
+ * still be `state.cardId` when question 2's non-matching final arrives, and
+ * question 2's `regenerate` would be silently dropped by the case below
+ * (mistaking the stale latch for a live one), leaving question 2 unanswered
+ * while question 1's card is still on screen.
  */
 export function gateCommands(
   commands: Command[],
@@ -348,15 +365,20 @@ export function gateCommands(
   let resetScheduler = false
   const out: Command[] = []
 
-  if (decision.latch !== null) state.cardId = decision.latch
+  if (decision.isFinal) state.cardId = decision.latch
 
   for (const command of commands) {
     switch (command.kind) {
       case 'fire':
-        // A mid-question fire can be suppressed if a cue card matched. At the final,
-        // a fire is the endpoint-then-generate recovery and must pass through —
-        // there is no other path to an answer.
+        // A mid-question fire can be suppressed if a cue card matched.
         if (decision.suppress && !decision.isFinal) {
+          resetScheduler = true
+          continue
+        }
+        // At the final, a fire is normally the endpoint-then-generate
+        // recovery and must pass through. But if a card matched THIS final,
+        // the fire is a competing generation, not a recovery — drop it too.
+        if (decision.isFinal && decision.latch !== null) {
           resetScheduler = true
           continue
         }
