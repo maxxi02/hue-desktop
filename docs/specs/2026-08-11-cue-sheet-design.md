@@ -261,10 +261,33 @@ deltas of a draft the pipeline *did* want. Suppression must therefore drop the
 `fire` **and** call `scheduler.reset()`, returning the scheduler to a coherent
 no-draft state.
 
-That has a useful consequence. With no draft in flight, `onFinal` cannot emit
-`commit` — it emits `regenerate`, the scheduler's own endpoint-then-generate
-path. Which is exactly the recovery behaviour needed below, obtained without a
-special case.
+**Correction (2026-08-11, found in review of the implementation).** An earlier
+draft of this spec claimed that with no draft in flight `onFinal` emits
+`regenerate`, and that the recovery path below therefore came for free. That is
+false. `speculation.ts`'s `onFinal` no-draft branch reads:
+
+```ts
+if (!inFlight) {
+  this.firesThisQuestion = 0
+  return normalised.length === 0 ? [] : [this.fireCommand(normalised)]
+}
+```
+
+It emits a **`fire`** — endpoint-then-generate at unspeculated latency.
+`regenerate` comes only from the other branch, where a draft exists but answers a
+different question.
+
+This matters because the gate drops `fire` under suppression. A question that
+suppressed mid-way, reset the scheduler, and then still scored as suppressing at
+the final would have its endpoint `fire` dropped too, and nothing would ever be
+generated — the blank card this design exists to prevent, reachable rather than
+theoretical.
+
+The rule is therefore explicit and structural: **suppression may drop a `fire`
+only while the question is still in progress. At the final, a `fire` always
+passes through.** It is enforced inside `gateCommands` rather than by the caller
+choosing safe flags, because a safety property that holds only while the caller
+cooperates is not a safety property.
 
 **Teardown outside the dispatchers.** `abortResponse()` independently calls
 `abortSpeculation()` and `scheduler.reset()` without passing through either
@@ -279,14 +302,16 @@ one. A question can suppress mid-way and then fail the render gate — the
 interviewer's second clause turned it into a different question. Unhandled, that
 produces exactly the blank card the threshold asymmetry exists to prevent.
 
-Recovery is explicit: when a question was suppressed and the final does not
-latch, the pipeline performs the `regenerate` the scheduler now naturally emits.
-The user pays full generation latency for that question — the honest cost of a
-suppression that turned out wrong, and strictly better than a blank card.
+Recovery is explicit: because the gate never drops a `fire` at the final, the
+scheduler's endpoint-then-generate command always reaches the pipeline. The user
+pays full generation latency for that question — the honest cost of a suppression
+that turned out wrong, and strictly better than a blank card.
 
-Measured separately as **suppression regret**, because it is the signal that the
-suppress threshold is too low. The false-suppress bar in the fixture suite keeps
-it near zero; this is the runtime backstop for cases the corpus lacked.
+The intended metric here was **suppression regret**, the signal that the suppress
+threshold is too low. It is not implemented: it belongs with the other metrics
+work, which is blocked on `SpeculationMetrics` living inside the scheduler this
+design may not modify. The false-suppress bar in the fixture suite is the actual
+guard; this path is the runtime backstop for cases the corpus lacked.
 
 ### The latch and stale renders
 
