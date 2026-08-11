@@ -368,3 +368,48 @@ export function gateCommands(
 
   return { commands: out, resetScheduler }
 }
+
+/**
+ * Cue grounding.
+ *
+ * `src/shared/grounding.ts` is deliberately not used and must not be extended
+ * to cover this. It resolves one `story_id` against `bundle.stories` by exact
+ * match, is hard-coupled to `ProfileBundle`, and its header forbids ever
+ * adding fuzzy matching — because an id merely *near* a bank entry is an
+ * invented story wearing a real label. "Is this id in the bank" and "is this
+ * sentence in the source document" are different questions, and merging them
+ * would weaken the strictest check in the product.
+ */
+
+function normalise(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * The script must be a span the user actually wrote, not prose about it.
+ *
+ * Ingest is instructed to select rather than compose, which turns verification
+ * into containment rather than a judgement call — the only kind of grounding
+ * check that cannot itself be wrong.
+ */
+export function scriptIsExtractive(script: string, source: string): boolean {
+  const s = normalise(script)
+  return s.length > 0 && normalise(source).includes(s)
+}
+
+/**
+ * Drops cues that introduce content absent from their own card's script.
+ *
+ * Degrades a card, never invalidates a sheet: a card with two good cues is
+ * still useful, and refusing the whole sheet over one bad compression would
+ * make the feature fail closed for no safety gain.
+ */
+export function verifyCard(card: CueCard, source: string): CueCard {
+  const script = scriptIsExtractive(card.script, source) ? card.script : ''
+  const allowed = new Set(cueTokens(script))
+  return {
+    ...card,
+    script,
+    cues: card.cues.filter((cue) => cueTokens(cue).every((t) => allowed.has(t)))
+  }
+}
