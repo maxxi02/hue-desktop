@@ -26,10 +26,44 @@ no possibility of invention.
 - **Zero invention risk by construction.** The content is the user's, selected
   rather than written. There is nothing to ground because nothing was composed.
 - **Zero generation latency on the matched path.** The card is already on disk.
-- **It saves tokens rather than spending them.** A confident match suppresses
-  the speculation that would otherwise have fired.
 - **It needs no model at match time**, which makes it the first substantial
   capability that works with no key configured and no network.
+- **It was expected to save tokens rather than spend them**, by suppressing the
+  speculation that would otherwise have fired. **Measured, it mostly does not —
+  see below.**
+
+### What the corpus actually showed (2026-08-11)
+
+An honest 111-case corpus (3 sheets, 15 cards, 90 positive and 21 negative
+transcripts, written as an interviewer would speak rather than back-derived from
+the triggers) gives:
+
+| | |
+|---|---|
+| Hit rate — the right card renders | **0.778** |
+| Suppression coverage — generation actually skipped | **0.133** |
+| False suppressions | **0** |
+| False renders | **0** |
+
+So the feature reliably shows the user their own prepared answer, and reliably
+does not show the wrong one. But it skips generating on roughly one question in
+eight, not on most of them. **The token-saving argument above is largely
+unrealised.** In practice this is a display path that usually runs alongside
+generation rather than replacing it.
+
+An initial scoring defect accounted for part of the gap — bigrams were two-thirds
+of the score's denominator, capping paraphrase matches near 0.33 — and fixing it
+moved suppression coverage from 0.078 to 0.133 and hit rate from 0.722 to 0.778.
+The remaining gap is structural: suppression is deliberately the stricter gate,
+because a wrong suppression leaves a blank card mid-interview while a wrong
+render costs only a glance. A threshold sweep found no configuration that
+narrows the gap without breaking one of the zero bars.
+
+**Consequence for the tier argument.** The claim that this gives free tiers a
+substantial capability still holds — matching needs no model and no network, and
+0.778 of prepared questions surface the user's own words. The claim that it pays
+for itself in saved tokens does not, and should not be repeated in product copy
+without this number beside it.
 
 It does not replace speculation. It covers the anticipated questions; generation
 covers the rest. The design keeps the two strictly ordered rather than competing.
