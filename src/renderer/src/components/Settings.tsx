@@ -688,9 +688,15 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
     }
   }
 
+  // Both of these take ONLY `selectedCueSheetId` off the persisted object and
+  // merge it into whatever is in the drawer right now. Assigning the whole
+  // returned settings object with `setS(next)` would overwrite every unsaved
+  // edit the user has open — a half-typed API key, a moved slider — because
+  // the persisted copy predates them. Matches the functional-partial-update
+  // pattern the phone/stealth/relay toggles in this file already use.
   const onSelectCueSheet = async (id: string): Promise<void> => {
     const next = await window.hue.cueSheet.select(id)
-    setS(next)
+    setS((prev) => (prev ? { ...prev, selectedCueSheetId: next.selectedCueSheetId } : prev))
   }
 
   const onDeleteCueSheet = async (id: string): Promise<void> => {
@@ -699,7 +705,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
     // re-fetch settings so the radio group doesn't keep pointing at a sheet
     // that no longer exists.
     const next = await window.hue.settings.get()
-    setS(next)
+    setS((prev) => (prev ? { ...prev, selectedCueSheetId: next.selectedCueSheetId } : prev))
     await loadCueSheets()
   }
 
