@@ -296,3 +296,69 @@ test('negation parity: cue carrying all negations in span is accepted', () => {
   const result = verifyCard(card, 'I did not cut costs.')
   assert.equal(result.cues.length, 1, 'cue with negation parity must be kept (did is stopword, cue has [not, cut, costs])')
 })
+
+test('a latched final drops the commit that would generate underneath the card', () => {
+  const state = newLatchState()
+  const out = gateCommands([{ kind: 'commit', specId: 7 }], state, {
+    suppress: false, latch: 'c-support', isFinal: true
+  })
+  assert.deepEqual(
+    out.commands,
+    [],
+    'the caller aborts speculation when a card latches, so this commit finds no draft and generates a full answer under the card'
+  )
+  assert.equal(out.resetScheduler, true, 'a dropped commit leaves the same phantom draft a dropped fire does')
+})
+
+test('a commit at an unlatched final still passes through', () => {
+  const state = newLatchState()
+  const cmds: Command[] = [{ kind: 'commit', specId: 8 }]
+  const out = gateCommands(cmds, state, { suppress: false, latch: null, isFinal: true })
+  assert.deepEqual(out.commands, cmds, 'no card matched; the draft is the answer and must be adopted')
+  assert.equal(out.resetScheduler, false)
+})
+
+test('an interim reset that clears a standing latch reports latchCleared', () => {
+  const state = newLatchState()
+
+  // Q1's final latches a card.
+  const latched = gateCommands([], state, { suppress: false, latch: 'c-support', isFinal: true })
+  assert.equal(latched.latchCleared, false)
+  assert.equal(state.cardId, 'c-support')
+
+  // Mid-Q2 the interviewer withdraws the question: the scheduler emits
+  // abort + reset. The gate clears the latch, and the caller — which never
+  // sees a final here — has to be told, or the card stays on screen and (in
+  // glance mode) hides Q2's real answer for good.
+  const out = gateCommands([{ kind: 'abort', specId: 9 }, { kind: 'reset' }], state, {
+    suppress: false, latch: null, isFinal: false
+  })
+  assert.equal(state.cardId, null)
+  assert.equal(out.latchCleared, true, 'the interim path has no other way to learn the card came down')
+})
+
+test('latchCleared is false when no latch was standing', () => {
+  const state = newLatchState()
+  const out = gateCommands([{ kind: 'reset' }], state, { suppress: false, latch: null, isFinal: false })
+  assert.equal(out.latchCleared, false, 'an ordinary reset must not spam the callback')
+})
+
+test('latchCleared is false when a final replaces one latch with another', () => {
+  const state = newLatchState()
+  gateCommands([], state, { suppress: false, latch: 'c-support', isFinal: true })
+  const out = gateCommands([], state, { suppress: false, latch: 'c-weakness', isFinal: true })
+  assert.equal(out.latchCleared, false, 'a card is still standing; the final path renders the new one')
+})
+
+test('a dropped regenerate asks for a scheduler reset', () => {
+  const state = newLatchState()
+  const out = gateCommands([{ kind: 'regenerate', specId: 6, text: 'q' }], state, {
+    suppress: false, latch: 'c-support', isFinal: true
+  })
+  assert.deepEqual(out.commands, [])
+  assert.equal(
+    out.resetScheduler,
+    true,
+    "speculation.ts sets its draft before returning regenerate; without a reset that phantom draft blocks maybeFire for the whole next question"
+  )
+})

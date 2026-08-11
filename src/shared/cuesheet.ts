@@ -23,6 +23,8 @@
  * neither.
  */
 
+import type { Command } from './speculation.ts'
+
 /**
  * Words carrying no discriminating signal in an interview question.
  *
@@ -179,7 +181,16 @@ export interface CueSheet {
 export interface MatchResult {
   cardId: string | null
   score: number
-  /** Winner's lead over the runner-up. Zero when fewer than two cards scored. */
+  /**
+   * Winner's lead over the runner-up.
+   *
+   * The runner-up starts at a sentinel 0 and is only ever raised by a card
+   * that actually scored, so on a one-card sheet — or a sheet where only one
+   * card scored above zero — the margin is the winner's FULL score, not zero.
+   * The margin gate is therefore a no-op in that case rather than a blanket
+   * block, which is the intended behaviour: with nothing to be confused with,
+   * there is no ambiguity to guard against.
+   */
   margin: number
   /**
    * The utterance looks like someone reading an answer aloud rather than asking
@@ -345,8 +356,6 @@ export class CueMatcher {
   }
 }
 
-import type { Command } from './speculation'
-
 export interface LatchState {
   /** The card currently on screen, or null. Holds until the next question. */
   cardId: string | null
@@ -405,9 +414,10 @@ export function gateCommands(
   commands: Command[],
   state: LatchState,
   decision: GateDecision
-): { commands: Command[]; resetScheduler: boolean } {
+): { commands: Command[]; resetScheduler: boolean; latchCleared: boolean } {
   let resetScheduler = false
   const out: Command[] = []
+  const previousLatch = state.cardId
 
   if (decision.isFinal) state.cardId = decision.latch
 
@@ -434,7 +444,32 @@ export function gateCommands(
         // it would replace the user's own prepared words with the model's, which is
         // the whole thing this feature exists to avoid. A new question (reset)
         // clears the latch, so the next question generates normally.
-        if (state.cardId !== null) continue
+        //
+        // Dropping it carries the same `resetScheduler` obligation as dropping
+        // a fire, and for the same reason: `onFinal` set the scheduler's
+        // `draft` before handing this command over, so left alone that phantom
+        // draft makes `maybeFire`'s "one in flight, ever" check block
+        // speculation for the whole of the NEXT question.
+        if (state.cardId !== null) {
+          resetScheduler = true
+          continue
+        }
+        out.push(command)
+        break
+
+      case 'commit':
+        // A commit adopts an in-flight draft as the turn's answer. At a latched
+        // final there is no draft left to adopt: the caller aborts speculation
+        // the moment a card latches, so by the time the commit is handled the
+        // stream id is null and `commitSpeculation` takes its "generate for
+        // real rather than adopt an empty answer" branch — putting a full
+        // model generation on screen UNDERNEATH the user's own cue card, which
+        // is precisely the outcome the fire and regenerate cases exist to
+        // prevent. Dropped with the same scheduler-reset obligation.
+        if (decision.isFinal && decision.latch !== null) {
+          resetScheduler = true
+          continue
+        }
         out.push(command)
         break
 
@@ -447,13 +482,19 @@ export function gateCommands(
         break
 
       default:
-        // abort and commit always pass through, or scheduler state and the
-        // renderer's view of it drift apart.
+        // abort always passes through, or scheduler state and the renderer's
+        // view of it drift apart.
         out.push(command)
     }
   }
 
-  return { commands: out, resetScheduler }
+  return {
+    commands: out,
+    resetScheduler,
+    // A `reset` mid-question clears the latch without the caller ever seeing a
+    // final, so the caller has no other way to learn the card came down.
+    latchCleared: previousLatch !== null && state.cardId === null
+  }
 }
 
 /**

@@ -217,13 +217,22 @@ export class VoicePipeline {
     // Load the armed cue sheet, if any. An id that no longer resolves (sheet
     // deleted, settings stale) leaves the matcher null and the pipeline behaves
     // exactly as it does without the feature.
+    //
+    // Guarded, and the guard is the point: this runs before mic and ASR setup,
+    // so an unhandled rejection here — IPC failure, an unreadable sheets
+    // directory, a truncated sheet that makes `new CueMatcher` throw — would
+    // propagate out of `start()` and the interview would never begin. A cue
+    // sheet is an optional aid; it must never be able to stop a session.
+    this.matcher = null
     const selectedId = this.settings.selectedCueSheetId
     if (selectedId) {
-      const sheets = await window.hue.cueSheet.list()
-      const sheet = sheets.find((s: CueSheet) => s.id === selectedId)
-      this.matcher = sheet ? new CueMatcher(sheet) : null
-    } else {
-      this.matcher = null
+      try {
+        const sheets = await window.hue.cueSheet.list()
+        const sheet = sheets.find((s: CueSheet) => s.id === selectedId)
+        this.matcher = sheet ? new CueMatcher(sheet) : null
+      } catch {
+        this.matcher = null
+      }
     }
     this.latch = newLatchState()
 
@@ -538,6 +547,15 @@ export class VoicePipeline {
     const gated = gateCommands(commands, this.latch, decision)
     if (gated.resetScheduler) this.scheduler?.reset()
     commands = gated.commands
+
+    // A mid-question `reset` (the interviewer withdrew the question and started
+    // a different one) clears the latch inside the gate. The FINAL path
+    // compensates for that with its own `onCueCard(null)`; this path used not
+    // to, and the card simply stayed on screen. In glance mode `App.tsx`
+    // renders `voice.cueCard ? CueCardBody : latestAnswer`, so a stale card
+    // does not merely linger — it HIDES the real answer to the question that
+    // replaced it, for as long as the next question fails to match anything.
+    if (gated.latchCleared) this.callbacks.onCueCard?.(null)
 
     for (const command of commands) {
       switch (command.kind) {
