@@ -315,6 +315,12 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   const [resumeStatus, setResumeStatus] = useState<string | null>(null)
   const [cueSheets, setCueSheets] = useState<CueSheet[]>([])
   const [cueSheetStatus, setCueSheetStatus] = useState<string | null>(null)
+  // Set once a file is picked; cleared once its ingest is confirmed or
+  // cancelled. Holding the label here (rather than ingesting immediately on
+  // pick) is what lets the user see and edit the default before it's sent.
+  const [pendingCueFile, setPendingCueFile] = useState<File | null>(null)
+  const [pendingCueLabel, setPendingCueLabel] = useState('')
+  const [cueIngesting, setCueIngesting] = useState(false)
   const cueFileInputRef = useRef<HTMLInputElement>(null)
   // Tracks whether unmount has already happened, so a slow ingest that finishes
   // after the pane closes can't set state on it or leave onProgress subscribed
@@ -609,20 +615,49 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
     }
   }
 
+  // Derives the default label from a filename by stripping its extension —
+  // shared by the initial pick (to pre-fill the editable field) and the
+  // confirm step (as the fallback when the field is left blank).
+  const defaultCueLabel = (filename: string): string => filename.replace(/\.[^./\\]+$/, '')
+
+  // A file has been picked; stage it and pre-fill the editable label rather
+  // than ingesting immediately — the user needs to see and change the name
+  // before it's sent, since "notes-final-v2" isn't something they can pick
+  // between under pressure later.
+  const onCueFilePicked = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-selecting the same file
+    if (!file) return
+    setPendingCueFile(file)
+    setPendingCueLabel(defaultCueLabel(file.name))
+    setCueSheetStatus(null)
+  }
+
+  const onCancelCueSheet = (): void => {
+    setPendingCueFile(null)
+    setPendingCueLabel('')
+  }
+
   /**
-   * Uploads a cue sheet document and refreshes the list on success.
+   * Uploads the staged cue sheet document and refreshes the list on success.
    *
    * Ingest can fail for ordinary reasons — no API key configured, an
    * unreadable document, or a model response that yields zero usable cards —
    * so every path (throw, or a sheet with an empty `cards` array) has to land
    * on screen rather than leaving the progress line stuck mid-upload.
    */
-  const onCueSheetFile = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
-    const file = e.target.files?.[0]
-    e.target.value = '' // allow re-selecting the same file
-    if (!file) return
+  const onConfirmCueSheet = async (): Promise<void> => {
+    const file = pendingCueFile
+    if (!file || cueIngesting) return
 
-    const label = file.name.replace(/\.[^./\\]+$/, '')
+    // Blank/whitespace-only falls back to the filename default rather than
+    // creating an unnamed sheet; always trimmed before it's sent.
+    const trimmed = pendingCueLabel.trim()
+    const label = trimmed || defaultCueLabel(file.name)
+
+    setCueIngesting(true)
+    setPendingCueFile(null)
+    setPendingCueLabel('')
     setCueSheetStatus(`Uploading ${file.name}…`)
     // Subscribed before the call, not after: ingest takes a while, and the
     // first progress event fires immediately.
@@ -649,6 +684,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
     } finally {
       stopProgress()
       if (cueStopProgressRef.current === stopProgress) cueStopProgressRef.current = null
+      if (mountedRef.current) setCueIngesting(false)
     }
   }
 
@@ -1177,7 +1213,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                 type="file"
                 accept=".pdf,.docx,.txt,.md"
                 style={{ display: 'none' }}
-                onChange={onCueSheetFile}
+                onChange={onCueFilePicked}
               />
               <button
                 type="button"
@@ -1189,9 +1225,48 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                   fontSize: 13
                 }}
                 onClick={() => cueFileInputRef.current?.click()}
+                disabled={cueIngesting}
               >
                 Upload PDF / DOCX / TXT / MD
               </button>
+              {pendingCueFile && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    alignItems: 'flex-start'
+                  }}
+                >
+                  <label className="settings-label">Name this cue sheet</label>
+                  <input
+                    className="settings-input"
+                    value={pendingCueLabel}
+                    onChange={(e) => setPendingCueLabel(e.target.value)}
+                    placeholder={defaultCueLabel(pendingCueFile.name)}
+                  />
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      style={{ width: 'auto', padding: '6px 12px', fontSize: 13 }}
+                      onClick={() => void onConfirmCueSheet()}
+                      disabled={cueIngesting}
+                    >
+                      Add cue sheet
+                    </button>
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={onCancelCueSheet}
+                      disabled={cueIngesting}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
               {cueSheetStatus && (
                 <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
                   {cueSheetStatus}
