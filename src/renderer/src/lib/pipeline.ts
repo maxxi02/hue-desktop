@@ -8,6 +8,15 @@ import {
   type Command as SpeculationCommand,
   type Speaker
 } from '../../../shared/speculation'
+import {
+  CueMatcher,
+  gateCommands,
+  newLatchState,
+  type CueSheet,
+  type CueCard,
+  type GateDecision,
+  type MatchResult
+} from '../../../shared/cuesheet'
 import type {
   HueSettings,
   LlmMessage,
@@ -45,6 +54,13 @@ export interface PipelineCallbacks {
    */
   onAssistantComplete?: (text: string, grounding: Grounding | null) => void
   onError?: (message: string) => void
+  /**
+   * Fired when a prepared cue card latches onto the current question (the
+   * user's own prepared answer), or with null when the latch clears (a new
+   * question began, or the session tore down). Optional so existing callers
+   * keep compiling.
+   */
+  onCueCard?: (card: CueCard | null) => void
 }
 
 /** The VAD (and Whisper) sample rate; every buffer below is mono Float32 at this rate. */
@@ -142,6 +158,18 @@ export class VoicePipeline {
    */
   private scheduler: SpeculationScheduler | null = null
 
+  /**
+   * The cue matcher for the session's armed cue sheet, or null when none is
+   * selected (or the selected id no longer resolves to a sheet) — the pipeline
+   * then behaves exactly as it does without the feature. Built once per
+   * session in `start()`, not per utterance.
+   */
+  private matcher: CueMatcher | null = null
+  /** Which card (if any) is latched onto the current question. */
+  private latch = newLatchState()
+  /** The matcher's verdict on the most recent text seen, kept for inspection/debugging. */
+  private lastMatch: MatchResult | null = null
+
   /** The in-flight speculative LLM stream, if any. Never `currentStreamId`. */
   private specStreamId: string | null = null
   /** The scheduler's id for that stream — the guard that stale deltas are tested against. */
@@ -150,6 +178,16 @@ export class VoicePipeline {
   private specText = ''
   /** True once the speculative stream finished on its own, before the final arrived. */
   private specFinished = false
+
+  /**
+   * The most recent interim transcript text, held here because
+   * `SpeculationScheduler.latestInterim` is private and unreadable from the
+   * caller. `beginSegment`'s tick timer has no text of its own — `onTick` takes
+   * none — so it reads this instead of the scheduler's internal copy. Updated
+   * in `runInterim` immediately after a new interim is transcribed, and cleared
+   * whenever a segment opens or closes.
+   */
+  private lastInterimText = ''
 
   /** Speech captured since the VAD opened this segment, for interim transcription. */
   private speechFrames: Float32Array[] = []
@@ -178,6 +216,19 @@ export class VoicePipeline {
     // Surface the loading phase immediately: model downloads + VAD init can take
     // a while on the first run, and the UI should reflect that rather than look dead.
     this.setState('connecting')
+
+    // Load the armed cue sheet, if any. An id that no longer resolves (sheet
+    // deleted, settings stale) leaves the matcher null and the pipeline behaves
+    // exactly as it does without the feature.
+    const selectedId = this.settings.selectedCueSheetId
+    if (selectedId) {
+      const sheets = await window.hue.cueSheet.list()
+      const sheet = sheets.find((s: CueSheet) => s.id === selectedId)
+      this.matcher = sheet ? new CueMatcher(sheet) : null
+    } else {
+      this.matcher = null
+    }
+    this.latch = newLatchState()
 
     // Listen for streamed LLM tokens once; filter by the active streamId.
     this.unsubscribe.push(
@@ -303,6 +354,11 @@ export class VoicePipeline {
     return this.state
   }
 
+  /** The matcher's verdict on the most recently seen text. Exposed for debugging/inspection. */
+  getLastCueMatch(): MatchResult | null {
+    return this.lastMatch
+  }
+
   /**
    * Wipe the conversation history so the next turn starts with a clean slate.
    * Aborts any in-flight reply first (and stops its audio) so a streaming
@@ -391,10 +447,11 @@ export class VoicePipeline {
     this.speechFrames = []
     this.speechSamples = 0
     this.samplesAtLastInterim = 0
+    this.lastInterimText = ''
     if (this.tickTimer === null) {
       this.tickTimer = setInterval(() => {
         if (!this.scheduler) return
-        this.applyInterimCommands(this.scheduler.onTick(Date.now()))
+        this.applyInterimCommands(this.scheduler.onTick(Date.now()), this.lastInterimText)
       }, SPECULATION_TICK_MS)
     }
   }
@@ -405,6 +462,7 @@ export class VoicePipeline {
     this.speechFrames = []
     this.speechSamples = 0
     this.samplesAtLastInterim = 0
+    this.lastInterimText = ''
     if (this.tickTimer !== null) {
       clearInterval(this.tickTimer)
       this.tickTimer = null
@@ -447,8 +505,10 @@ export class VoicePipeline {
       // way, and feeding a late interim now would re-open a question the
       // scheduler has just closed.
       if (!this.speechActive || !this.scheduler) return
+      this.lastInterimText = text
       this.applyInterimCommands(
-        this.scheduler.onInterim(text, this.speakerOfIncomingSpeech(), Date.now())
+        this.scheduler.onInterim(text, this.speakerOfIncomingSpeech(), Date.now()),
+        text
       )
     } catch (e) {
       // An interim is best-effort scaffolding. Surfacing its failure would put an
@@ -460,8 +520,34 @@ export class VoicePipeline {
     }
   }
 
+  /**
+   * Ask the matcher what to do about the text so far.
+   *
+   * Returns null-latch on the interim path: suppression is decided live, but
+   * nothing is ever put on screen until the final. A card that changed twice
+   * while the interviewer was still talking is exactly the distraction the
+   * glance UI exists to avoid.
+   */
+  private decide(text: string, isFinal: boolean): GateDecision {
+    if (!this.matcher || text.trim().length === 0) {
+      return { suppress: false, latch: null, isFinal }
+    }
+    const result = this.matcher.match(text)
+    this.lastMatch = result
+    if (!isFinal) {
+      return { suppress: this.matcher.suppresses(result), latch: null, isFinal }
+    }
+    const latch = this.matcher.renders(result) ? result.cardId : null
+    return { suppress: false, latch, isFinal }
+  }
+
   /** Commands produced while the interviewer is still speaking. */
-  private applyInterimCommands(commands: SpeculationCommand[]): void {
+  private applyInterimCommands(commands: SpeculationCommand[], text: string): void {
+    const decision = this.decide(text, false)
+    const gated = gateCommands(commands, this.latch, decision)
+    if (gated.resetScheduler) this.scheduler?.reset()
+    commands = gated.commands
+
     for (const command of commands) {
       switch (command.kind) {
         case 'fire':
@@ -486,6 +572,20 @@ export class VoicePipeline {
 
   /** Commands produced by the final transcript, which knows what was really asked. */
   private applyFinalCommands(commands: SpeculationCommand[], finalText: string): void {
+    const decision = this.decide(finalText, true)
+    const gated = gateCommands(commands, this.latch, decision)
+    if (gated.resetScheduler) this.scheduler?.reset()
+    commands = gated.commands
+
+    if (decision.latch !== null) {
+      // The card is the answer now. Any in-flight generation is money spent on
+      // something nobody will read, and it can still win a race and overwrite
+      // the card.
+      this.abortSpeculation()
+      this.specId = null
+      this.callbacks.onCueCard?.(this.matcher?.card(decision.latch) ?? null)
+    }
+
     for (const command of commands) {
       switch (command.kind) {
         case 'commit':
@@ -660,6 +760,12 @@ export class VoicePipeline {
     // exists.
     this.abortSpeculation()
     this.scheduler?.reset()
+    // A latched cue card is per-question state too, and this path (barge-in,
+    // screen capture, clear, stop) is starting something new. Without this, a
+    // latched card survives a session stop and reappears attached to the next
+    // question.
+    this.latch = newLatchState()
+    this.callbacks.onCueCard?.(null)
     this.tts.interrupt()
   }
 
