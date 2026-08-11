@@ -124,3 +124,158 @@ export function scoreAgainst(
 
   return total === 0 ? 0 : matched / total
 }
+
+export interface CueCard {
+  id: string
+  heading: string
+  /** 3–5 bold lines. This is what renders. */
+  cues: string[]
+  /** The full prepared passage, behind a disclosure. Extractive from the source. */
+  script: string
+  /** ~8–15 paraphrases. Never rendered, never spoken — a search index only. */
+  triggers: string[]
+}
+
+export interface CueSheet {
+  id: string
+  label: string
+  sourceHash: string
+  createdAt: string
+  cards: CueCard[]
+}
+
+export interface MatchResult {
+  cardId: string | null
+  score: number
+  /** Winner's lead over the runner-up. Zero when fewer than two cards scored. */
+  margin: number
+  /**
+   * The utterance looks like someone reading an answer aloud rather than asking
+   * a question. See the recitation guard below.
+   */
+  recited: boolean
+}
+
+export interface MatchConfig {
+  /** Above this (with margin), stop generating for this question. */
+  suppressThreshold: number
+  /** Above this (with margin), latch the card at the final. */
+  renderThreshold: number
+  /** How far the winner must lead the runner-up, at both gates. */
+  margin: number
+  /** Script-score ÷ trigger-score above which an utterance is a recitation. */
+  recitationRatio: number
+}
+
+/**
+ * Suppression is set high and render low on purpose, and the asymmetry is the
+ * whole safety argument. A wrong suppression risks no draft *and* no cue — a
+ * blank card mid-interview, the worst outcome in the system. A wrong render is
+ * merely visibly wrong and costs the user a glance.
+ *
+ * Calibrated against the fixture corpus in `cuesheet-corpus.test.ts`. Do not
+ * hand-tune these against intuition; move the corpus numbers instead.
+ */
+export const DEFAULT_MATCH_CONFIG: MatchConfig = {
+  suppressThreshold: 0.72,
+  renderThreshold: 0.55,
+  margin: 0.1,
+  recitationRatio: 1.3
+}
+
+export class CueMatcher {
+  private readonly config: MatchConfig
+  private readonly df: Map<string, number>
+  private readonly docCount: number
+  private readonly scriptDf: Map<string, number>
+  private readonly scriptCount: number
+  private readonly sheet: CueSheet
+
+  constructor(
+    sheet: CueSheet,
+    config: Partial<MatchConfig> = {}
+  ) {
+    this.sheet = sheet
+    this.config = { ...DEFAULT_MATCH_CONFIG, ...config }
+    const triggers = sheet.cards.flatMap((c) => c.triggers)
+    const built = buildDf(triggers)
+    this.df = built.df
+    this.docCount = built.docCount
+    const scripts = buildDf(sheet.cards.map((c) => c.script))
+    this.scriptDf = scripts.df
+    this.scriptCount = scripts.docCount
+  }
+
+  match(transcript: string): MatchResult {
+    let best = { cardId: null as string | null, score: 0 }
+    let runnerUp = 0
+
+    for (const card of this.sheet.cards) {
+      let cardScore = 0
+      for (const trigger of card.triggers) {
+        const s = scoreAgainst(transcript, trigger, this.df, this.docCount)
+        if (s > cardScore) cardScore = s
+      }
+      if (cardScore > best.score) {
+        runnerUp = best.score
+        best = { cardId: card.id, score: cardScore }
+      } else if (cardScore > runnerUp) {
+        runnerUp = cardScore
+      }
+    }
+
+    return {
+      cardId: best.cardId,
+      score: best.score,
+      margin: best.score - runnerUp,
+      recited: this.looksRecited(transcript, best.score)
+    }
+  }
+
+  /**
+   * The recitation guard.
+   *
+   * `Speaker` on desktop is a settings lookup — `hueMode === 'companion'` means
+   * every utterance is labelled `interviewer`, including the user's own voice.
+   * Whether Hue hears the user at all depends on `audioSource`: loopback hears
+   * only the far side, but `'mic'` hears the room. So when the user delivers
+   * their answer off a cue card, that speech arrives labelled as the
+   * interviewer and matches the card being read almost verbatim.
+   *
+   * Triggers are questions and scripts are answers, and they are lexically
+   * distinct enough to separate: an utterance scoring far better against the
+   * scripts than against the triggers is someone reciting, not asking.
+   */
+  private looksRecited(transcript: string, triggerScore: number): boolean {
+    let scriptScore = 0
+    for (const card of this.sheet.cards) {
+      const s = scoreAgainst(transcript, card.script, this.scriptDf, this.scriptCount)
+      if (s > scriptScore) scriptScore = s
+    }
+    if (scriptScore === 0) return false
+    if (triggerScore === 0) return scriptScore > this.config.renderThreshold
+    return scriptScore / triggerScore >= this.config.recitationRatio
+  }
+
+  suppresses(r: MatchResult): boolean {
+    return (
+      !r.recited &&
+      r.cardId !== null &&
+      r.score >= this.config.suppressThreshold &&
+      r.margin >= this.config.margin
+    )
+  }
+
+  renders(r: MatchResult): boolean {
+    return (
+      !r.recited &&
+      r.cardId !== null &&
+      r.score >= this.config.renderThreshold &&
+      r.margin >= this.config.margin
+    )
+  }
+
+  card(id: string): CueCard | undefined {
+    return this.sheet.cards.find((c) => c.id === id)
+  }
+}
