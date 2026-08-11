@@ -120,3 +120,29 @@ export function startLlmStream(sender: WebContents, streamId: string, req: LlmSt
 export function abortLlmStream(streamId: string): void {
   active.get(streamId)?.abort()
 }
+
+/**
+ * A single request/response call, for work that is not a live turn.
+ *
+ * `startLlmStream` pushes deltas at a `WebContents` because the voice pipeline
+ * renders as it goes. Ingest has no renderer to stream to and no latency
+ * budget to defend — it runs once per upload, behind a progress bar — so it
+ * gets the simpler shape rather than a fake stream it would only reassemble.
+ */
+export async function completeOnce(req: {
+  system: string
+  prompt: string
+  model: string
+  maxTokens: number
+}): Promise<string> {
+  const message = await getClient().messages.create({
+    model: req.model,
+    max_tokens: req.maxTokens,
+    system: req.system,
+    messages: [{ role: 'user', content: [{ type: 'text', text: req.prompt }] }]
+  })
+  return message.content
+    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+}
