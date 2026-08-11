@@ -173,13 +173,34 @@ export interface MatchConfig {
  * blank card mid-interview, the worst outcome in the system. A wrong render is
  * merely visibly wrong and costs the user a glance.
  *
- * Calibrated against the fixture corpus in `cuesheet-corpus.test.ts`. Do not
- * hand-tune these against intuition; move the corpus numbers instead.
+ * Calibrated against the fixture corpus in `cuesheet-corpus.test.ts` (3 sheets
+ * / 15 cards / 90 positive cases / 21 negative cases spanning technical
+ * support, backend engineering, and project management). Do not hand-tune
+ * these against intuition; move the corpus numbers instead.
+ *
+ * `suppressThreshold: 0.72` and `margin: 0.02` produce zero false
+ * suppressions across the whole corpus (the only test that must be exactly
+ * zero) with real headroom: the highest score any wrong card reaches on an
+ * expect-something case is 0.594, well under 0.72.
+ *
+ * `renderThreshold: 0.1` is the render threshold's true ceiling under the
+ * zero-false-render constraint, not a preference — grid search over the
+ * corpus's precomputed match scores shows 0.1/0.02 is the unique optimum:
+ * every combination of `renderThreshold` and `margin` that keeps negative
+ * cases from rendering caps hit rate at 0.722 (65/90); the moment either
+ * knob is loosened enough to reach the 0.75 target, one negative case starts
+ * rendering ("How many tickets do you typically close in a day?" scores
+ * 0.098 against the ticket-prioritization card, purely off the shared word
+ * "tickets" — a real adjacent-question collision, not a corpus artifact).
+ * The hit-rate bar is documented as soft (>= 0.75 target) while the
+ * zero-false-render property is not, so this file ships 0.722 rather than
+ * trade a real false render for 3 more hits. See the comment in
+ * `cuesheet-corpus.test.ts` for the full finding.
  */
 export const DEFAULT_MATCH_CONFIG: MatchConfig = {
   suppressThreshold: 0.72,
-  renderThreshold: 0.55,
-  margin: 0.1,
+  renderThreshold: 0.1,
+  margin: 0.02,
   recitationRatio: 1.3
 }
 
