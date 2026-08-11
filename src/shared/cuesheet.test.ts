@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { cueTokens, buildDf, scoreAgainst } from './cuesheet.ts'
+import type { Command } from './speculation.ts'
+import { cueTokens, buildDf, scoreAgainst, CueMatcher, DEFAULT_MATCH_CONFIG, gateCommands, newLatchState, verifyCard, scriptIsExtractive } from './cuesheet.ts'
+import type { CueSheet } from './cuesheet.ts'
+import { SpeculationScheduler } from './speculation.ts'
 
 test('cueTokens strips stopwords and keeps content words', () => {
   assert.deepEqual(cueTokens('Tell me about a time when you failed'), ['failed'])
@@ -23,8 +26,6 @@ test('a term present in every target carries no signal', () => {
   const { df, docCount } = buildDf(targets)
   assert.equal(scoreAgainst('interview', targets[0], df, docCount), 0)
 })
-
-import { CueMatcher, DEFAULT_MATCH_CONFIG, type CueSheet } from './cuesheet.ts'
 
 const sheet: CueSheet = {
   id: 's1',
@@ -88,10 +89,6 @@ test('reciting the script is detected and never latches', () => {
 test('suppress threshold is stricter than render threshold', () => {
   assert.ok(DEFAULT_MATCH_CONFIG.suppressThreshold > DEFAULT_MATCH_CONFIG.renderThreshold)
 })
-
-import { gateCommands, newLatchState } from './cuesheet.ts'
-import type { Command } from './speculation.ts'
-import { SpeculationScheduler } from './speculation.ts'
 
 test('suppression drops fire and asks for a scheduler reset', () => {
   const state = newLatchState()
@@ -175,8 +172,6 @@ test('a standing latch from a prior call still blocks a later regenerate', () =>
   assert.deepEqual(out.commands, [], 'standing latch must still block the regenerate')
 })
 
-import { verifyCard, scriptIsExtractive } from './cuesheet.ts'
-
 const source = 'I see it less as switching away from development and more as bringing my background into a different contribution. I shipped a lead scoring engine.'
 
 test('an extractive script is accepted', () => {
@@ -199,4 +194,57 @@ test('a cue introducing an unsourced number is dropped', () => {
     triggers: ['t']
   }
   assert.deepEqual(verifyCard(card, source).cues, ['Shipped lead scoring engine'])
+})
+
+test('inversion: negation in script omitted by cue is rejected', () => {
+  const card = {
+    id: 'c1', heading: 'h',
+    script: 'I did not cut costs.',
+    cues: ['Cut costs'],
+    triggers: ['t']
+  }
+  assert.deepEqual(verifyCard(card, 'I did not cut costs.').cues, [], 'cue omitting negation must be dropped')
+})
+
+test('scrambling: tokens in different order are rejected', () => {
+  const card = {
+    id: 'c2', heading: 'h',
+    script: 'I cut costs and grew the team.',
+    cues: ['Grew costs, cut team'],
+    triggers: ['t']
+  }
+  assert.deepEqual(verifyCard(card, 'I cut costs and grew the team.').cues, [], 'reordered tokens must be dropped')
+})
+
+test('empty cue: all-stopword cues are rejected', () => {
+  const card = {
+    id: 'c3', heading: 'h',
+    script: 'I shipped a lead scoring engine.',
+    cues: ['This is it', 'Shipped lead scoring engine'],
+    triggers: ['t']
+  }
+  const result = verifyCard(card, 'I shipped a lead scoring engine.')
+  assert.deepEqual(result.cues, ['Shipped lead scoring engine'], 'all-stopword cue must be dropped')
+})
+
+test('faithful: order-preserving compression is accepted', () => {
+  const card = {
+    id: 'c4', heading: 'h',
+    script: 'I shipped a lead scoring engine and cut latency.',
+    cues: ['Shipped lead scoring engine'],
+    triggers: ['t']
+  }
+  const result = verifyCard(card, 'I shipped a lead scoring engine and cut latency.')
+  assert.deepEqual(result.cues, ['Shipped lead scoring engine'], 'order-preserving cue must be kept')
+})
+
+test('negation parity: cue carrying all negations in span is accepted', () => {
+  const card = {
+    id: 'c5', heading: 'h',
+    script: 'I did not cut costs.',
+    cues: ['Did not cut costs'],
+    triggers: ['t']
+  }
+  const result = verifyCard(card, 'I did not cut costs.')
+  assert.equal(result.cues.length, 1, 'cue with negation parity must be kept (did is stopword, cue has [not, cut, costs])')
 })

@@ -381,6 +381,17 @@ export function gateCommands(
  * would weaken the strictest check in the product.
  */
 
+/**
+ * Negation tokens that must appear in a cue if they appear in the covered span
+ * of the script. Contractions retain apostrophes (cueTokens does not split on
+ * them), so the set includes forms like "didn't".
+ */
+const NEGATIONS = new Set([
+  'not', 'never', 'no', 'nor', 'none', 'cannot', 'nothing', 'without',
+  "didn't", "doesn't", "wasn't", "wouldn't", "couldn't", "shouldn't",
+  "isn't", "aren't", "won't", "hadn't", "hasn't", "haven't"
+])
+
 function normalise(text: string): string {
   return text.toLowerCase().replace(/\s+/g, ' ').trim()
 }
@@ -403,13 +414,64 @@ export function scriptIsExtractive(script: string, source: string): boolean {
  * Degrades a card, never invalidates a sheet: a card with two good cues is
  * still useful, and refusing the whole sheet over one bad compression would
  * make the feature fail closed for no safety gain.
+ *
+ * A cue is accepted only if:
+ * 1. Its token array is non-empty (rejects all-stopword cues).
+ * 2. Its tokens form an order-preserving subsequence of the script's tokens.
+ * 3. Any negation tokens in the covered span of the script appear in the cue.
+ *
+ * ACCEPTED TRADEOFF: A cue that reorders content for readability (e.g. "Cut
+ * payload, reduced latency" from "reduced latency by cutting the payload") is
+ * rejected. Dropping a good cue degrades a card; keeping a misleading one puts
+ * a false claim in the user's mouth. The asymmetry is deliberate. Later ingest
+ * prompts request order-preserving compression.
  */
 export function verifyCard(card: CueCard, source: string): CueCard {
   const script = scriptIsExtractive(card.script, source) ? card.script : ''
-  const allowed = new Set(cueTokens(script))
+  const st = cueTokens(script)
+
   return {
     ...card,
     script,
-    cues: card.cues.filter((cue) => cueTokens(cue).every((t) => allowed.has(t)))
+    cues: card.cues.filter((cue) => {
+      const ct = cueTokens(cue)
+
+      // 1. Reject empty token arrays (all-stopword cues).
+      if (ct.length === 0) return false
+
+      // 2. Check order-preserving subsequence: each cue token must be found
+      //    in the script tokens in order, with increasing indices.
+      let stIdx = 0
+      let firstIdx = -1
+      let lastIdx = -1
+
+      for (const cueToken of ct) {
+        // Find this cue token in the remaining tail of st.
+        while (stIdx < st.length && st[stIdx] !== cueToken) {
+          stIdx++
+        }
+
+        // If not found, the cue is not a subsequence.
+        if (stIdx >= st.length) return false
+
+        // Record the first and last indices where cue tokens matched.
+        if (firstIdx === -1) firstIdx = stIdx
+        lastIdx = stIdx
+        stIdx++
+      }
+
+      // 3. Check negation parity: every negation in the covered span must
+      //    also appear in the cue. The covered span includes any negations
+      //    that appear before or within the extracted content.
+      const covered = st.slice(0, lastIdx + 1)
+      const cueNegations = new Set(ct.filter((t) => NEGATIONS.has(t)))
+      for (const token of covered) {
+        if (NEGATIONS.has(token) && !cueNegations.has(token)) {
+          return false
+        }
+      }
+
+      return true
+    })
   }
 }
