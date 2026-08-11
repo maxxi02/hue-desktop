@@ -109,6 +109,72 @@ test('abort, commit and reset always pass through', () => {
   assert.deepEqual(out.commands, cmds)
 })
 
+test('a latched final drops the commit that would generate underneath the card', () => {
+  const state = newLatchState()
+  const out = gateCommands([{ kind: 'commit', specId: 7 }], state, {
+    suppress: false, latch: 'c-support', isFinal: true
+  })
+  assert.deepEqual(
+    out.commands,
+    [],
+    'the caller aborts speculation when a card latches, so this commit finds no draft and generates a full answer under the card'
+  )
+  assert.equal(out.resetScheduler, true, 'a dropped commit leaves the same phantom draft a dropped fire does')
+})
+
+test('a commit at an unlatched final still passes through', () => {
+  const state = newLatchState()
+  const cmds: Command[] = [{ kind: 'commit', specId: 8 }]
+  const out = gateCommands(cmds, state, { suppress: false, latch: null, isFinal: true })
+  assert.deepEqual(out.commands, cmds, 'no card matched; the draft is the answer and must be adopted')
+  assert.equal(out.resetScheduler, false)
+})
+
+test('an interim reset that clears a standing latch reports latchCleared', () => {
+  const state = newLatchState()
+
+  // Q1's final latches a card.
+  const latched = gateCommands([], state, { suppress: false, latch: 'c-support', isFinal: true })
+  assert.equal(latched.latchCleared, false)
+  assert.equal(state.cardId, 'c-support')
+
+  // Mid-Q2 the interviewer withdraws the question: the scheduler emits
+  // abort + reset. The gate clears the latch, and the caller — which never
+  // sees a final here — has to be told, or the card stays on screen and (in
+  // glance mode) hides Q2's real answer for good.
+  const out = gateCommands([{ kind: 'abort', specId: 9 }, { kind: 'reset' }], state, {
+    suppress: false, latch: null, isFinal: false
+  })
+  assert.equal(state.cardId, null)
+  assert.equal(out.latchCleared, true, 'the interim path has no other way to learn the card came down')
+})
+
+test('latchCleared is false when no latch was standing', () => {
+  const state = newLatchState()
+  const out = gateCommands([{ kind: 'reset' }], state, { suppress: false, latch: null, isFinal: false })
+  assert.equal(out.latchCleared, false, 'an ordinary reset must not spam the callback')
+})
+
+test('latchCleared is false when a final replaces one latch with another', () => {
+  const state = newLatchState()
+  gateCommands([], state, { suppress: false, latch: 'c-support', isFinal: true })
+  const out = gateCommands([], state, { suppress: false, latch: 'c-weakness', isFinal: true })
+  assert.equal(out.latchCleared, false, 'a card is still standing; the final path renders the new one')
+})
+
+test('a dropped regenerate asks for a scheduler reset', () => {
+  const state = newLatchState()
+  const out = gateCommands([{ kind: 'regenerate', specId: 6, text: 'q' }], state, {
+    suppress: false, latch: 'c-support', isFinal: true
+  })
+  assert.deepEqual(out.commands, [])
+  assert.equal(
+    out.resetScheduler,
+    true,
+    "speculation.ts sets its draft before returning regenerate; without a reset that phantom draft blocks maybeFire for the whole next question"
+  )
+})
+
 test('suppression at the final never drops the endpoint fire', () => {
   const scheduler = new SpeculationScheduler()
   const state = newLatchState()
@@ -297,68 +363,120 @@ test('negation parity: cue carrying all negations in span is accepted', () => {
   assert.equal(result.cues.length, 1, 'cue with negation parity must be kept (did is stopword, cue has [not, cut, costs])')
 })
 
-test('a latched final drops the commit that would generate underneath the card', () => {
-  const state = newLatchState()
-  const out = gateCommands([{ kind: 'commit', specId: 7 }], state, {
-    suppress: false, latch: 'c-support', isFinal: true
-  })
-  assert.deepEqual(
-    out.commands,
-    [],
-    'the caller aborts speculation when a card latches, so this commit finds no draft and generates a full answer under the card'
-  )
-  assert.equal(out.resetScheduler, true, 'a dropped commit leaves the same phantom draft a dropped fire does')
-})
+/** Verify one cue against a script that is its own source. */
+function keeps(script: string, cue: string): boolean {
+  const card = { id: 'c', heading: 'h', script, cues: [cue], triggers: ['t'] }
+  return verifyCard(card, script).cues.length === 1
+}
 
-test('a commit at an unlatched final still passes through', () => {
-  const state = newLatchState()
-  const cmds: Command[] = [{ kind: 'commit', specId: 8 }]
-  const out = gateCommands(cmds, state, { suppress: false, latch: null, isFinal: true })
-  assert.deepEqual(out.commands, cmds, 'no card matched; the draft is the answer and must be adopted')
-  assert.equal(out.resetScheduler, false)
-})
+// ---------------------------------------------------------------------------
+// The relaxations. Each of these was a faithful cue the old exact-surface-form
+// subsequence check threw away; between them they were most of why the check
+// kept only 8 of the corpus's own 56 hand-written cues.
+// ---------------------------------------------------------------------------
 
-test('an interim reset that clears a standing latch reports latchCleared', () => {
-  const state = newLatchState()
-
-  // Q1's final latches a card.
-  const latched = gateCommands([], state, { suppress: false, latch: 'c-support', isFinal: true })
-  assert.equal(latched.latchCleared, false)
-  assert.equal(state.cardId, 'c-support')
-
-  // Mid-Q2 the interviewer withdraws the question: the scheduler emits
-  // abort + reset. The gate clears the latch, and the caller — which never
-  // sees a final here — has to be told, or the card stays on screen and (in
-  // glance mode) hides Q2's real answer for good.
-  const out = gateCommands([{ kind: 'abort', specId: 9 }, { kind: 'reset' }], state, {
-    suppress: false, latch: null, isFinal: false
-  })
-  assert.equal(state.cardId, null)
-  assert.equal(out.latchCleared, true, 'the interim path has no other way to learn the card came down')
-})
-
-test('latchCleared is false when no latch was standing', () => {
-  const state = newLatchState()
-  const out = gateCommands([{ kind: 'reset' }], state, { suppress: false, latch: null, isFinal: false })
-  assert.equal(out.latchCleared, false, 'an ordinary reset must not spam the callback')
-})
-
-test('latchCleared is false when a final replaces one latch with another', () => {
-  const state = newLatchState()
-  gateCommands([], state, { suppress: false, latch: 'c-support', isFinal: true })
-  const out = gateCommands([], state, { suppress: false, latch: 'c-weakness', isFinal: true })
-  assert.equal(out.latchCleared, false, 'a card is still standing; the final path renders the new one')
-})
-
-test('a dropped regenerate asks for a scheduler reset', () => {
-  const state = newLatchState()
-  const out = gateCommands([{ kind: 'regenerate', specId: 6, text: 'q' }], state, {
-    suppress: false, latch: 'c-support', isFinal: true
-  })
-  assert.deepEqual(out.commands, [])
+test('inflection: a cue may use a different form of a script word', () => {
   assert.equal(
-    out.resetScheduler,
+    keeps('I split reads onto replicas and moved the write path onto a queue.', 'Read replicas'),
     true,
-    "speculation.ts sets its draft before returning regenerate; without a reset that phantom draft blocks maybeFire for the whole next question"
+    'read/reads must unify, or ordinary compression is rejected'
+  )
+  assert.equal(
+    keeps('I stop the bleeding before root-causing anything.', 'Stop the bleeding before root-cause'),
+    true,
+    'root-cause/root-causing must unify'
+  )
+})
+
+test('connectives: a bounded number of unsourced glue words is allowed', () => {
+  assert.equal(
+    keeps('I split reads onto replicas and moved the write path onto a queue.', 'Read replicas plus a write queue'),
+    true,
+    '"plus" appears nowhere in the script and is exactly the kind of word compression inserts'
+  )
+})
+
+test('the connective budget is bounded, not a free pass', () => {
+  assert.equal(
+    keeps('I shipped a lead scoring engine.', 'Shipped a rewritten scoring platform'),
+    false,
+    'two unsourced content words in a four-token cue exceeds the one-in-four budget'
+  )
+})
+
+test('an unsourced number is never treated as a connective', () => {
+  assert.equal(
+    keeps('I cut costs and the team grew.', 'Cut costs by 40 percent'),
+    false,
+    'a number the script never used is a fabricated claim however much budget is left'
+  )
+})
+
+test('a cue may echo a contrast the script already draws', () => {
+  assert.equal(
+    keeps('We could absorb bursts instead of rejecting writes.', 'Absorb bursts, not rejecting'),
+    true,
+    '"not" here restates the script\'s own "instead of"'
+  )
+})
+
+test('a cue may not invent a contrast the script does not draw', () => {
+  assert.equal(
+    keeps('I cut corners on that project.', 'Never cut corners'),
+    false,
+    'the script draws no contrast, so the negation is the cue\'s own invention and inverts the claim'
+  )
+})
+
+// ---------------------------------------------------------------------------
+// The defeat cases. These PASSED the old check and must stay rejected.
+// ---------------------------------------------------------------------------
+
+test('defeat: one "never" in a cue cannot satisfy two in the script', () => {
+  assert.equal(
+    keeps('I never miss deadlines and I never cut corners.', 'Never miss deadlines, cut corners'),
+    false,
+    'set-testing negations let a single never cover both; parity must be counted'
+  )
+})
+
+test('defeat: a cue may not drop the qualifier that follows what it took', () => {
+  assert.equal(
+    keeps('I never cut costs without approval from finance.', 'Never cut costs'),
+    false,
+    'the span must reach the end of the clause, not stop at the last matched token'
+  )
+})
+
+test('reordering is still rejected after the relaxations', () => {
+  assert.equal(keeps('I cut costs and grew the team.', 'Grew costs, cut team'), false)
+  assert.equal(
+    keeps('I reduced latency by cutting the payload.', 'Cut payload, reduced latency'),
+    false,
+    'swapping two clauses is the reordering the check exists to catch'
+  )
+})
+
+test('dropping a negation is still rejected after the relaxations', () => {
+  assert.equal(keeps('I did not cut costs.', 'Cut costs'), false)
+})
+
+/**
+ * DOCUMENTED LIMIT, not an oversight. See the "What this check does NOT
+ * verify" section on `verifyCard` and the provenance paragraph in
+ * `docs/specs/2026-08-11-cue-sheet-design.md`. These two assertions record
+ * what the check CANNOT do, so nobody later reads the passing suite above as a
+ * claim that cue text is safe against every kind of distortion.
+ */
+test('KNOWN GAP: re-attribution and re-pairing are not detectable by containment', () => {
+  assert.equal(
+    keeps('My manager decided the architecture and I implemented it.', 'Decided the architecture'),
+    true,
+    'my/i are stopwords, so who did what never reaches the compared token stream'
+  )
+  assert.equal(
+    keeps('I cut costs by 5 percent while the target was 40 percent.', 'Cut costs by 40 percent'),
+    true,
+    'both numbers are the user\'s own words in order; the fabrication is in the pairing'
   )
 })
