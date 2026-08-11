@@ -18,11 +18,15 @@ import {
   broadcastPhoneEvent
 } from './phone-mirror'
 import { startRelay, stopRelay, getRelayStatus, publishRelayEvent } from './relay-client'
+import { deleteProfile, ingestResume, refreshBundle } from './ingest'
+import { applyStealth, isStealthSupported } from './stealth'
+import { applyWindowAnchor } from './window-placement'
 import type {
   HueSettings,
   LlmStreamRequest,
   OpenAiCompatProvider,
-  PhoneMirrorEvent
+  PhoneMirrorEvent,
+  StealthStatus
 } from '../shared/types'
 
 const PHONE_EVENT_TYPES: ReadonlySet<PhoneMirrorEvent['type']> = new Set([
@@ -39,7 +43,7 @@ export function registerIpc(): void {
   registered = true
 
   ipcMain.handle('hue:settings:get', () => getSettings())
-  ipcMain.handle('hue:settings:set', (_e, partial: Partial<HueSettings>) => {
+  ipcMain.handle('hue:settings:set', (event, partial: Partial<HueSettings>) => {
     const prev = getSettings()
     const next = updateSettings(partial)
     // Re-bind the global triggers if any of them changed.
@@ -49,6 +53,22 @@ export function registerIpc(): void {
       next.captureScreenHotkey !== prev.captureScreenHotkey
     ) {
       applyHotkeys()
+    }
+    // Same pattern for stealth: the flag lives on the window, not in the store,
+    // so a saved setting only means anything once it is pushed to the window the
+    // request came from. Saving from Settings must not need a restart.
+    if (next.stealthMode !== prev.stealthMode) {
+      applyStealth(BrowserWindow.fromWebContents(event.sender), next.stealthMode)
+    }
+    // Anchoring is likewise a property of the window rather than of the store.
+    // Only re-place on an actual change: applying on every save would yank a
+    // window the user had just dragged back to the anchor, on a save they made
+    // for some unrelated setting.
+    if (
+      next.windowAnchor !== prev.windowAnchor ||
+      next.windowAnchorMargin !== prev.windowAnchorMargin
+    ) {
+      applyWindowAnchor(BrowserWindow.fromWebContents(event.sender))
     }
     return next
   })
@@ -111,12 +131,40 @@ export function registerIpc(): void {
     publishRelayEvent({ type: ev.type, text })
   })
 
+  // Resume ingest. The bytes come from the renderer's file picker, but the
+  // account token stays here — the renderer never sees the credential that
+  // reads the user's career history.
+  ipcMain.handle('hue:profile:ingest', async (event, bytes: ArrayBuffer) => {
+    return ingestResume(new Uint8Array(bytes), (progress) => {
+      // Progress on a side channel rather than as the return value: the call
+      // takes about a minute, and a Settings pane showing nothing for that long
+      // is indistinguishable from a hang.
+      if (!event.sender.isDestroyed()) event.sender.send('hue:profile:progress', progress)
+    })
+  })
+
+  ipcMain.handle('hue:profile:refresh', () => refreshBundle())
+  ipcMain.handle('hue:profile:delete', () => deleteProfile())
+
+  // Stealth status for the renderer: the setting alone doesn't tell the UI
+  // whether the window is really hidden from capture, so the platform's verdict
+  // travels with it. `effective` is what the header badge should trust.
+  ipcMain.handle('hue:stealth:status', (): StealthStatus => {
+    const enabled = getSettings().stealthMode
+    const supported = isStealthSupported()
+    return { enabled, supported, effective: enabled && supported }
+  })
+
   // Grab the primary screen for the vision feature. Hue floats on top of every
   // app (alwaysOnTop), so it would photobomb its own screenshot — hide it for the
   // duration of the grab, then restore it exactly as it was.
   ipcMain.handle('hue:capture:screen', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
-    const wasVisible = win?.isVisible() ?? false
+    // With stealth in force the window is already excluded from desktopCapturer,
+    // so hiding it would buy nothing and cost a visible flicker on every capture
+    // — skip the hide/restore dance entirely in that case.
+    const stealthy = getSettings().stealthMode && isStealthSupported()
+    const wasVisible = !stealthy && (win?.isVisible() ?? false)
     if (win && wasVisible) {
       win.hide()
       // Give the compositor a beat to actually paint the window away before the

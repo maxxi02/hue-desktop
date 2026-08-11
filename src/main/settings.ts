@@ -2,6 +2,7 @@ import { app, safeStorage } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { DEFAULT_SETTINGS, SECRET_SETTING_KEYS, HueSettings } from '../shared/types'
+import { migrateSettings } from './settings-migrations.ts'
 
 const SETTINGS_FILE = (): string => join(app.getPath('userData'), 'hue-settings.json')
 const ENC_PREFIX = 'enc:v1:'
@@ -36,7 +37,7 @@ function readFromDisk(): HueSettings {
     for (const key of SECRET_SETTING_KEYS) {
       merged[key] = decryptSecret(merged[key] as string)
     }
-    return merged
+    return migrateSettings(merged)
   } catch {
     return { ...DEFAULT_SETTINGS }
   }

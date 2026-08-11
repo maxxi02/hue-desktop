@@ -21,9 +21,11 @@
      applied to --bg-alpha on <html> by the renderer. */
   background: rgba(var(--bg-rgb), var(--bg-alpha));
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--r-card);
   overflow: hidden;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  /* Tinted rather than black: on a cream surface a neutral drop shadow reads as
+     dirt, so the lift is cast in the aurora's violet (HueColors.AuroraShadow). */
+  box-shadow: 0 18px 48px var(--aurora-shadow);
   animation: app-enter 280ms var(--ease-out);
 }
 
@@ -62,20 +64,20 @@
 .brand-orb--speaking     { background: var(--blue);   box-shadow: 0 0 8px var(--blue-glow); }
 
 .brand-name {
-  font-family: 'Space Grotesk', sans-serif;
+  /* 800, per HueType's rule that display weights are extra-bold. */
   font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-weight: 800;
+  letter-spacing: -0.03em;
   color: var(--text);
 }
 
 .state-pill {
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   padding: 3px 11px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   color: var(--text-muted);
   background: var(--bg-card);
@@ -92,22 +94,29 @@
   font-weight: 500;
   letter-spacing: 0.04em;
   padding: 3px 11px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   color: var(--text-muted);
   background: var(--bg-card);
   white-space: nowrap;
 }
-.state-pill--connecting   { color: var(--indigo); border-color: rgba(129,140,248,0.3); background: rgba(129,140,248,0.08); }
-.state-pill--listening    { color: var(--green);  border-color: rgba(34,197,94,0.3);   background: rgba(34,197,94,0.08); }
-.state-pill--transcribing { color: var(--amber);  border-color: rgba(245,158,11,0.3);  background: rgba(245,158,11,0.08); }
-.state-pill--thinking     { color: var(--indigo); border-color: rgba(129,140,248,0.3); background: rgba(129,140,248,0.08); }
-.state-pill--speaking     { color: var(--blue);   border-color: rgba(96,165,250,0.3);  background: rgba(96,165,250,0.08); }
+/* Only shown when the OS is actually excluding the window from capture, so it
+   reads as a distinct, deliberate state rather than another mode label. */
+.mode-pill--stealth {
+  color: var(--accent);
+  border-color: rgba(108, 92, 224, 0.28);
+  background: rgba(108, 92, 224, 0.08);
+}
+.state-pill--connecting   { color: var(--indigo); border-color: rgba(108, 92, 224, 0.28); background: rgba(108, 92, 224, 0.08); }
+.state-pill--listening    { color: var(--green);  border-color: rgba(63, 191, 106, 0.30); background: rgba(63, 191, 106, 0.10); }
+.state-pill--transcribing { color: var(--amber);  border-color: rgba(199, 122, 74, 0.30); background: rgba(199, 122, 74, 0.10); }
+.state-pill--thinking     { color: var(--indigo); border-color: rgba(108, 92, 224, 0.28); background: rgba(108, 92, 224, 0.08); }
+.state-pill--speaking     { color: var(--blue);   border-color: rgba(62, 147, 176, 0.30); background: rgba(62, 147, 176, 0.10); }
 
 .icon-btn {
   width: 34px;
   height: 34px;
-  border-radius: 8px;
+  border-radius: var(--r-menu);
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-muted);
@@ -122,7 +131,7 @@
 .icon-btn:hover {
   background: var(--bg-elevated);
   color: var(--text);
-  border-color: rgba(255,255,255,0.15);
+  border-color: var(--border-strong);
 }
 .icon-btn:active {
   transform: scale(0.94);
@@ -146,26 +155,37 @@
   flex-shrink: 0;
 }
 
+/*
+ * The one place the aurora gradient is allowed. It stands for Hue's own
+ * presence, so the orb carries it at rest and the state modifiers only change
+ * the ring and the halo around it — never the fill, which would turn the
+ * gradient into a status colour and cost it its meaning.
+ */
 .voice-orb {
   width: 96px;
   height: 96px;
   border-radius: 50%;
-  border: 2px solid var(--border);
-  background: var(--bg-card);
+  border: 2px solid transparent;
+  background: linear-gradient(
+    135deg,
+    var(--aurora-sky) 0%,
+    var(--aurora-lavender) 50%,
+    var(--aurora-peach) 100%
+  );
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-muted);
-  transition: border-color 400ms, color 400ms, box-shadow 400ms;
+  /* Ink, not muted: the icon sits on a light gradient. */
+  color: var(--ink);
+  box-shadow: 0 6px 20px var(--aurora-shadow);
+  transition: border-color 400ms, box-shadow 400ms;
 }
 .voice-orb--connecting {
   border-color: var(--indigo);
-  color: var(--indigo);
-  box-shadow: 0 0 24px var(--indigo-glow);
+  box-shadow: 0 6px 24px var(--indigo-glow);
 }
 .voice-orb--listening {
   border-color: var(--green);
-  color: var(--green);
   animation: pulse-green 1.8s ease-in-out infinite;
 }
 
@@ -191,18 +211,15 @@
 }
 .voice-orb--transcribing {
   border-color: var(--amber);
-  color: var(--amber);
-  box-shadow: 0 0 24px var(--amber-glow);
+  box-shadow: 0 6px 24px var(--amber-glow);
 }
 .voice-orb--thinking {
   border-color: var(--indigo);
-  color: var(--indigo);
-  box-shadow: 0 0 24px var(--indigo-glow);
+  box-shadow: 0 6px 24px var(--indigo-glow);
   animation: breathe 2.4s ease-in-out infinite;
 }
 .voice-orb--speaking {
   border-color: var(--blue);
-  color: var(--blue);
   animation: pulse-blue 1s ease-in-out infinite;
 }
 
@@ -230,10 +247,10 @@
   gap: 10px;
   padding: 4px 0;
   scrollbar-width: thin;
-  scrollbar-color: var(--bg-elevated) transparent;
+  scrollbar-color: var(--border-strong) transparent;
 }
 .transcript::-webkit-scrollbar       { width: 3px; }
-.transcript::-webkit-scrollbar-thumb { background: var(--bg-elevated); border-radius: 2px; }
+.transcript::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
 
 .transcript-empty {
   flex: 1;
@@ -256,13 +273,13 @@
 
 .bubble-label {
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
   padding: 0 4px;
 }
-.bubble--user .bubble-label      { color: rgba(96, 165, 250, 0.75); }
-.bubble--assistant .bubble-label { color: rgba(129, 140, 248, 0.75); }
+.bubble--user .bubble-label      { color: var(--accent); }
+.bubble--assistant .bubble-label { color: var(--text-muted); }
 
 .bubble-text {
   padding: 9px 14px;
@@ -270,15 +287,17 @@
   line-height: 1.6;
   color: var(--text);
 }
+/* The user's own words are marked with the accent; Hue's replies sit on the
+   Card white, which is the system's surface for content you read. */
 .bubble--user .bubble-text {
-  background: rgba(96, 165, 250, 0.1);
-  border: 1px solid rgba(96, 165, 250, 0.18);
-  border-radius: 12px 12px 4px 12px;
+  background: rgba(108, 92, 224, 0.09);
+  border: 1px solid rgba(108, 92, 224, 0.18);
+  border-radius: var(--r-card-s) var(--r-card-s) 4px var(--r-card-s);
 }
 .bubble--assistant .bubble-text {
-  background: rgba(129, 140, 248, 0.07);
-  border: 1px solid rgba(129, 140, 248, 0.14);
-  border-radius: 12px 12px 12px 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card-s) var(--r-card-s) var(--r-card-s) 4px;
 }
 
 .bubble-meta {
@@ -289,13 +308,61 @@
   opacity: 0.65;
 }
 
+/* ── Grounding receipt ──
+   Sits under an answer and says whether it rests on one of the user's own story
+   bank entries. Read at a glance, mid-call, so it is a single line of small text
+   under the bubble rather than a badge that competes with the answer itself.
+   Colours are mixed from the tokens (no raw hex): the grounded mark borrows the
+   accent, which the system reserves for marks, and the ungrounded state is
+   danger as TEXT on a tint — never a danger fill. */
+.receipt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  border: 1px solid transparent;
+  font-size: 11px;
+  line-height: 1.45;
+  animation: fade-in-up 240ms var(--ease-out);
+}
+
+.receipt-mark {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  flex-shrink: 0;
+  background: currentColor;
+}
+
+/* Grounded is the expected case, so it recedes: muted text, an accent dot, no
+   fill. A confirmation that shouts is a confirmation the user stops reading. */
+.receipt--grounded {
+  color: var(--text-muted);
+  background: var(--bg-card);
+  border-color: var(--border);
+}
+.receipt--grounded .receipt-mark {
+  background: var(--accent);
+}
+
+/* Ungrounded must be noticed without reading as a failure — the answer may be
+   fine, it is just not backed by the user's real history. Danger ink on a wash
+   of the same hue, at a weight that stays legible on cream. */
+.receipt--ungrounded {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 22%, transparent);
+}
+
 /* Screen-capture thumbnail shown in a user bubble. */
 .bubble-capture {
   max-width: 240px;
   width: 100%;
   height: auto;
-  border-radius: 12px 12px 4px 12px;
-  border: 1px solid rgba(96, 165, 250, 0.25);
+  border-radius: var(--r-card-s) var(--r-card-s) 4px var(--r-card-s);
+  border: 1px solid rgba(108, 92, 224, 0.25);
   display: block;
   /* A touch gentler than the bubble's own enter so the image settles in. */
   animation: fade-in-up 280ms var(--ease-out);
@@ -304,12 +371,148 @@
 .error-msg {
   align-self: center;
   padding: 9px 16px;
-  border-radius: 8px;
-  background: rgba(239, 68, 68, 0.08);
-  border: 1px solid rgba(239, 68, 68, 0.2);
-  color: #FCA5A5;
+  border-radius: var(--r-card-s);
+  background: rgba(192, 83, 63, 0.08);
+  border: 1px solid rgba(192, 83, 63, 0.22);
+  color: var(--danger);
   font-size: 13px;
   animation: fade-in-up 240ms var(--ease-out);
+}
+
+/* ── Glance mode ──
+ *
+ * A teleprompter for the current suggested answer. The transcript's 14px is
+ * right for reading a chat log held close and wrong for the job this app
+ * actually has: absorbing the next beat of an answer in one look, mid-sentence,
+ * while keeping your eyes on a camera. hue-mobile hit the same wall and added
+ * one style its source design never needed — HueType.cue, 26sp/600/-0.4 — for
+ * exactly this reason. This is that style, ported.
+ *
+ * The three numbers are the whole design, so they live in one place:
+ *
+ *  - 26px, because it is the smallest size that survives a glance from normal
+ *    seating distance without the reader leaning in (leaning in is the tell
+ *    that gives away that you are reading).
+ *  - 600, not 800. Heavy enough to hold at a distance, short of the display
+ *    weights, which would make an answer read as a headline being announced.
+ *    This is the one place weight carries meaning in body-ish text; the ink
+ *    ramp still does the emphasis everywhere else.
+ *  - -0.4/26em tracking, kept as a ratio so retuning --glance-size alone stays
+ *    typographically correct.
+ */
+.app--glance {
+  --glance-size: 26px;
+  /* Roomier than the transcript's 1.6: at cue size the eye has to find the
+     start of the next line without a deliberate search, and the extra leading
+     is what makes that a reflex. */
+  --glance-leading: 1.5;
+}
+
+.app-main--glance {
+  /* No orb section to space away from, so the reading column starts at the
+     header hairline and gets the same generous gutter on both sides. */
+  padding: 0 28px 12px;
+}
+
+.glance {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 0 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.glance::-webkit-scrollbar       { width: 3px; }
+.glance::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+
+.glance-text {
+  font-size: var(--glance-size);
+  font-weight: 600;
+  letter-spacing: calc(-0.4 / 26 * 1em);
+  line-height: var(--glance-leading);
+  color: var(--text);
+  /*
+   * Deliberately not a bubble: no card, no border, no max-width in percent. A
+   * frame around the text is one more edge for the eye to land on, and the
+   * measure is set in characters rather than as a fraction of the window so the
+   * line length stays readable whatever size the user has dragged the card to.
+   *
+   * No enter animation either. The streamed answer grows inside this one
+   * element, so anything keyed off its content would re-fire on every token —
+   * the text would strobe for the whole of a long answer.
+   */
+  max-width: 42ch;
+  /* Long unbroken tokens (a URL, a pasted identifier) must wrap rather than
+     push a horizontal scrollbar under text that has to be read in one pass. */
+  overflow-wrap: anywhere;
+  /* Room under the last line for the pinned receipt to overlap into. */
+  padding-bottom: 16px;
+  /* Selectable: the body sets user-select:none app-wide for the chromeless
+     window's sake, but this is the one string a user may genuinely want to
+     lift out and paste somewhere. */
+  user-select: text;
+}
+
+/* Waiting is a placeholder, not content — muted, and at the same size so the
+   panel does not resize the instant the first token lands. */
+.glance-text--waiting {
+  color: var(--text-muted);
+}
+
+/*
+ * Pinned to the bottom of the scroller rather than following the text. See the
+ * comment on the glance <main> in App.tsx: the ungrounded warning is the one
+ * thing here that must not scroll out of reach, because glance mode is exactly
+ * where an answer gets read aloud with confidence.
+ */
+.glance-receipt {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  /* The generous top padding is the fade, not spacing: at 26px a half-covered
+     line is still legible enough to be mistaken for the next thing to read, so
+     the band has to be tall enough to take a whole line out of contention. */
+  padding: 26px 0 4px;
+  display: flex;
+  /* Fades the text out from under the pinned receipt instead of letting the two
+     overlap. Painted in the card's own translucent cream, not opaque --bg: a
+     solid band would show as a hard edge across the card at any windowOpacity
+     below 1. */
+  background: linear-gradient(to top, rgba(var(--bg-rgb), var(--bg-alpha)) 72%, transparent);
+  align-items: flex-end;
+}
+/* One step up from the transcript's 11px. At 26px type, 11px is small enough
+   to be taken for a caption and skipped — which is the exact failure this
+   warning cannot afford. */
+.glance-receipt .receipt {
+  font-size: 13px;
+  padding: 5px 12px;
+}
+
+/* Danger straight from the token measures 3.8:1 on its own 8% tint — fine under
+   a 14px bubble the eye is already resting on, not fine as the one small thing
+   on a screen otherwise filled with 26px type, where anything low-contrast
+   reads as decoration and gets skipped. Shading it toward the ink takes it to
+   4.7:1 (AA at this size) while keeping it unmistakably the danger hue; the
+   mix is derived from the tokens rather than picked, so it moves with them. */
+.glance-receipt .receipt--ungrounded {
+  color: color-mix(in srgb, var(--danger) 85%, var(--ink));
+  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+}
+.glance-receipt .receipt-mark {
+  width: 7px;
+  height: 7px;
+}
+
+/* The toggle is a mode, not an action, so it stays lit while the mode is on —
+   ink on the elevated cream, matching the icon-btn hover treatment rather than
+   inventing a selected state the system does not otherwise have. */
+.icon-btn--on {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-color: var(--border-strong);
 }
 
 /* ── Footer ── */
@@ -336,11 +539,10 @@
   align-items: center;
   gap: 7px;
   padding: 7px 13px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   background: var(--bg-card);
   color: var(--text-muted);
-  font-family: 'Space Grotesk', sans-serif;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -351,7 +553,7 @@
 .capture-btn:hover:not(:disabled) {
   background: var(--bg-elevated);
   color: var(--text);
-  border-color: rgba(96, 165, 250, 0.35);
+  border-color: var(--border-strong);
   transform: translateY(-1px);
 }
 .capture-btn:active:not(:disabled) {
@@ -368,19 +570,24 @@
   color: var(--text-muted);
   background: var(--bg-elevated);
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid var(--border);
   letter-spacing: 0.02em;
 }
 
+/*
+ * Primary action. Ink fill on cream — rule 1 of the system. The green a dark UI
+ * used to carry survives only as the state ring on the orb and in the pills;
+ * making the main button a status colour is what tips the palette into looking
+ * like a different product.
+ */
 .voice-btn {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 10px 28px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid transparent;
-  font-family: 'Space Grotesk', sans-serif;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
@@ -392,51 +599,66 @@
   transform: scale(0.97);
 }
 .voice-btn--start {
-  background: var(--green);
-  color: #052E16;
-  box-shadow: 0 0 20px var(--green-glow);
+  background: var(--ink);
+  color: var(--on-ink);
+  box-shadow: 0 4px 14px rgba(23, 21, 26, 0.18);
 }
 .voice-btn--start:hover {
-  background: #16A34A;
-  box-shadow: 0 0 30px rgba(34, 197, 94, 0.4);
+  background: #2A2732;
+  box-shadow: 0 6px 20px rgba(23, 21, 26, 0.24);
   transform: translateY(-1px);
 }
 .voice-btn--connecting {
-  background: rgba(129, 140, 248, 0.12);
-  color: var(--indigo);
-  border-color: rgba(129, 140, 248, 0.3);
+  background: rgba(108, 92, 224, 0.10);
+  color: var(--accent);
+  border-color: rgba(108, 92, 224, 0.28);
 }
 .voice-btn:disabled {
   cursor: default;
   transform: none;
 }
+/* Stopping is destructive, so it takes Danger as *text*, never as a fill. */
 .voice-btn--stop {
-  background: rgba(239, 68, 68, 0.12);
-  color: #FCA5A5;
-  border-color: rgba(239, 68, 68, 0.3);
-  box-shadow: 0 0 14px rgba(239, 68, 68, 0.12);
+  background: rgba(192, 83, 63, 0.10);
+  color: var(--danger);
+  border-color: rgba(192, 83, 63, 0.28);
 }
 .voice-btn--stop:hover {
-  background: rgba(239, 68, 68, 0.22);
-  box-shadow: 0 0 22px rgba(239, 68, 68, 0.22);
+  background: rgba(192, 83, 63, 0.16);
   transform: translateY(-1px);
 }
 
 /* ── Settings drawer ── */
 .drawer-overlay {
-  position: fixed;
+  /* Absolute, not fixed: the drawer belongs to the card, so it must stop at the
+     card's rounded edge (.app is the positioned ancestor and clips it). Fixed
+     inset:0 spilled it across the window's transparent margin as well, painting
+     an opaque rectangle over ground the desktop is supposed to show through. */
+  position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(4px);
   z-index: 50;
   display: flex;
   justify-content: flex-end;
+  /* No scrim: the drawer covers the overlay completely, so a scrim would only
+     ever be seen *through* the now-translucent drawer, dimming the desktop the
+     transparency setting exists to reveal. */
+}
+
+/* The drawer replaces the card's contents rather than covering them, so the
+   card's own translucent surface is the only thing painting behind it. Stacking
+   a second translucent layer would both compound the alpha (0.5 over 0.5 reads
+   as 0.75) and leave the transcript legible through the settings labels. */
+.app:has(> .drawer-overlay) > *:not(.drawer-overlay) {
+  visibility: hidden;
 }
 
 .drawer {
   width: 100%;
   height: 100%;
-  background: var(--bg-card);
+  /* Transparent, not opaque --bg. The window transparency slider lives in this
+     drawer: painting over the card here is what made its live preview invisible,
+     so the setting looked broken because nothing on screen could respond to it. */
+  background: transparent;
   display: flex;
   flex-direction: column;
   animation: slide-in-right 280ms var(--ease-drawer);
@@ -465,10 +687,10 @@
   align-items: start;
   gap: 22px 28px;
   scrollbar-width: thin;
-  scrollbar-color: var(--bg-elevated) transparent;
+  scrollbar-color: var(--border-strong) transparent;
 }
 .drawer-body::-webkit-scrollbar       { width: 3px; }
-.drawer-body::-webkit-scrollbar-thumb { background: var(--bg-elevated); border-radius: 2px; }
+.drawer-body::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
 
 .drawer-footer {
   padding: 14px 20px;
@@ -483,8 +705,9 @@
   gap: 12px;
 }
 
+/* HueType.overline — 11.5/700, +0.5 tracking, uppercase. */
 .settings-section-title {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -506,34 +729,37 @@
 }
 
 .settings-input {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 7px 10px;
-  font-family: 'DM Sans', sans-serif;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-card-s);
+  padding: 8px 11px;
+  font-family: inherit;
   font-size: 13px;
   color: var(--text);
   width: 100%;
   outline: none;
   transition: border-color 200ms, box-shadow 200ms;
 }
+/* Focus is the accent's job (rule 1: it marks selection, it does not fill). */
 .settings-input:focus {
-  border-color: rgba(129, 140, 248, 0.5);
-  box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.1);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(108, 92, 224, 0.14);
 }
 .settings-input::placeholder {
   color: var(--text-muted);
-  opacity: 0.55;
+  opacity: 0.7;
 }
 
 select.settings-input {
   cursor: pointer;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  /* Chevron stroke is the ink ramp — the old slate hex was tuned for a dark
+     field and all but disappears on white. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2317151A' stroke-opacity='0.58' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 8px center;
+  background-position: right 9px center;
   background-size: 16px;
-  padding-right: 28px;
+  padding-right: 30px;
 }
 
 textarea.settings-input {
@@ -548,7 +774,7 @@ textarea.settings-input {
 }
 .range-row input[type='range'] {
   flex: 1;
-  accent-color: var(--indigo);
+  accent-color: var(--accent);
 }
 .range-value {
   font-size: 12px;
@@ -558,30 +784,393 @@ textarea.settings-input {
   text-align: right;
 }
 
+/* Primary action: ink, like every other primary in the system. */
 .save-btn {
   width: 100%;
-  padding: 10px;
-  border-radius: 8px;
+  padding: 11px;
+  border-radius: var(--r-pill);
   border: none;
-  background: var(--indigo);
-  color: white;
-  font-family: 'Space Grotesk', sans-serif;
+  background: var(--ink);
+  color: var(--on-ink);
+  font-family: inherit;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition: background 200ms, transform 200ms, box-shadow 200ms;
-  box-shadow: 0 0 16px var(--indigo-glow);
+  box-shadow: 0 4px 14px rgba(23, 21, 26, 0.18);
 }
 .save-btn:hover {
-  background: #6D28D9;
+  background: #2A2732;
   transform: translateY(-1px);
-  box-shadow: 0 0 24px var(--indigo-glow);
+  box-shadow: 0 6px 20px rgba(23, 21, 26, 0.24);
 }
 .save-btn:active {
   transform: scale(0.98);
 }
+/* Confirmation reads in the connected green, as text on a tint. */
 .save-btn--saved {
-  background: var(--green);
-  color: #052E16;
-  box-shadow: 0 0 16px var(--green-glow);
+  background: rgba(63, 191, 106, 0.14);
+  color: #2E8B4F;
+  box-shadow: none;
+}
+
+/* ── Docking: the 3x3 anchor picker ──
+   A miniature of the screen, so the control reads as "put it there" without a
+   legend. Cells are square and the dot sits where the window would land, which
+   is why each cell positions its own dot rather than centring it. */
+.anchor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  width: 132px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-card-s);
+  background: var(--bg-card);
+}
+
+.anchor-cell {
+  aspect-ratio: 4 / 3;
+  display: flex;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  cursor: pointer;
+  padding: 3px;
+  transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out);
+}
+.anchor-cell:hover {
+  background: rgba(108, 92, 224, 0.10);
+}
+/* A chosen anchor is a selection, which is exactly what the accent marks —
+   it is never a fill on a button elsewhere in the system. */
+.anchor-cell--on {
+  border-color: var(--accent);
+  background: rgba(108, 92, 224, 0.14);
+}
+
+.anchor-dot {
+  width: 7px;
+  height: 5px;
+  border-radius: 2px;
+  background: var(--text-muted);
+}
+.anchor-cell--on .anchor-dot {
+  background: var(--accent);
+}
+
+/* Push the dot into the corner the cell represents, so the picker previews the
+   result rather than just recording a choice. */
+.anchor-cell:nth-child(3n + 1) { justify-content: flex-start; }
+.anchor-cell:nth-child(3n + 2) { justify-content: center; }
+.anchor-cell:nth-child(3n)     { justify-content: flex-end; }
+.anchor-cell:nth-child(-n + 3) { align-items: flex-start; }
+.anchor-cell:nth-child(n + 4):nth-child(-n + 6) { align-items: center; }
+.anchor-cell:nth-child(n + 7) { align-items: flex-end; }
+
+/* ── Post-session review ──
+   A scorecard read after the call, inside the same card the transcript lives in.
+   It is a *reading* surface: dense, quiet, and built almost entirely from the ink
+   opacity ramp, because nothing here is an action and body text is never bold.
+   The accent appears only as a mark — competency chips and the anchored bar —
+   and the one loud element is the zero-anchored alert, which is danger ink on a
+   wash of the same hue, never a danger fill. The aurora stays with the orb. */
+.review {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  animation: fade-in-up 240ms var(--ease-out);
+}
+
+.review-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.review-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* 800, per the display-weight rule the wordmark and the drawer headings follow.
+   This is a title, not emphasised body text. */
+.review-title {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+/* When it happened and the one-line summary. The separator is drawn by the
+   sibling rule rather than typed into the markup, so a session whose timestamp
+   could not be parsed leaves no orphan middot behind. */
+.review-dateline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.review-dateline span + span::before {
+  content: '\00B7';
+  margin-right: 8px;
+}
+
+.review-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* The stepper. Chevrons only — a session has no name, so a label would have to
+   invent one; position in the list is the honest affordance. */
+.review-step {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-menu);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+.review-step:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+.review-step:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.review-count {
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  color: var(--text-muted);
+  min-width: 34px;
+  text-align: center;
+}
+
+/* "Done" rather than a cross: this closes a panel the app opened by itself, so
+   the button acknowledges rather than dismisses. Ink is the system's primary
+   action colour, but a solid ink fill here would outweigh Stop in the footer —
+   so it takes the ink as text on the card surface. */
+.review-close {
+  margin-left: 4px;
+  padding: 5px 13px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+.review-close:hover {
+  background: var(--bg-elevated);
+  transform: translateY(-1px);
+}
+
+.review-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 16px 2px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.review-body::-webkit-scrollbar       { width: 3px; }
+.review-body::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+
+.review-section {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+/* The anchored bar. Sized to be read as a proportion, not as progress — it never
+   fills over time and there is no target to reach. */
+.review-bar {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.review-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--r-pill);
+  transition: width 320ms var(--ease-out);
+}
+/* Zero anchored: the empty track itself carries the warning, because an empty
+   neutral bar is indistinguishable from a bar that has not rendered yet. */
+.review-bar--none {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 26%, transparent);
+}
+
+.review-split {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+}
+/* The figure is the sentence's subject, so it takes full-strength ink while the
+   rest of the line sits on the muted step — emphasis from the ramp, not weight. */
+.review-split-figure {
+  color: var(--text);
+}
+.review-split-rest {
+  color: var(--text-muted);
+}
+
+/* The one loud element in the panel. Danger as ink on a wash of itself, matching
+   the ungrounded receipt exactly, so the transcript's per-answer warning and the
+   session-level one are visibly the same claim. */
+.review-alert {
+  padding: 9px 13px;
+  border-radius: var(--r-card-s);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 22%, transparent);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+/* A neutral statement of fact — no profile uploaded. Not an alert: nothing went
+   wrong in the session, there is simply nothing to score it against. */
+.review-note {
+  padding: 9px 13px;
+  border-radius: var(--r-card-s);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.review-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Competency tags. The accent marks them, which is exactly what the accent is
+   for — a tag labels content, it is never an action. */
+.review-chip {
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  white-space: nowrap;
+}
+/* On a gap row the chip is context for the question beside it, so it recedes to
+   the ink ramp and lets the question carry the line. */
+.review-chip--quiet {
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border-color: var(--border);
+}
+
+.review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  list-style: none;
+}
+
+.review-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--r-card-s);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.review-row-text {
+  color: var(--text);
+  min-width: 0;
+  line-height: 1.5;
+}
+
+/* How often a story was reached for. Monospaced so a column of counts lines up,
+   and muted so the story itself keeps the row. */
+.review-count-pill {
+  flex-shrink: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--bg-elevated);
+}
+
+/* Open gaps. Chip and question on one row, aligned at the top so a question that
+   wraps to two lines does not drag its tag down the row with it. */
+.review-gap {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--r-card-s);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-size: 13px;
+}
+/* Adjacent ground was covered, so the row sits back a step from the untouched
+   gaps directly above it without becoming a different kind of thing. */
+.review-gap--touched {
+  background: transparent;
+  border-color: transparent;
+  padding-left: 0;
+}
+.review-gap--touched .review-row-text {
+  color: var(--text-muted);
+}
+
+.review-subnote {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  padding-top: 4px;
+}
+
+.review-empty {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+/* Stories that never surfaced, run together as one soft line. Rows would give
+   them the same visual weight as the open gaps above, and unlike those they are
+   not work to be done. */
+.review-unused {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
 }

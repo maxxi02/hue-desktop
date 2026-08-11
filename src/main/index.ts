@@ -7,6 +7,9 @@ import { initHotkeys, summon, toggleSession, unregisterAllHotkeys } from './hotk
 import { startPhoneMirror, stopPhoneMirror } from './phone-mirror'
 import { startRelay, stopRelay } from './relay-client'
 import { getSettings } from './settings'
+import { isPermissionAllowed } from './permissions'
+import { applyStealth } from './stealth'
+import { applyWindowAnchor, trackWindowPlacement, watchDisplayChanges } from './window-placement'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -53,7 +56,24 @@ function createWindow(): void {
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
 
+  // Restore stealth from the saved setting before the window is ever shown, so a
+  // user who left it on is never briefly capturable at launch.
+  applyStealth(win, getSettings().stealthMode)
+
+  // Place the window before it is ever shown, so an anchored card appears where
+  // the user parked it instead of flashing at the default position and jumping.
+  applyWindowAnchor(win)
+  // Dragging is an OS-level move (the header is -webkit-app-region: drag), so the
+  // only way to notice it is the 'moved' event. This records the new position and
+  // releases the anchor — silently snapping a dragged window back would read as
+  // the app fighting the user.
+  trackWindowPlacement(win)
+
   win.on('ready-to-show', () => {
+    // Re-applied here rather than only above because the 'activate' handler can
+    // build a fresh window long after boot; without this the recreated window
+    // would come back unprotected while the setting still says otherwise.
+    applyStealth(win, getSettings().stealthMode)
     win.show()
   })
 
@@ -86,16 +106,13 @@ function createWindow(): void {
     }
   })
 
-  // Grant only the two capabilities Hue actually uses: 'media' for the voice
-  // pipeline's microphone (getUserMedia) and 'display-capture' for system
-  // loopback audio (getDisplayMedia, handled below). Everything else —
-  // geolocation, notifications, clipboard, etc. — is denied.
-  const ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set(['media', 'display-capture'])
+  // Grant only the capabilities Hue actually uses (see ./permissions).
+  // Everything else — geolocation, notifications, clipboard, etc. — is denied.
   const ses = win.webContents.session
   ses.setPermissionRequestHandler((_wc, permission, callback) =>
-    callback(ALLOWED_PERMISSIONS.has(permission))
+    callback(isPermissionAllowed(permission))
   )
-  ses.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission))
+  ses.setPermissionCheckHandler((_wc, permission) => isPermissionAllowed(permission))
 
   // System/loopback audio capture for Companion mode (the interviewer's voice on
   // a call). getDisplayMedia in the renderer routes here; we grant loopback audio
@@ -187,6 +204,12 @@ app.whenReady().then(() => {
   // Global shortcuts: Ctrl/Cmd+Shift+Space toggles Hue's window (show / hide); the
   // configurable start-session shortcut starts/stops a session — both work from any app.
   initHotkeys(() => mainWindow)
+
+  // Re-anchor when the desktop geometry changes. This is the case that actually
+  // strands the window: unplugging a dock, or a resolution change mid-call, can
+  // leave an anchored card off-screen entirely on a monitor that no longer
+  // exists — and a window you cannot see is a window you cannot drag back.
+  watchDisplayChanges(() => mainWindow)
 
   // Resume the phone mirror if the user left it enabled (the QR URL changes per
   // launch because the auth token is regenerated — re-scan from Settings).

@@ -7,7 +7,16 @@
     "src/preload/*.d.ts",
     "src/shared/**/*"
   ],
+  // Same reason as tsconfig.node.json: node:test files import siblings with an
+  // explicit .ts extension, and they are run by `node --test`, not built. Now
+  // that src/shared has tests, the web project needs the exclusion too.
+  "exclude": ["src/**/*.test.ts"],
   "compilerOptions": {
+    // src/shared modules that import a *value* from a sibling must spell the
+    // .ts extension so `node --test` can resolve them at runtime; type-only
+    // imports are erased and do not need it. Safe here because both typecheck
+    // scripts run with --noEmit, and Vite resolves the extension when building.
+    "allowImportingTsExtensions": true,
     "composite": true,
     "jsx": "react-jsx",
     "baseUrl": ".",

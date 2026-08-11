@@ -33,6 +33,35 @@ export type HueMode = 'interviewer' | 'companion'
  */
 export type AudioSource = 'microphone' | 'system'
 
+/**
+ * Where the floating window parks itself.
+ *
+ * The nine grid values dock Hue to a corner, an edge midpoint, or the centre of
+ * whichever display it is on, inset by `windowAnchorMargin`. `'free'` means the
+ * user places it themselves — dragging the header switches the setting back to
+ * `'free'` rather than snapping the window home, because an overlay that fights
+ * the mouse reads as broken.
+ */
+export type WindowAnchor =
+  | 'free'
+  | 'top-left'
+  | 'top-center'
+  | 'top-right'
+  | 'center-left'
+  | 'center'
+  | 'center-right'
+  | 'bottom-left'
+  | 'bottom-center'
+  | 'bottom-right'
+
+/** A screen-space window rectangle, in the same shape as Electron's `Rectangle`. */
+export interface WindowBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 /** Which ASR tier actually handled a given utterance (for the latency indicator). */
 export type ResolvedTier = 'on-device' | 'cloud'
 
@@ -62,7 +91,56 @@ export interface HueSettings {
   ttsSpeed: number
   /** Opacity of the floating window's background, 0.4–1. Lower = more see-through. */
   windowOpacity: number
+  /**
+   * Where the window docks: one of the nine anchor points, or `'free'`.
+   *
+   * Defaults to `'free'` so an existing install is never surprised by its window
+   * jumping to a corner on upgrade — and `'free'` is not a no-op, it restores
+   * `windowFreeBounds`, which is what stops the position resetting every launch.
+   * Anchoring is computed against the *work area* of the display the window is
+   * on, so a bottom anchor sits above the taskbar and a second monitor is
+   * anchored to itself rather than to the primary.
+   */
+  windowAnchor: WindowAnchor
+  /**
+   * Inset in pixels between the window and the work-area edge when anchored.
+   *
+   * Non-zero by default: flush against the edge the card's shadow is clipped and
+   * it reads as a torn-off panel rather than as a floating companion.
+   */
+  windowAnchorMargin: number
+  /**
+   * The last position the window was dragged to, restored when `windowAnchor`
+   * is `'free'`. `null` until the window has been moved once, in which case the
+   * OS picks the initial placement as before.
+   *
+   * Stored as a full rectangle rather than a point so a resized window comes
+   * back the size it was left. It is validated against the displays present at
+   * restore time — a position saved on a monitor that has since been unplugged
+   * is clamped back into view, not restored into the void.
+   */
+  windowFreeBounds: WindowBounds | null
+  /**
+   * The old freeform resume text: the whole document pasted into the prompt.
+   *
+   * Superseded by `profileBundleJson`, and kept only so an existing install
+   * does not lose its background on upgrade. When a bundle is present it wins;
+   * this is the fallback, and nothing writes to it any more.
+   */
   resumeSummary: string
+  /**
+   * The structured `ProfileBundle` from hue-ingest, stored as JSON.
+   *
+   * Serialised rather than nested because settings are a flat, user-editable
+   * document and a malformed bundle must be recoverable by clearing one field
+   * rather than by hand-repairing a nested object.
+   */
+  profileBundleJson: string
+  /** hue-ingest account credentials. Never leaves the main process. */
+  ingestAccountId: string
+  ingestAccountToken: string
+  /** Overridable so a self-hosted ingest deployment is a setting, not a fork. */
+  ingestBaseUrl: string
   jobTitle: string
   interviewMode: InterviewMode
   /** Whether Hue acts as the interviewer or as a companion answering the interviewer. */
@@ -99,6 +177,34 @@ export interface HueSettings {
   relayEnabled: boolean
   /** Base URL of the hue-relay deployment, e.g. https://relay.hue.app */
   relayBaseUrl: string
+  /**
+   * Stealth mode: keeps Hue's window off screen captures and screen shares.
+   *
+   * Electron's `setContentProtection` maps to `SetWindowDisplayAffinity` with
+   * `WDA_EXCLUDEFROMCAPTURE` on Windows 10 2004+ and to
+   * `NSWindowSharingNone` on macOS, so the card stays visible on the physical
+   * display while capture APIs — the ones Zoom, Teams, Meet and OBS use — read
+   * it as empty.
+   *
+   * It is a window-level flag and nothing more: it does not hide the process,
+   * the tray icon, or the audio devices Hue opens, and it cannot survive a
+   * camera pointed at the screen. On Linux, and on Windows builds older than
+   * 10 2004, the platform offers no equivalent and the flag is inert.
+   */
+  stealthMode: boolean
+  /**
+   * Speculative answer drafting: start generating an answer from the *interim*
+   * transcript, while the interviewer is still speaking, and commit that draft
+   * when the final transcript agrees with what it was drafted from.
+   *
+   * Off by default. It removes most of the LLM's generation time from the
+   * critical path, but it pays for that with extra output tokens on every draft
+   * that turns out to be wrong — so it stays opt-in until its hit rate has been
+   * measured on real sessions. Companion mode only: in interviewer mode the
+   * incoming voice is the *user's*, and drafting an answer to it is precisely
+   * the failure the scheduler's `self` speaker guard exists to prevent.
+   */
+  speculativeDrafting: boolean
 }
 
 export const DEFAULT_SETTINGS: HueSettings = {
@@ -122,7 +228,14 @@ export const DEFAULT_SETTINGS: HueSettings = {
   ttsVoice: 'af_heart',
   ttsSpeed: 1.05,
   windowOpacity: 0.9,
+  windowAnchor: 'free',
+  windowAnchorMargin: 16,
+  windowFreeBounds: null,
   resumeSummary: '',
+  profileBundleJson: '',
+  ingestAccountId: '',
+  ingestAccountToken: '',
+  ingestBaseUrl: 'http://localhost:8788',
   jobTitle: '',
   interviewMode: 'practice',
   hueMode: 'companion',
@@ -132,11 +245,16 @@ export const DEFAULT_SETTINGS: HueSettings = {
   captureScreenHotkey: 'CommandOrControl+Shift+S',
   phoneMirrorEnabled: false,
   relayEnabled: false,
-  relayBaseUrl: 'http://localhost:8787'
+  relayBaseUrl: 'http://localhost:8787',
+  stealthMode: false,
+  speculativeDrafting: false
 }
 
 /** Keys that are sensitive and stored encrypted at rest via Electron safeStorage. */
 export const SECRET_SETTING_KEYS = [
+  // Reads the user's entire career history from hue-ingest, so it is a secret
+  // in exactly the sense the others are.
+  'ingestAccountToken',
   'anthropicApiKey',
   'deepgramApiKey',
   'assemblyAiApiKey',
@@ -251,4 +369,20 @@ export interface RelayStatus {
   pairingUri: string
   /** Last registration/publish failure, surfaced in Settings; null when healthy. */
   error: string | null
+}
+
+/**
+ * Stealth reported back to the renderer. `enabled` and `effective` are kept
+ * apart on purpose: the user can switch stealth on anywhere, but only a
+ * platform with a real "exclude from capture" primitive makes it effective, and
+ * the UI must show the second rather than the first — a badge that lights up on
+ * Linux would be a lie the user acts on during an interview.
+ */
+export interface StealthStatus {
+  /** The persisted `stealthMode` setting. */
+  enabled: boolean
+  /** Whether the window is genuinely excluded from capture right now. */
+  effective: boolean
+  /** Whether this platform can suppress capture at all. */
+  supported: boolean
 }

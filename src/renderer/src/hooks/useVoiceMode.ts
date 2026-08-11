@@ -4,11 +4,26 @@ import { preloadOnDeviceModel } from '../lib/transcription'
 import { preloadTtsModel } from '../lib/streamingTTS'
 import { isLlmConfigured, playGreeting } from '../lib/greeting'
 import type { AudioSource, HueMode, ResolvedTier, ScreenCapture } from '@shared/types'
+import type { Grounding } from '@shared/grounding'
 
 export interface VoiceTurn {
   text: string
   tier: ResolvedTier
   latencyMs: number
+}
+
+/**
+ * A finished assistant turn: the text as it should be read, plus its grounding
+ * receipt (null when a receipt does not apply to the turn).
+ *
+ * Delivered as one object rather than as a separate `grounding` field so the
+ * transcript can never pair a receipt with a different turn's text. `id` makes a
+ * repeated identical answer still register as a new turn.
+ */
+export interface AssistantResult {
+  text: string
+  grounding: Grounding | null
+  id: number
 }
 
 /** A screen capture, tagged with a unique id so repeats still register as new. */
@@ -26,6 +41,8 @@ export interface UseVoiceMode {
   /** Most recent screen capture taken during the session (for the transcript thumbnail). */
   capture: CaptureTurn | null
   assistantText: string
+  /** The last completed assistant turn, carrying its grounding receipt. */
+  assistantResult: AssistantResult | null
   /** LLM-generated launch greeting from Hue (streamed). Empty until Hue has greeted. */
   greetingText: string
   error: string | null
@@ -47,6 +64,7 @@ export function useVoiceMode(): UseVoiceMode {
   const [userTranscript, setUserTranscript] = useState<VoiceTurn | null>(null)
   const [capture, setCapture] = useState<CaptureTurn | null>(null)
   const [assistantText, setAssistantText] = useState('')
+  const [assistantResult, setAssistantResult] = useState<AssistantResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<HueMode>('companion')
   const [audioSource, setAudioSource] = useState<AudioSource>('microphone')
@@ -118,15 +136,23 @@ export function useVoiceMode(): UseVoiceMode {
       onUserTranscript: (text, tier, latencyMs) => {
         setUserTranscript({ text, tier, latencyMs })
         setAssistantText('')
+        setAssistantResult(null)
         window.hue.phone.event({ type: 'question', text })
       },
       onScreenCapture: (shot) => {
         setCapture({ shot, id: Date.now() })
         setAssistantText('')
+        setAssistantResult(null)
         window.hue.phone.event({ type: 'question', text: 'Shared a screen capture' })
       },
       onAssistantText: (text) => {
         setAssistantText(text)
+        window.hue.phone.event({ type: 'answer', text })
+      },
+      onAssistantComplete: (text, grounding) => {
+        setAssistantResult({ text, grounding, id: Date.now() })
+        // The phone mirror gets the final text too, so a stripped citation or a
+        // last delta that never made it there cannot leave the two out of sync.
         window.hue.phone.event({ type: 'answer', text })
       },
       onError: setError
@@ -157,6 +183,7 @@ export function useVoiceMode(): UseVoiceMode {
     setUserTranscript(null)
     setCapture(null)
     setAssistantText('')
+    setAssistantResult(null)
     setGreetingText('')
     window.hue.phone.event({ type: 'clear' })
   }, [])
@@ -190,6 +217,7 @@ export function useVoiceMode(): UseVoiceMode {
     userTranscript,
     capture,
     assistantText,
+    assistantResult,
     greetingText,
     error,
     mode,

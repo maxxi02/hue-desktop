@@ -12,22 +12,22 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "copy-vad-assets": "node scripts/copy-vad-assets.mjs",
+    "generate-icons": "electron scripts/generate-icons.mjs",
     "start": "electron-vite preview",
     "predev": "npm run copy-vad-assets",
     "dev": "electron-vite dev",
     "prebuild": "npm run copy-vad-assets",
     "build": "npm run typecheck && electron-vite build",
-    "postinstall": "electron-builder install-app-deps && npm run copy-vad-assets",
+    "postinstall": "npm run copy-vad-assets",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "electron-vite build && electron-builder --mac",
-    "build:linux": "electron-vite build && electron-builder --linux"
+    "build:linux": "electron-vite build && electron-builder --linux",
+    "test": "node --test src/**/*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
     "@electron-toolkit/utils": "^4.0.0",
-    "@fontsource/dm-sans": "^5.2.8",
-    "@fontsource/space-grotesk": "^5.2.10",
     "@huggingface/transformers": "^4.2.0",
     "@ricky0123/vad-web": "^0.0.30",
     "kokoro-js": "^1.2.1",
@@ -57,12 +57,5 @@
     "react-dom": "^19.2.1",
     "typescript": "^5.9.3",
     "vite": "^7.2.6"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "esbuild",
-      "uiohook-napi"
-    ]
   }
 }

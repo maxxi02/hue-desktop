@@ -10,8 +10,10 @@ import type {
   PhoneMirrorEvent,
   PhoneMirrorStatus,
   RelayStatus,
-  ScreenCapture
+  ScreenCapture,
+  StealthStatus
 } from '../shared/types'
+import type { IngestOutcome, IngestProgress } from '../shared/profile'
 
 function sub<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: IpcRendererEvent, payload: T): void => cb(payload)
@@ -46,6 +48,20 @@ const hue = {
     /** Grab the primary screen (Hue hides itself for the shot) as a base64 PNG. */
     screen: (): Promise<ScreenCapture> => ipcRenderer.invoke('hue:capture:screen')
   },
+  profile: {
+    /**
+     * Upload a resume and wait for the structured bundle. Takes about a minute;
+     * subscribe to `onProgress` first or the pane looks frozen.
+     */
+    ingest: (bytes: ArrayBuffer): Promise<IngestOutcome> =>
+      ipcRenderer.invoke('hue:profile:ingest', bytes),
+    onProgress: (cb: (p: IngestProgress) => void): (() => void) =>
+      sub('hue:profile:progress', cb),
+    /** Re-fetch the bundle — e.g. after answering gap questions on the phone. */
+    refresh: (): Promise<IngestOutcome> => ipcRenderer.invoke('hue:profile:refresh'),
+    /** Deletes the profile here and on the server. */
+    delete: (): Promise<void> => ipcRenderer.invoke('hue:profile:delete')
+  },
   phone: {
     status: (): Promise<PhoneMirrorStatus> => ipcRenderer.invoke('hue:phone:status'),
     /** Persists phoneMirrorEnabled and starts/stops the LAN server in one step. */
@@ -59,6 +75,13 @@ const hue = {
     /** Persists relayEnabled and registers/tears down the relay room in one step. */
     setEnabled: (enabled: boolean): Promise<RelayStatus> =>
       ipcRenderer.invoke('hue:relay:set-enabled', enabled)
+  },
+  stealth: {
+    /**
+     * Whether the window is currently kept out of screen captures, and whether
+     * this platform can do that at all — the setting on its own doesn't say.
+     */
+    getStealthStatus: (): Promise<StealthStatus> => ipcRenderer.invoke('hue:stealth:status')
   },
   hotkey: {
     /** Fired by the configurable start-session shortcut (or the tray) to start/stop a session. */

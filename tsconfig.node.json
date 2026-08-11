@@ -10,6 +10,11 @@
   // type stripping requires it); they are run by `node --test`, not built.
   "exclude": ["src/**/*.test.ts"],
   "compilerOptions": {
+    // src/shared modules that import a *value* from a sibling must spell the
+    // .ts extension so `node --test` can resolve them at runtime; type-only
+    // imports are erased and do not need it. Safe here because both typecheck
+    // scripts run with --noEmit, and Vite resolves the extension when building.
+    "allowImportingTsExtensions": true,
     "composite": true,
     "types": ["electron-vite/node"]
   }

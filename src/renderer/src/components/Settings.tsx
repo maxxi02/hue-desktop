@@ -10,11 +10,11 @@ import type {
   LlmProvider,
   OpenAiCompatProvider,
   PhoneMirrorStatus,
-  RelayStatus
+  RelayStatus,
+  StealthStatus,
+  WindowAnchor
 } from '@shared/types'
-import { parseResume } from '../lib/resume'
-import { cleanResumeText } from '../lib/resumeCleanup'
-import { isLlmConfigured } from '../lib/greeting'
+import { describeBundle, parseProfileBundle } from '../../../shared/profile'
 
 const KOKORO_VOICES = ['af_heart', 'af_bella', 'af_nicole', 'am_michael', 'bf_emma', 'bm_george']
 
@@ -272,6 +272,36 @@ function CloseIcon(): React.JSX.Element {
   )
 }
 
+/**
+ * The nine docking positions, in reading order so the array maps straight onto a
+ * 3x3 CSS grid. 'free' is deliberately absent: it is not a position you aim at,
+ * it is the state you fall into by dragging the window, so it gets its own
+ * button rather than a tenth cell that would have nowhere sensible to sit.
+ */
+const ANCHOR_CELLS = [
+  'top-left',
+  'top-center',
+  'top-right',
+  'center-left',
+  'center',
+  'center-right',
+  'bottom-left',
+  'bottom-center',
+  'bottom-right'
+] as const satisfies readonly WindowAnchor[]
+
+const ANCHOR_LABELS: Record<(typeof ANCHOR_CELLS)[number], string> = {
+  'top-left': 'Top left',
+  'top-center': 'Top centre',
+  'top-right': 'Top right',
+  'center-left': 'Middle left',
+  center: 'Centre',
+  'center-right': 'Middle right',
+  'bottom-left': 'Bottom left',
+  'bottom-center': 'Bottom centre',
+  'bottom-right': 'Bottom right'
+}
+
 export function Settings({ onClose }: { onClose: () => void }): React.JSX.Element {
   const [s, setS] = useState<HueSettings | null>(null)
   const [saved, setSaved] = useState(false)
@@ -282,6 +312,11 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   const [llmModels, setLlmModels] = useState<string[]>([])
   const [llmStatus, setLlmStatus] = useState<'idle' | 'detecting' | 'ok' | 'unreachable'>('idle')
   const [resumeStatus, setResumeStatus] = useState<string | null>(null)
+  // Parsed from the settings field rather than held separately, so there is one
+  // source of truth and a hand-edited settings file can't put the pane and the
+  // prompt builder out of step.
+  // `s` is null until settings load; the pane renders a loading state then.
+  const profileBundle = s ? parseProfileBundle(s.profileBundleJson) : null
   const fileInputRef = useRef<HTMLInputElement>(null)
   const detectSeq = useRef(0)
   const llmDetectSeq = useRef(0)
@@ -327,6 +362,33 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
       setS((prev) => (prev ? { ...prev, phoneMirrorEnabled: status.running } : prev))
     } finally {
       setPhoneBusy(false)
+    }
+  }
+
+  // Stealth: mirrors togglePhone — the switch has an effect on the window, not
+  // just on the stored form, so it must apply the moment it's clicked. Waiting
+  // for Save would leave the user visible in a share they thought they'd left.
+  const [stealth, setStealth] = useState<StealthStatus | null>(null)
+  const [stealthBusy, setStealthBusy] = useState(false)
+
+  useEffect(() => {
+    window.hue.stealth.getStealthStatus().then(setStealth)
+  }, [])
+
+  const toggleStealth = async (): Promise<void> => {
+    if (!stealth) return
+    setStealthBusy(true)
+    try {
+      // settings.set applies the flag to this window as it persists it, so one
+      // round-trip both saves and takes effect; the status re-read then reports
+      // what the platform actually delivered.
+      await window.hue.settings.set({ stealthMode: !stealth.enabled })
+      const status = await window.hue.stealth.getStealthStatus()
+      setStealth(status)
+      // Keep the form's copy of the setting in sync (it persists on Save too).
+      setS((prev) => (prev ? { ...prev, stealthMode: status.enabled } : prev))
+    } finally {
+      setStealthBusy(false)
     }
   }
 
@@ -462,39 +524,64 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
     setTimeout(() => setSaved(false), 1500)
   }
 
+  /**
+   * Uploads the resume to hue-ingest and stores the structured bundle.
+   *
+   * Replaces the old flow — parse locally, then ask the LLM to tidy the prose —
+   * because tidy prose was never the problem. A summary cannot tell the model
+   * which stories the candidate actually has, so asked for a failure story by a
+   * resume that contains none, its only option was to invent one. The bundle
+   * enumerates what exists, and the gap scan collects what doesn't.
+   */
   const onResumeFile = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = e.target.files?.[0]
     e.target.value = '' // allow re-selecting the same file
     if (!file) return
-    setResumeStatus(`Reading ${file.name}…`)
+
+    setResumeStatus(`Uploading ${file.name}…`)
+    // Subscribed before the call, not after: ingest takes about a minute, and
+    // the first progress event fires immediately.
+    const stopProgress = window.hue.profile.onProgress((p) => {
+      setResumeStatus(
+        p.phase === 'uploading'
+          ? `Uploading ${file.name}…`
+          : p.phase === 'extracting'
+            ? 'Reading your resume…'
+            : `Building your story bank… ${p.elapsedSeconds}s`
+      )
+    })
+
     try {
-      const result = await parseResume(file)
-      // Always keep the raw text in place first, so something usable is loaded
-      // even if the AI clean-up can't run or fails.
-      set('resumeSummary', result.text)
-
-      if (!isLlmConfigured(s)) {
-        setResumeStatus(
-          `Loaded ${result.fileName} (${result.wordCount} words). Configure & save an LLM to auto-clean it. Review and save.`
-        )
-        return
-      }
-
-      setResumeStatus(`Cleaning up ${result.fileName} with AI…`)
-      try {
-        // The main process runs the LLM against the *saved* settings, so persist
-        // the current provider/key first (otherwise a just-typed, unsaved key
-        // wouldn't be used and clean-up would fail).
-        await window.hue.settings.set(s)
-        const cleaned = await cleanResumeText(result.text)
-        if (cleaned) set('resumeSummary', cleaned)
-        setResumeStatus(`Loaded & cleaned ${result.fileName}. Review and save.`)
-      } catch (aiErr) {
-        const msg = aiErr instanceof Error ? aiErr.message : String(aiErr)
-        setResumeStatus(`Loaded ${result.fileName} (raw text — AI clean-up failed: ${msg}). Review and save.`)
+      const outcome = await window.hue.profile.ingest(await file.arrayBuffer())
+      if (outcome.ok) {
+        // The main process already persisted it; mirror it into the local form
+        // state so the pane updates without a reload.
+        set('profileBundleJson', JSON.stringify(outcome.bundle))
+        setResumeStatus(`Ready — ${describeBundle(outcome.bundle)}.`)
+      } else {
+        setResumeStatus(outcome.message)
       }
     } catch (err) {
       setResumeStatus(err instanceof Error ? err.message : String(err))
+    } finally {
+      stopProgress()
+    }
+  }
+
+  const onDeleteProfile = async (): Promise<void> => {
+    await window.hue.profile.delete()
+    set('profileBundleJson', '')
+    setResumeStatus('Profile deleted.')
+  }
+
+  const onRefreshProfile = async (): Promise<void> => {
+    setResumeStatus('Checking for updates…')
+    const outcome = await window.hue.profile.refresh()
+    if (outcome.ok) {
+      set('profileBundleJson', JSON.stringify(outcome.bundle))
+      setResumeStatus(`Up to date — ${describeBundle(outcome.bundle)}.`)
+    } else {
+      setResumeStatus(outcome.message)
     }
   }
 
@@ -940,14 +1027,62 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                   {resumeStatus}
                 </span>
               )}
-              <textarea
+              {/*
+                The endpoint had no control until now, so a user whose résumé
+                service is their own `hue-ingest` on localhost had no way to say
+                so — uploads went to the shipped default and failed with nothing
+                they could act on. Placed under the button rather than in a
+                separate pane because this is the setting an upload failure
+                sends you looking for.
+              */}
+              <label className="settings-label" style={{ marginTop: 10 }}>
+                Résumé service URL
+              </label>
+              <input
                 className="settings-input"
-                style={{ marginTop: 8 }}
-                value={s.resumeSummary}
-                onChange={(e) => set('resumeSummary', e.target.value)}
-                rows={3}
-                placeholder="Upload a résumé above, or type a few sentences about your background…"
+                type="text"
+                value={s.ingestBaseUrl}
+                placeholder="http://localhost:8788"
+                onChange={(e) => set('ingestBaseUrl', e.target.value)}
               />
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                Where hue-ingest is running. Run it yourself with{' '}
+                <code>npm start</code> in <code>hue-ingest</code> and point this at{' '}
+                <code>http://localhost:8788</code>.
+              </span>
+              {profileBundle ? (
+                <div style={{ marginTop: 8, fontSize: 13 }}>
+                  <div>{describeBundle(profileBundle)}</div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                    {profileBundle.gaps.some((g) => g.status === 'open')
+                      ? 'Answer the remaining questions in the Hue phone app — they cover the ' +
+                        'things your resume can’t show, which are exactly the ones an AI would ' +
+                        'otherwise make up.'
+                      : 'Gap scan complete.'}
+                  </div>
+                  <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+                    <button type="button" className="link-btn" onClick={onRefreshProfile}>
+                      Check for updates
+                    </button>
+                    <button type="button" className="link-btn" onClick={onDeleteProfile}>
+                      Delete my profile
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                // The legacy freeform field stays visible only while there is no
+                // bundle. It is still what the prompt falls back to, so an
+                // existing install keeps working — but it is no longer the path
+                // an upload takes.
+                <textarea
+                  className="settings-input"
+                  style={{ marginTop: 8 }}
+                  value={s.resumeSummary}
+                  onChange={(e) => set('resumeSummary', e.target.value)}
+                  rows={3}
+                  placeholder="Upload a résumé above, or type a few sentences about your background…"
+                />
+              )}
             </div>
           </div>
 
@@ -1055,6 +1190,107 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                   onChange={(e) => set('ttsSpeed', Number(e.target.value))}
                 />
                 <span className="range-value">{s.ttsSpeed.toFixed(2)}×</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">Stealth</div>
+            <div className="settings-field">
+              <label className="settings-label">Hide Hue from screen sharing</label>
+              <button
+                type="button"
+                className="icon-btn"
+                style={{ alignSelf: 'flex-start', width: 'auto', padding: '6px 12px', fontSize: 13 }}
+                onClick={() => void toggleStealth()}
+                disabled={stealthBusy || !stealth || !stealth.supported}
+              >
+                {stealthBusy ? 'Working…' : stealth?.enabled ? 'Disable stealth' : 'Enable stealth'}
+              </button>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                Asks the OS to leave this window out of screen shares and screen-capture APIs, so
+                it stays visible to you but not to the people you share with. Takes effect
+                immediately.
+              </span>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                It hides the window and nothing else: the Hue process, its tray icon and the audio
+                devices it holds open are all still there, and it cannot do anything about a camera
+                pointed at your screen.
+              </span>
+              {stealth && !stealth.supported && (
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Unavailable on this system — Linux and Windows 10 builds older than 2004 provide
+                  no equivalent, so the switch would do nothing.
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">Answering</div>
+            <div className="settings-field">
+              <label className="settings-label">Speculative drafting</label>
+              <button
+                className="capture-btn"
+                style={{ alignSelf: 'flex-start' }}
+                onClick={() => set('speculativeDrafting', !s.speculativeDrafting)}
+              >
+                {s.speculativeDrafting ? 'Turn off drafting early' : 'Draft while they speak'}
+              </button>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                Starts drafting an answer from a partial transcript, before the interviewer
+                finishes, so the suggestion is ready sooner. It sends more requests than waiting
+                does, and drafts that turn out to be wrong are thrown away — so it costs extra
+                tokens to buy latency. Companion mode only.
+              </span>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">Docking</div>
+            <div className="settings-field">
+              <label className="settings-label">Anchor position</label>
+              <div className="anchor-grid">
+                {ANCHOR_CELLS.map((anchor) => (
+                  <button
+                    key={anchor}
+                    type="button"
+                    className={`anchor-cell${s.windowAnchor === anchor ? ' anchor-cell--on' : ''}`}
+                    aria-label={ANCHOR_LABELS[anchor]}
+                    aria-pressed={s.windowAnchor === anchor}
+                    title={ANCHOR_LABELS[anchor]}
+                    onClick={() => set('windowAnchor', anchor)}
+                  >
+                    <span className="anchor-dot" />
+                  </button>
+                ))}
+              </div>
+              <button
+                className="capture-btn"
+                style={{ alignSelf: 'flex-start', marginTop: 8 }}
+                onClick={() => set('windowAnchor', 'free')}
+                disabled={s.windowAnchor === 'free'}
+              >
+                {s.windowAnchor === 'free' ? 'Free — drag it anywhere' : 'Unpin'}
+              </button>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                Parks Hue in a fixed corner of whichever screen it is on, clear of the taskbar,
+                and puts it back there if your displays change. Dragging the window releases the
+                anchor — your position is remembered either way, including across restarts.
+              </span>
+            </div>
+            <div className="settings-field">
+              <label className="settings-label">Edge margin</label>
+              <div className="range-row">
+                <input
+                  type="range"
+                  min={0}
+                  max={64}
+                  step={4}
+                  value={s.windowAnchorMargin}
+                  onChange={(e) => set('windowAnchorMargin', Number(e.target.value))}
+                />
+                <span className="range-value">{s.windowAnchorMargin}px</span>
               </div>
             </div>
           </div>

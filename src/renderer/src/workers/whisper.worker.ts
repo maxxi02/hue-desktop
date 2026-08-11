@@ -35,12 +35,19 @@ type Device = 'webgpu' | 'wasm'
 // ASR on the CPU there leaves the GPU to the call. See useVoiceMode.ts.
 type InMessage =
   | { type: 'load'; preferWasm?: boolean }
-  | { type: 'transcribe'; id: number; audio: Float32Array }
+  // `interim` marks a partial, mid-utterance transcription of the speech so far.
+  // It is droppable by definition: another one is along in under a second, and
+  // the segment's real transcript is still coming. See the busy check below.
+  | { type: 'transcribe'; id: number; audio: Float32Array; interim?: boolean }
 
 type OutMessage =
   | { type: 'ready'; device: Device }
   | { type: 'progress'; data: ProgressInfo }
   | { type: 'result'; id: number; text: string }
+  // An interim that arrived while the model was busy and was thrown away rather
+  // than queued. Reported instead of silently dropped so the caller's promise
+  // settles and its bookkeeping doesn't leak.
+  | { type: 'skipped'; id: number }
   | { type: 'error'; id: number; message: string }
 
 const post = (msg: OutMessage): void => ctx.postMessage(msg)
@@ -125,6 +132,46 @@ function getTranscriber(
   return transcriberPromise
 }
 
+/**
+ * Transcriptions run strictly one at a time.
+ *
+ * Whichever device we end up on, this worker owns a single ONNX session and can
+ * only decode one utterance at once: the wasm path is pinned to one thread (see
+ * the top of this file), and the WebGPU path shares one queue. Two overlapping
+ * `transcriber()` calls would interleave on the same session rather than run in
+ * parallel, so work is serialised through this chain instead of being handed to
+ * the runtime to sort out.
+ */
+let chain: Promise<void> = Promise.resolve()
+/**
+ * Whether a transcription is running *or already scheduled*. Incremented
+ * synchronously on receipt, so an interim that lands while the previous one is
+ * still decoding is skipped rather than queued.
+ *
+ * Interims must never queue behind each other: a backlog would push the
+ * *final* transcript — the one the answer is actually generated from — behind a
+ * pile of stale partials and make the app slower, which is the exact opposite of
+ * what speculation is for. A skipped interim costs nothing; the next one covers
+ * the same audio plus more.
+ */
+let outstanding = 0
+
+async function runTranscription(id: number, audio: Float32Array): Promise<void> {
+  try {
+    const transcriber = await getTranscriber()
+    // Audio is expected to be mono Float32 @ 16 kHz (Whisper's sample rate).
+    const output = await transcriber(audio)
+    const text = Array.isArray(output) ? (output[0]?.text ?? '') : (output.text ?? '')
+    post({ type: 'result', id, text: text.trim() })
+  } catch (err) {
+    post({
+      type: 'error',
+      id,
+      message: err instanceof Error ? err.message : String(err)
+    })
+  }
+}
+
 ctx.onmessage = async (e: MessageEvent): Promise<void> => {
   const msg = e.data as InMessage
 
@@ -139,18 +186,17 @@ ctx.onmessage = async (e: MessageEvent): Promise<void> => {
   }
 
   if (msg.type === 'transcribe') {
-    try {
-      const transcriber = await getTranscriber()
-      // Audio is expected to be mono Float32 @ 16 kHz (Whisper's sample rate).
-      const output = await transcriber(msg.audio)
-      const text = Array.isArray(output) ? (output[0]?.text ?? '') : (output.text ?? '')
-      post({ type: 'result', id: msg.id, text: text.trim() })
-    } catch (err) {
-      post({
-        type: 'error',
-        id: msg.id,
-        message: err instanceof Error ? err.message : String(err)
-      })
+    if (msg.interim && outstanding > 0) {
+      post({ type: 'skipped', id: msg.id })
+      return
     }
+    // Finals are never dropped: if an interim is mid-decode, the final waits for
+    // it (one interim at most, so the wait is bounded by a single decode).
+    outstanding++
+    chain = chain
+      .then(() => runTranscription(msg.id, msg.audio))
+      .finally(() => {
+        outstanding--
+      })
   }
 }

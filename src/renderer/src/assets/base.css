@@ -1,40 +1,114 @@
+/*
+ * Hue's design tokens, ported from the hue-mobile design system
+ * (`hue-mobile/designsystem/src/main/kotlin/com/hue/mobile/design/`). Names and
+ * values track `HueColors`, `HueShapes` and `HueSpacing` so the two apps can be
+ * reasoned about as one system rather than two lookalikes.
+ *
+ * Two rules carry over from mobile, and they are what keep the system coherent:
+ *
+ *  1. **Ink is the primary action colour, not the accent.** Buttons are
+ *     ink-on-cream. `--accent` is for links, focus rings and selection marks
+ *     only. A screen full of violet buttons is off-system.
+ *  2. **The aurora gradient means "Hue is here".** It belongs to the voice orb
+ *     and nothing else. It is never a background for reading text against.
+ */
+
+/*
+ * Inter, the same variable file hue-mobile bundles
+ * (`designsystem/src/main/res/font/inter.ttf`, from Google Fonts). Copied rather
+ * than pulled from a CDN or an @fontsource package: this app runs offline, and
+ * shipping the identical binary is what guarantees the desktop and the phone
+ * render the wordmark the same. One file covers every weight via the `wght`
+ * axis, so the whole 100–900 range is declared against it.
+ */
+@font-face {
+  font-family: 'Inter';
+  src: url('./fonts/inter.ttf') format('truetype-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+
 :root {
-  --bg:          #080D1A;
+  /* ── Surfaces ── */
+  /* HueColors.Surface — the app's own background. */
+  --bg:          #F6F4EF;
   /* RGB channels of --bg, so the floating card can paint it at a configurable
      alpha (--bg-alpha, driven by the windowOpacity setting). */
-  --bg-rgb:      8, 13, 26;
+  --bg-rgb:      246, 244, 239;
   --bg-alpha:    0.9;
-  --bg-card:     #111827;
-  --bg-elevated: #1E293B;
-  --border:      rgba(255, 255, 255, 0.08);
+  /* HueColors.Card — raised cards, list groups, input fields. */
+  --bg-card:     #FFFFFF;
+  /* HueColors.Canvas — the darker cream, used where a surface must recede. */
+  --bg-elevated: #EFEBE4;
+
+  /* ── Content ── */
+  /* HueColors.Ink / OnSurface. Also the primary button fill (rule 1 above). */
+  --ink:         #17151A;
+  --on-ink:      #FFFFFF;
+  --text:        #17151A;
+  /* HueColors.TextSecondary — ink @ 58%. Emphasis comes from this ramp, never
+     from bumping body text to bold. */
+  --text-muted:  rgba(23, 21, 26, 0.58);
+
+  /* Hairlines. HueColors.Border / BorderStrong. */
+  --border:        rgba(23, 21, 26, 0.08);
+  --border-strong: rgba(23, 21, 26, 0.12);
+
+  /* HueColors.Accent — links, focus rings, selection. Not a button fill. */
+  --accent:         #6C5CE0;
+  --accent-pressed: #5847C9;
+  /* HueColors.Danger — destructive text. Never a fill. */
+  --danger:         #C0533F;
+
+  /* ── Aurora ──
+     HueColors.Aurora*. Reserved for Hue's own presence: the voice orb. */
+  --aurora-peach:    #FFD9C7;
+  --aurora-lavender: #C9B8FF;
+  --aurora-sky:      #8FD3E8;
+  /* AuroraShadow — #6C5CE0 @ 32%. Shadows cast by the system are tinted, never
+     neutral black; a black drop shadow on cream reads as grime. */
+  --aurora-shadow:   rgba(108, 92, 224, 0.32);
+
+  /* ── Shapes ── HueShapes. Nothing in this system has a sharp corner. */
+  --r-pill:   999px;  /* Pill — buttons and chips, fully round. */
+  --r-card-l: 18px;   /* CardLarge — grouped containers, the drawer. */
+  --r-card:   16px;   /* Card — the app shell, standard cards. */
+  --r-card-s: 14px;   /* CardSmall — inputs, tiles. */
+  --r-menu:   12px;   /* MenuItem — icon buttons. */
 
   /* Custom easing curves — stronger than the built-in CSS keywords, so motion
      reads as intentional. ease-out for enter/exit, drawer curve for panels. */
   --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 
-  --text:        #F1F5F9;
-  --text-muted:  #64748B;
-
-  --green:       #22C55E;
-  --green-glow:  rgba(34,  197, 94,  0.25);
-  --amber:       #F59E0B;
-  --amber-glow:  rgba(245, 158, 11,  0.25);
-  --indigo:      #818CF8;
-  --indigo-glow: rgba(129, 140, 248, 0.25);
-  --blue:        #60A5FA;
-  --blue-glow:   rgba(96,  165, 250, 0.25);
-  --red:         #EF4444;
-  --red-glow:    rgba(239, 68,  68,  0.25);
+  /* ── Status ──
+     Mobile defines only Connected/Disconnected; the desktop voice pipeline has
+     five states, so the rest are derived from the same palette. The two aurora
+     hues are darkened here specifically for legibility on cream — the raw
+     pastel values are backgrounds, not text colours. */
+  --green:      #3FBF6A;
+  --green-glow: rgba(63, 191, 106, 0.22);
+  --amber:      #C77A4A;   /* AuroraPeach, darkened to hold contrast on cream. */
+  --amber-glow: rgba(199, 122, 74, 0.20);
+  --indigo:     #6C5CE0;   /* = Accent. Connecting / thinking. */
+  --indigo-glow: rgba(108, 92, 224, 0.22);
+  --blue:       #3E93B0;   /* AuroraSky, darkened for the same reason. */
+  --blue-glow:  rgba(62, 147, 176, 0.20);
+  --red:        #C0533F;   /* = Danger. */
+  --red-glow:   rgba(192, 83, 63, 0.20);
 }
 
+/* Status rings/pulses. On cream these are soft tinted halos rather than the
+   neon glows a dark UI can carry — a bloom that reads as light on #080D1A
+   reads as smudge on #F6F4EF. */
 @keyframes pulse-green {
-  0%, 100% { box-shadow: 0 0 0  0 var(--green-glow), 0 0 20px var(--green-glow); }
-  50%       { box-shadow: 0 0 0 16px transparent,     0 0 40px var(--green-glow); }
+  0%, 100% { box-shadow: 0 0 0  0 var(--green-glow), 0 2px 12px var(--green-glow); }
+  50%       { box-shadow: 0 0 0 14px transparent,    0 4px 22px var(--green-glow); }
 }
 @keyframes pulse-blue {
-  0%, 100% { box-shadow: 0 0 0  0 var(--blue-glow), 0 0 16px var(--blue-glow); }
-  50%       { box-shadow: 0 0 0 10px transparent,    0 0 32px var(--blue-glow); }
+  0%, 100% { box-shadow: 0 0 0  0 var(--blue-glow), 0 2px 10px var(--blue-glow); }
+  50%       { box-shadow: 0 0 0 10px transparent,   0 4px 18px var(--blue-glow); }
 }
 @keyframes breathe {
   0%, 100% { transform: scale(1); }
@@ -67,7 +141,7 @@
 }
 
 body {
-  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   /* Transparent so the chromeless window shows the desktop through the gap
      around the floating card; the card (.app) paints the visible background. */
   background: transparent;
@@ -89,8 +163,10 @@ body {
   }
 }
 
+/* Display weights are 800, not 700 — the convention hue-mobile's HueType carries
+   from the source design. Dropping to 700 reads as a different product. */
 h1, h2, h3, h4 {
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 600;
+  font-weight: 800;
   line-height: 1.3;
+  letter-spacing: -0.02em;
 }

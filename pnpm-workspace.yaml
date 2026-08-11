@@ -1,0 +1,27 @@
+# pnpm 11 no longer reads the `pnpm` field in package.json, and no longer honours
+# `shamefully-hoist` from .npmrc. Both settings live here now.
+#
+# shamefullyHoist is load-bearing, not a preference: scripts/copy-vad-assets.mjs
+# does `require.resolve('onnxruntime-web/wasm')`, and onnxruntime-web is a
+# transitive dependency (via @ricky0123/vad-web and @huggingface/transformers).
+# Without hoisting it isn't resolvable from the project root and `pnpm dev` fails
+# before Electron ever starts.
+shamefullyHoist: true
+
+# Which dependencies may run install scripts. Everything not listed is skipped.
+allowBuilds:
+  # Downloads the Electron binary. Without it: "Error: Electron uninstall".
+  electron: true
+  # Downloads its platform binary.
+  esbuild: true
+  # Deliberately false: it ships prebuilt binaries for every platform including
+  # win32-x64, and it is N-API based so it needs no per-ABI rebuild. Letting it
+  # build invokes node-gyp, which fails on any machine without Python — for no
+  # benefit. This was the cause of every `pnpm install` failure in this repo.
+  uiohook-napi: false
+  # Not used at runtime (the ML pipeline runs in the renderer via onnxruntime-web),
+  # and building it pulls in another native toolchain.
+  onnxruntime-node: false
+  electron-winstaller: false
+  protobufjs: false
+  sharp: false

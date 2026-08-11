@@ -1,6 +1,13 @@
 import { MicVAD } from '@ricky0123/vad-web'
-import { transcribe } from './transcription'
+import { transcribe, transcribeInterim } from './transcription'
 import { StreamingTTSQueue } from './streamingTTS'
+import { parseProfileBundle, profilePromptBlock } from '../../../shared/profile'
+import { groundResponse, stripStreamingCitation, type Grounding } from '../../../shared/grounding'
+import {
+  SpeculationScheduler,
+  type Command as SpeculationCommand,
+  type Speaker
+} from '../../../shared/speculation'
 import type {
   HueSettings,
   LlmMessage,
@@ -27,8 +34,54 @@ export interface PipelineCallbacks {
   onScreenCapture?: (capture: ScreenCapture) => void
   /** Fired as the assistant response streams in (cumulative text). */
   onAssistantText?: (text: string) => void
+  /**
+   * Fired once, when a response has finished arriving whole.
+   *
+   * Carries the grounding receipt, which is why it cannot be folded into
+   * onAssistantText: the `story_id` is the last thing the model writes, so a
+   * partial stream always parses as "no citation" and would flash the ungrounded
+   * warning on every answer before withdrawing it. `grounding` is null when a
+   * receipt is not meaningful for the turn — see resolveTurnGrounding.
+   */
+  onAssistantComplete?: (text: string, grounding: Grounding | null) => void
   onError?: (message: string) => void
 }
+
+/** The VAD (and Whisper) sample rate; every buffer below is mono Float32 at this rate. */
+const SAMPLE_RATE = 16000
+
+/**
+ * How much *new* speech has to arrive before another interim transcription runs.
+ *
+ * The tradeoff is straight latency against wasted decode. Shorter than this and
+ * consecutive interims mostly re-decode the same audio for a word or two of new
+ * text, and — because the worker runs one transcription at a time — that decode
+ * is time the *final* transcript may have to wait for. Longer, and the draft
+ * starts later, which is the latency this whole feature exists to remove. Around
+ * 800 ms is also roughly how long whisper-base takes to decode a few seconds of
+ * speech on the CPU path companion mode pins it to, so the model stays busy
+ * without ever building a backlog.
+ */
+const INTERIM_INTERVAL_MS = 800
+
+/**
+ * Speech accumulated before the first interim is attempted.
+ *
+ * Whisper on a fragment shorter than this mostly emits punctuation, a hallucinated
+ * "Thank you.", or one word — text the scheduler would rightly refuse to fire on
+ * anyway, so decoding it is pure waste.
+ */
+const INTERIM_MIN_SPEECH_MS = 1500
+
+/**
+ * How often the scheduler is told that time has passed.
+ *
+ * Its trigger requires the interim text to be *stable* for 400 ms, and stability
+ * is the absence of an event — with interims arriving only every ~800 ms,
+ * nothing would ever observe it without a tick. Runs only while a speech segment
+ * is open.
+ */
+const SPECULATION_TICK_MS = 150
 
 /**
  * Orchestrates the full voice loop: VAD detects an utterance -> ASR transcribes
@@ -78,10 +131,41 @@ export class VoicePipeline {
    */
   private currentSpeak = false
 
+  /**
+   * The speculation scheduler, or null when speculative drafting is off.
+   *
+   * Companion mode only, and only when the user opted in. In interviewer mode
+   * the incoming voice is the *user's* (see speakerOfIncomingSpeech), and the
+   * scheduler would correctly refuse to do anything with it — but not
+   * constructing it at all keeps the per-frame audio bookkeeping off the hot
+   * path entirely for every session that isn't using this.
+   */
+  private scheduler: SpeculationScheduler | null = null
+
+  /** The in-flight speculative LLM stream, if any. Never `currentStreamId`. */
+  private specStreamId: string | null = null
+  /** The scheduler's id for that stream — the guard that stale deltas are tested against. */
+  private specId: number | null = null
+  /** Draft text accumulated so far. Held back from the UI until the draft commits. */
+  private specText = ''
+  /** True once the speculative stream finished on its own, before the final arrived. */
+  private specFinished = false
+
+  /** Speech captured since the VAD opened this segment, for interim transcription. */
+  private speechFrames: Float32Array[] = []
+  private speechSamples = 0
+  private samplesAtLastInterim = 0
+  private interimInFlight = false
+  private speechActive = false
+  private tickTimer: ReturnType<typeof setInterval> | null = null
+
   constructor(settings: HueSettings, callbacks: PipelineCallbacks = {}) {
     this.settings = settings
     this.callbacks = callbacks
     this.speakResponses = settings.hueMode === 'interviewer'
+    if (settings.speculativeDrafting && settings.hueMode === 'companion') {
+      this.scheduler = new SpeculationScheduler()
+    }
     this.tts = new StreamingTTSQueue({
       voice: settings.ttsVoice,
       speed: settings.ttsSpeed
@@ -136,7 +220,19 @@ export class VoicePipeline {
       getStream: () => this.getStream(),
       onSpeechStart: () => this.onSpeechStart(),
       onSpeechEnd: (audio) => void this.onSpeechEnd(audio),
+      // Every frame the VAD sees, speech or not. This is the only place the
+      // audio of an utterance is available *while it is still being spoken* —
+      // onSpeechEnd fires once, at the end, which is exactly the latency
+      // speculation exists to remove. Returns immediately when speculation is
+      // off or no segment is open.
+      onFrameProcessed: (_probs, frame) => this.onFrame(frame),
       onVADMisfire: () => {
+        // The segment produced no final, so nothing will ever arrive to commit
+        // or discard a draft fired from it. Tear it down here or it stays in
+        // flight forever, blocking every later question (one draft, ever).
+        this.endSegment()
+        this.discardSpeculation()
+        this.scheduler?.reset()
         if (this.state === 'transcribing') this.setState('listening')
       }
     })
@@ -186,6 +282,8 @@ export class VoicePipeline {
 
   async stop(): Promise<void> {
     this.abortResponse()
+    this.endSegment()
+    this.scheduler?.reset()
     if (this.vad) {
       await this.vad.destroy()
       this.vad = null
@@ -213,6 +311,8 @@ export class VoicePipeline {
    */
   clearHistory(): void {
     this.abortResponse()
+    this.endSegment()
+    this.scheduler?.reset()
     this.messages = []
     this.assistantText = ''
     this.pendingCaptureIndex = null
@@ -230,9 +330,11 @@ export class VoicePipeline {
     if (this.state === 'thinking' || this.state === 'speaking') {
       this.abortResponse()
     }
+    this.beginSegment()
   }
 
   private async onSpeechEnd(audio: Float32Array): Promise<void> {
+    this.endSegment()
     this.setState('transcribing')
     let text: string
     try {
@@ -250,8 +352,246 @@ export class VoicePipeline {
       return
     }
 
+    if (this.scheduler) {
+      const commands = this.scheduler.onFinal(text, this.speakerOfIncomingSpeech(), Date.now())
+      if (commands.length > 0) {
+        this.applyFinalCommands(commands, text)
+        return
+      }
+      // Empty means the scheduler declined the turn entirely (self speech). It
+      // cannot happen while the scheduler is companion-only, but falling through
+      // to the plain path is the safe reading if that ever changes: a question
+      // answered late beats a question dropped.
+    }
+
     this.messages.push({ role: 'user', content: text })
     this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
+  }
+
+  // ── Speculation ─────────────────────────────────────────────────────────
+
+  /**
+   * Whose voice the VAD is picking up, in the scheduler's vocabulary.
+   *
+   * The single most important mapping in this wiring. In companion mode the
+   * incoming audio is the *interviewer* (either the call's loopback or the room
+   * mic pointed at them) and Hue's job is to answer it. In interviewer mode Hue
+   * is the one asking, so the incoming voice is the user answering — `self`,
+   * which the scheduler refuses to draft against. Getting this backwards makes
+   * Hue transcribe the user mid-answer and draft a reply to itself.
+   */
+  private speakerOfIncomingSpeech(): Speaker {
+    return this.settings.hueMode === 'companion' ? 'interviewer' : 'self'
+  }
+
+  /** A speech segment opened: start accumulating audio and ticking the scheduler. */
+  private beginSegment(): void {
+    if (!this.scheduler) return
+    this.speechActive = true
+    this.speechFrames = []
+    this.speechSamples = 0
+    this.samplesAtLastInterim = 0
+    if (this.tickTimer === null) {
+      this.tickTimer = setInterval(() => {
+        if (!this.scheduler) return
+        this.applyInterimCommands(this.scheduler.onTick(Date.now()))
+      }, SPECULATION_TICK_MS)
+    }
+  }
+
+  /** The segment closed (end of speech, misfire, or shutdown). Stops all interim work. */
+  private endSegment(): void {
+    this.speechActive = false
+    this.speechFrames = []
+    this.speechSamples = 0
+    this.samplesAtLastInterim = 0
+    if (this.tickTimer !== null) {
+      clearInterval(this.tickTimer)
+      this.tickTimer = null
+    }
+  }
+
+  /**
+   * One VAD frame. Accumulates it and, on cadence, transcribes what has been
+   * said so far.
+   *
+   * The accumulated buffer starts at speech onset rather than at the VAD's
+   * pre-speech pad, so it can clip a few hundred ms off the front compared with
+   * the segment onSpeechEnd delivers. That is fine here and deliberate: an
+   * interim is a hint used to decide *when* to start drafting, and the final —
+   * which is what the answer actually ships against — is unaffected.
+   */
+  private onFrame(frame: Float32Array): void {
+    if (!this.scheduler || !this.speechActive) return
+    // The VAD reuses its frame buffer between callbacks, so this must be a copy.
+    this.speechFrames.push(new Float32Array(frame))
+    this.speechSamples += frame.length
+
+    if (this.interimInFlight) return
+    if (this.speechSamples < (INTERIM_MIN_SPEECH_MS * SAMPLE_RATE) / 1000) return
+    const sinceLast = this.speechSamples - this.samplesAtLastInterim
+    if (sinceLast < (INTERIM_INTERVAL_MS * SAMPLE_RATE) / 1000) return
+
+    this.samplesAtLastInterim = this.speechSamples
+    this.interimInFlight = true
+    void this.runInterim(flatten(this.speechFrames, this.speechSamples))
+  }
+
+  private async runInterim(audio: Float32Array): Promise<void> {
+    try {
+      const text = await transcribeInterim(audio)
+      // null = the worker was busy and dropped it; empty = silence or a fragment
+      // Whisper made nothing of. Either way there is no new interim this tick.
+      if (!text) return
+      // The segment ended while this was decoding. The final is already on its
+      // way, and feeding a late interim now would re-open a question the
+      // scheduler has just closed.
+      if (!this.speechActive || !this.scheduler) return
+      this.applyInterimCommands(
+        this.scheduler.onInterim(text, this.speakerOfIncomingSpeech(), Date.now())
+      )
+    } catch (e) {
+      // An interim is best-effort scaffolding. Surfacing its failure would put an
+      // error on screen for work the user never asked for and cannot see; the
+      // final transcript takes the same path and will report a real fault.
+      console.warn('[speculation] interim transcription failed:', e)
+    } finally {
+      this.interimInFlight = false
+    }
+  }
+
+  /** Commands produced while the interviewer is still speaking. */
+  private applyInterimCommands(commands: SpeculationCommand[]): void {
+    for (const command of commands) {
+      switch (command.kind) {
+        case 'fire':
+          this.startSpeculation(command.specId, command.text)
+          break
+        case 'abort':
+          this.abortSpeculation()
+          break
+        case 'reset':
+          // The question was withdrawn. Nothing of the draft is on screen (see
+          // startSpeculation), so there is nothing to clear beyond the buffer
+          // the preceding abort already dropped.
+          this.discardSpeculation()
+          break
+        case 'commit':
+        case 'regenerate':
+          // Only ever produced by onFinal.
+          break
+      }
+    }
+  }
+
+  /** Commands produced by the final transcript, which knows what was really asked. */
+  private applyFinalCommands(commands: SpeculationCommand[], finalText: string): void {
+    for (const command of commands) {
+      switch (command.kind) {
+        case 'commit':
+          this.commitSpeculation(finalText)
+          break
+        case 'regenerate':
+        case 'fire':
+          // Either the draft answered a different question (regenerate) or
+          // nothing was ever speculated (fire). Both mean: generate now, on the
+          // real text, down the ordinary path. `regenerate` carries no abort of
+          // its own — the scheduler hands the caller a replacement and expects
+          // the superseded stream to be cancelled here, or it runs to completion
+          // on the user's money.
+          this.abortSpeculation()
+          this.scheduler?.reset()
+          this.messages.push({ role: 'user', content: finalText })
+          this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
+          break
+        case 'abort':
+          this.abortSpeculation()
+          break
+        case 'reset':
+          this.discardSpeculation()
+          break
+      }
+    }
+  }
+
+  /**
+   * Begin drafting an answer to a question that is still being asked.
+   *
+   * The speculated text is *not* appended to `messages`: until a final agrees
+   * with it, it is a guess, and a guess in the history would be re-sent as a
+   * real turn on every request afterwards. The request is built from history
+   * plus the guess, and only a commit writes the real question back.
+   */
+  private startSpeculation(specId: number, text: string): void {
+    this.abortSpeculation()
+    const streamId = crypto.randomUUID()
+    this.specStreamId = streamId
+    this.specId = specId
+    this.specText = ''
+    this.specFinished = false
+    void window.hue.llm.start(streamId, {
+      messages: [...this.messages, { role: 'user', content: text }],
+      system: buildSystemPrompt(this.settings),
+      maxTokens: 500
+    })
+  }
+
+  /**
+   * Cancel the in-flight draft for real.
+   *
+   * `hue:llm:abort` aborts the provider's HTTP stream, not just our listener: a
+   * generation left running bills the user for tokens nobody reads, and can
+   * still win a race and land under a question it never answered.
+   */
+  private abortSpeculation(): void {
+    if (this.specStreamId) window.hue.llm.abort(this.specStreamId)
+    this.discardSpeculation()
+  }
+
+  /** Forget the draft locally. Deltas already in flight stop matching and are dropped. */
+  private discardSpeculation(): void {
+    this.specStreamId = null
+    this.specId = null
+    this.specText = ''
+    this.specFinished = false
+  }
+
+  /**
+   * The final agreed with what the draft was fired on: adopt the draft as this
+   * turn's answer.
+   *
+   * Everything the ordinary path does still happens, and happens exactly once —
+   * the real question is written to history, the accumulated text is shown, and
+   * the stream (if still running) becomes `currentStreamId` so it finishes
+   * through onLlmDone, which is where the grounding receipt is resolved. A draft
+   * that had already finished on its own completes right here instead, through
+   * the same method onLlmDone calls, for the same reason: one receipt per turn,
+   * never zero and never two.
+   */
+  private commitSpeculation(finalText: string): void {
+    const streamId = this.specStreamId
+    const text = this.specText
+    const finished = this.specFinished
+    this.discardSpeculation()
+
+    if (streamId === null) {
+      // The scheduler wants to commit a draft this side no longer has — the
+      // stream was cancelled out from under it (barge-in, a cleared session).
+      // Generate for real rather than adopting an empty answer, which would
+      // leave the turn with nothing on screen and no completion to come.
+      this.messages.push({ role: 'user', content: finalText })
+      this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
+      return
+    }
+
+    this.messages.push({ role: 'user', content: finalText })
+    this.assistantText = text
+    // Companion mode never speaks its answers aloud; speculation is companion-only.
+    this.currentSpeak = false
+    this.currentStreamId = finished ? null : streamId
+    this.setState(text ? 'speaking' : 'thinking')
+    if (text) this.callbacks.onAssistantText?.(stripStreamingCitation(text))
+    if (finished) this.completeTurn()
   }
 
   /**
@@ -312,18 +652,47 @@ export class VoicePipeline {
       window.hue.llm.abort(this.currentStreamId)
       this.currentStreamId = null
     }
+    // A draft is a generation too, and one nobody is waiting on. Whatever
+    // cancels the visible answer cancels the invisible one. The scheduler is
+    // reset with it: every caller of this (barge-in, screen capture, clear,
+    // stop) is starting something new, and leaving the scheduler believing a
+    // draft is still in flight would have it commit a stream that no longer
+    // exists.
+    this.abortSpeculation()
+    this.scheduler?.reset()
     this.tts.interrupt()
   }
 
   private onLlmDelta(e: LlmDeltaEvent): void {
+    if (e.streamId === this.specStreamId) {
+      // A draft in progress. It is buffered, never rendered: the question it
+      // answers is still being asked, and showing an answer to half a question —
+      // one that may yet be withdrawn — is worse than showing nothing. The
+      // latency win is in having generated it, not in having displayed it early.
+      // The specId guard still applies: a delta from a superseded draft must
+      // never reach the buffer that a commit will put on screen.
+      if (this.specId === null || !this.scheduler?.accepts(this.specId)) return
+      this.specText += e.text
+      return
+    }
     if (e.streamId !== this.currentStreamId) return
     if (this.state !== 'speaking') this.setState('speaking')
     this.assistantText += e.text
     if (this.currentSpeak) this.tts.appendText(e.text)
-    this.callbacks.onAssistantText?.(this.assistantText)
+    // Display text only: the citation line is scaffolding the user must never be
+    // shown, and half of it must never appear either. The grounding decision is
+    // NOT made here — see onLlmDone.
+    this.callbacks.onAssistantText?.(stripStreamingCitation(this.assistantText))
   }
 
   private onLlmDone(e: LlmDoneEvent): void {
+    if (e.streamId === this.specStreamId) {
+      // The draft finished before the interviewer did — the best case, and the
+      // whole point. Hold it: a commit will adopt it and complete the turn.
+      if (e.aborted) this.discardSpeculation()
+      else this.specFinished = true
+      return
+    }
     if (e.streamId !== this.currentStreamId) return
     this.currentStreamId = null
     if (e.aborted) {
@@ -331,9 +700,27 @@ export class VoicePipeline {
       this.setState('listening')
       return
     }
+    this.completeTurn()
+  }
+
+  /**
+   * Finish a turn: flush audio, resolve the grounding receipt, record history.
+   *
+   * Shared by the ordinary path and by a committed speculative draft that had
+   * already finished streaming, so both settle a turn identically. Grounding is
+   * resolved here and nowhere else — exactly once per turn that produces an
+   * answer, whether or not the answer was drafted early.
+   */
+  private completeTurn(): void {
     if (this.currentSpeak) this.tts.flush()
-    if (this.assistantText) {
-      this.messages.push({ role: 'assistant', content: this.assistantText })
+    // The response is whole for the first time here, which is the only point a
+    // trailing `story_id` can be read. Everything before this was a prefix.
+    const { answer, grounding } = this.resolveTurnGrounding(this.assistantText)
+    if (answer) {
+      // The stripped answer, not the raw text, goes into history: re-feeding the
+      // model its own citation line teaches it that the line is part of an answer.
+      this.messages.push({ role: 'assistant', content: answer })
+      this.callbacks.onAssistantComplete?.(answer, grounding)
     }
     // Hue has now answered the capture once; drop the screenshot from history so
     // the full PNG isn't re-sent to the provider on every subsequent turn. The
@@ -345,7 +732,43 @@ export class VoicePipeline {
     this.setState('listening')
   }
 
+  /**
+   * Splits a finished response into what the user reads and its grounding receipt.
+   *
+   * Returns a null receipt — no marker at all, rather than an ungrounded one —
+   * for the two turns where a receipt would be noise rather than a warning:
+   *
+   *  - **Interviewer mode.** Hue is asking the questions, not drafting answers
+   *    off the user's history. Flagging a question as "not anchored" is true and
+   *    useless, and a warning shown when nothing is wrong is a warning the user
+   *    learns to skip past — including on the companion answers where it counts.
+   *  - **No profile bundle.** The legacy `resumeSummary` path never names story
+   *    ids, so the model has nothing to cite and every answer would be flagged.
+   *    That is alarm fatigue by construction, and it would fire hardest on the
+   *    users who have not finished setting the app up.
+   */
+  private resolveTurnGrounding(raw: string): { answer: string; grounding: Grounding | null } {
+    const bundle = parseProfileBundle(this.settings.profileBundleJson)
+    if (this.settings.hueMode !== 'companion' || !bundle) {
+      // The citation line is still stripped: if a model volunteers one here, it
+      // is scaffolding on screen either way.
+      return { answer: stripStreamingCitation(raw).trim(), grounding: null }
+    }
+    return groundResponse(raw, bundle)
+  }
+
   private onLlmError(e: LlmErrorEvent): void {
+    if (e.streamId === this.specStreamId) {
+      // A draft the user never saw failed. Reported to the console, not to the
+      // UI: the same request is about to be made for real down the ordinary path
+      // and will surface the fault there, where it is about something the user
+      // actually asked for. Clearing the scheduler's draft is what routes the
+      // final that way.
+      console.warn('[speculation] draft failed:', e.message)
+      this.discardSpeculation()
+      this.scheduler?.reset()
+      return
+    }
     if (e.streamId !== this.currentStreamId) return
     this.currentStreamId = null
     this.callbacks.onError?.(e.message)
@@ -378,6 +801,23 @@ const HUMAN_VOICE_GUIDANCE = `Sound like a real person, not an AI:
 - Write in natural, conversational Philippine English — relaxed and friendly, the way a Filipino speaks English in a real conversation, not stiff or formal. It's fine to open casually ("So,", "Honestly,", "Yeah,") and keep an easygoing tone. Stay in clean, grammatical English — do NOT mix in Tagalog or Taglish words.`
 
 /**
+ * Concatenate accumulated VAD frames into the single contiguous buffer the ASR
+ * worker expects. A fresh allocation each time, because the caller keeps
+ * appending to its frame list while this copy is being transcribed (and the copy
+ * is transferred to the worker).
+ */
+function flatten(frames: Float32Array[], total: number): Float32Array {
+  const out = new Float32Array(total)
+  let offset = 0
+  for (const frame of frames) {
+    if (offset + frame.length > total) break
+    out.set(frame, offset)
+    offset += frame.length
+  }
+  return out
+}
+
+/**
  * Collapse a captured-screen turn to plain text, dropping the image block(s) and
  * keeping the paired instruction. Called once Hue has answered the capture so the
  * large screenshot isn't re-sent to the provider on every later turn.
@@ -408,6 +848,19 @@ function captureInstruction(s: HueSettings): string {
   )
 }
 
+/**
+ * The candidate's background, preferring the structured bundle.
+ *
+ * Falls back to the legacy freeform summary so an install that predates
+ * hue-ingest keeps working — losing someone's background on upgrade would be a
+ * worse failure than the weaker grounding that fallback provides.
+ */
+function candidateBackground(s: HueSettings): string | null {
+  const bundle = parseProfileBundle(s.profileBundleJson)
+  if (bundle) return profilePromptBlock(bundle)
+  return s.resumeSummary || null
+}
+
 function buildSystemPrompt(s: HueSettings): string {
   return s.hueMode === 'interviewer'
     ? buildInterviewerPrompt(s)
@@ -424,7 +877,11 @@ function buildInterviewerPrompt(s: HueSettings): string {
       'them or coach them mid-interview; stay in character as the interviewer.'
   ]
   if (s.jobTitle) parts.push(`The role being interviewed for is: ${s.jobTitle}.`)
-  if (s.resumeSummary) parts.push(`The candidate's background: ${s.resumeSummary}`)
+  // The interviewer persona uses the background to ask *about* the candidate's
+  // real history, so a structured bundle helps here for the same reason it helps
+  // the companion: it names what exists rather than implying everything does.
+  const background = candidateBackground(s)
+  if (background) parts.push(`The candidate's background:\n\n${background}`)
   if (s.interviewMode === 'star') {
     parts.push('Favor behavioral questions that invite STAR-style (Situation, Task, Action, Result) answers.')
   }
@@ -480,7 +937,35 @@ function buildCompanionPrompt(s: HueSettings): string {
       'a specific claim.'
   ]
   if (s.jobTitle) parts.push(`The user is interviewing for the role: ${s.jobTitle}.`)
-  if (s.resumeSummary) parts.push(`The user's background (draw on this): ${s.resumeSummary}`)
+
+  const bundle = parseProfileBundle(s.profileBundleJson)
+  if (bundle) {
+    // With a bundle the "never invent facts" instruction above stops being a
+    // hope and becomes checkable: the model is given the exact set of stories it
+    // may draw on, each with an id, and told what to say when none of them fit.
+    parts.push(
+      "The user's verified background is below. Draw the answer from it. Every story you may " +
+        'use is listed with an id; when your answer rests on one, it must be one of these. ' +
+        'If no story genuinely fits the question, say so honestly in the answer and keep it ' +
+        'general — do not adapt a story that does not apply, and do not invent one.'
+    )
+    // The citation is what makes the rule above checkable rather than hopeful,
+    // and it only works if the id lands somewhere the app can read it back. A
+    // final line of its own is the one place a trailing token can be found
+    // reliably; the app strips it before the answer is shown, so it costs the
+    // user nothing. See shared/grounding.ts.
+    parts.push(
+      'After the answer, on a final line of its own, write `story_id: <id>` naming the story bank ' +
+        'entry the answer rests on, or `story_id: null` if none of them fit. Use the id exactly as ' +
+        'written below. This line is stripped before the user sees the answer, so never refer to it ' +
+        'in the answer itself.'
+    )
+    parts.push(profilePromptBlock(bundle))
+  } else if (s.resumeSummary) {
+    // Pre-bundle installs still work. This path has no story ids and no gap
+    // scan, so it keeps the older, weaker guarantee.
+    parts.push(`The user's background (draw on this): ${s.resumeSummary}`)
+  }
   switch (s.interviewMode) {
     case 'star':
       parts.push('Structure the answer using the STAR method (Situation, Task, Action, Result).')

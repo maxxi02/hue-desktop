@@ -1,16 +1,15 @@
-import '@fontsource/dm-sans/400.css'
-import '@fontsource/dm-sans/400-italic.css'
-import '@fontsource/dm-sans/500.css'
-import '@fontsource/dm-sans/700.css'
-import '@fontsource/space-grotesk/400.css'
-import '@fontsource/space-grotesk/500.css'
-import '@fontsource/space-grotesk/600.css'
-import '@fontsource/space-grotesk/700.css'
+// Inter is declared as an @font-face in base.css against the variable font file
+// bundled from hue-mobile, so there is no font package to import here.
 import './assets/main.css'
 
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { requestPersistentStorage } from './lib/persistentStorage'
+
+// Make the on-device model cache durable before anything starts loading models,
+// so Chromium never evicts ~190 MB of ONNX weights and forces a re-download.
+void requestPersistentStorage()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

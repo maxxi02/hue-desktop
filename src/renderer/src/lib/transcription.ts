@@ -16,11 +16,16 @@ type WorkerOut =
   | { type: 'ready'; device: 'webgpu' | 'wasm' }
   | { type: 'progress'; data: { status: string; file?: string; progress?: number } }
   | { type: 'result'; id: number; text: string }
+  | { type: 'skipped'; id: number }
   | { type: 'error'; id: number; message: string }
 
 let worker: Worker | null = null
 let nextId = 1
-const pending = new Map<number, { resolve: (text: string) => void; reject: (e: Error) => void }>()
+// `null` resolves an interim the worker declined to run because it was busy.
+const pending = new Map<
+  number,
+  { resolve: (text: string | null) => void; reject: (e: Error) => void }
+>()
 
 let loadState: ModelLoadState = { status: 'idle' }
 const loadListeners = new Set<(s: ModelLoadState) => void>()
@@ -64,6 +69,11 @@ function getWorker(): Worker {
         pending.delete(msg.id)
         break
       }
+      case 'skipped': {
+        pending.get(msg.id)?.resolve(null)
+        pending.delete(msg.id)
+        break
+      }
       case 'error': {
         if (msg.id === -1) {
           setLoadState({ status: 'error', message: msg.message })
@@ -100,9 +110,38 @@ export function transcribeOnDevice(audio: Float32Array): Promise<string> {
   const w = getWorker()
   const id = nextId++
   return new Promise<string>((resolve, reject) => {
-    pending.set(id, { resolve, reject })
+    // A final is never skipped by the worker, so the null branch is unreachable
+    // here; it is collapsed rather than propagated so callers of the normal path
+    // keep a plain string.
+    pending.set(id, { resolve: (text) => resolve(text ?? ''), reject })
     // Transfer the underlying buffer to avoid a copy.
     w.postMessage({ type: 'transcribe', id, audio }, [audio.buffer])
+  })
+}
+
+/**
+ * Transcribe the speech captured *so far*, mid-utterance.
+ *
+ * Resolves `null` when the worker was already busy and dropped this request —
+ * see the worker's `outstanding` guard. Callers treat that as "no interim this
+ * tick", not as an error.
+ *
+ * Always on-device, even when the session's finals come from a cloud provider.
+ * Interims are throwaway hints that exist only to start a draft early: paying a
+ * per-request cloud ASR charge (and a network round trip) roughly once a second
+ * for text nobody reads would cost more than the latency it buys, and the
+ * on-device model is already warm because useVoiceMode preloads it for every
+ * session. The final transcript still comes from the configured tier, so the
+ * answer that ships is generated from the accurate text.
+ */
+export function transcribeInterim(audio: Float32Array): Promise<string | null> {
+  const w = getWorker()
+  const id = nextId++
+  return new Promise<string | null>((resolve, reject) => {
+    pending.set(id, { resolve, reject })
+    // The caller hands over a fresh copy of the accumulated audio (its own
+    // buffer keeps growing), so transferring is safe and skips a copy.
+    w.postMessage({ type: 'transcribe', id, audio, interim: true }, [audio.buffer])
   })
 }
 
