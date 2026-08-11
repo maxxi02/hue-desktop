@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { saveSheet, listSheets, deleteSheet } from './cuesheet-store.ts'
+import { saveSheet, listSheets, deleteSheet, isValidSheetId } from './cuesheet-store.ts'
 import type { CueSheet } from '../shared/cuesheet.ts'
 
 const sheet: CueSheet = {
@@ -120,6 +120,43 @@ test('a file in the directory whose name does not match the pattern does not bre
     const sheets = listSheets(dir)
     assert.equal(sheets.length, 1)
     assert.equal(sheets[0].id, 'abc')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a sheet with a truncated card is dropped rather than handed to CueMatcher', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cue-'))
+  try {
+    saveSheet(dir, sheet)
+    // `{ id, cards }` used to be the whole validity test, so this file passed
+    // and reached `new CueMatcher(sheet)`, where
+    // `cards.flatMap((c) => c.triggers)` throws on the missing `triggers`.
+    // That throw happens inside session start, so one half-written file could
+    // stop an interview from beginning.
+    writeFileSync(
+      join(dir, 'truncated.json'),
+      JSON.stringify({ id: 'truncated', cards: [{ id: 'c', heading: 'h', script: 's', cues: [] }] })
+    )
+    const sheets = listSheets(dir)
+    assert.deepEqual(sheets.map((s) => s.id), ['abc'], 'the truncated sheet must not be returned')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a well-formed sheet id is distinguished from a malformed one', () => {
+  assert.equal(isValidSheetId('9f2a-4b7c-11ee'), true)
+  assert.equal(isValidSheetId(''), false)
+  assert.equal(isValidSheetId('../../etc/passwd'), false)
+  assert.equal(isValidSheetId('a b'), false)
+  assert.equal(isValidSheetId(undefined), false)
+})
+
+test('deleting a malformed id throws rather than mangling it into a path', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cue-'))
+  try {
+    assert.throws(() => deleteSheet(dir, '../escape'), /Invalid cue sheet id/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

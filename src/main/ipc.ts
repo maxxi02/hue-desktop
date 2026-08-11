@@ -20,7 +20,7 @@ import {
 import { startRelay, stopRelay, getRelayStatus, publishRelayEvent } from './relay-client'
 import { deleteProfile, ingestResume, refreshBundle } from './ingest'
 import { ingestCueSheet } from './cuesheet-ingest'
-import { listSheets, deleteSheet, sheetsDir } from './cuesheet-store'
+import { listSheets, deleteSheet, sheetsDir, isValidSheetId } from './cuesheet-store'
 import { applyStealth, isStealthSupported } from './stealth'
 import { applyWindowAnchor } from './window-placement'
 import type {
@@ -161,7 +161,13 @@ export function registerIpc(): void {
   )
 
   ipcMain.handle('hue:cuesheet:list', () => listSheets(sheetsDir()))
-  ipcMain.handle('hue:cuesheet:select', (_e, id: string) => updateSettings({ selectedCueSheetId: id }))
+  // '' is the "no sheet armed" sentinel the radio group sends; anything else
+  // has to be a well-formed id, or a malformed one gets persisted here and
+  // throws much later out of `fileFor` when the user tries to delete it.
+  ipcMain.handle('hue:cuesheet:select', (_e, id: string) => {
+    if (id !== '' && !isValidSheetId(id)) throw new Error(`Invalid cue sheet id: ${id}`)
+    return updateSettings({ selectedCueSheetId: id })
+  })
   ipcMain.handle('hue:cuesheet:delete', (_e, id: string) => {
     deleteSheet(sheetsDir(), id)
     if (getSettings().selectedCueSheetId === id) updateSettings({ selectedCueSheetId: '' })

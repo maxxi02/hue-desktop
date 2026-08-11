@@ -28,3 +28,18 @@ test('parseCards tolerates a model that wraps JSON in prose or fences', () => {
 test('parseCards returns empty rather than throwing on unusable output', () => {
   assert.deepEqual(parseCards('I was unable to complete that request.'), [])
 })
+
+test('duplicate card ids are dropped, because CueMatcher resolves them inconsistently', () => {
+  // `match()` scores every card and can return the SECOND card's id, while
+  // `card(id)` resolves it with `find`, which returns the FIRST. A correct
+  // match would then render the wrong prepared answer, silently.
+  const cards = parseCards(
+    JSON.stringify([
+      { id: 'why-us', heading: 'a', script: 's1', cues: ['c1'], triggers: ['t1'] },
+      { id: 'why-us', heading: 'b', script: 's2', cues: ['c2'], triggers: ['t2'] },
+      { id: 'other', heading: 'c', script: 's3', cues: ['c3'], triggers: ['t3'] }
+    ])
+  )
+  assert.deepEqual(cards.map((c) => c.id), ['why-us', 'other'])
+  assert.equal(cards[0].heading, 'a', 'the first card of a colliding pair is the one kept')
+})

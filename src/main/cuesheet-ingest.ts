@@ -78,7 +78,7 @@ export function parseCards(raw: string): CueCard[] {
   try {
     const parsed = JSON.parse(candidate)
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(
+    const wellFormed = parsed.filter(
       (c): c is CueCard =>
         typeof c?.id === 'string' &&
         typeof c?.heading === 'string' &&
@@ -86,6 +86,21 @@ export function parseCards(raw: string): CueCard[] {
         Array.isArray(c?.cues) &&
         Array.isArray(c?.triggers)
     )
+
+    // Ids must be unique. The model is asked for "a short kebab-case slug" and
+    // two sections with similar headings can easily collide on one. Nothing
+    // downstream notices: `CueMatcher.match` scores every card and can return
+    // the SECOND card's id, while `CueMatcher.card(id)` resolves it with
+    // `find`, which returns the FIRST. The user then sees a correct match
+    // render the wrong prepared answer — a silent failure, and the worst
+    // possible shape of one. Dropping the later duplicate costs one card;
+    // keeping it costs trust in every card.
+    const seen = new Set<string>()
+    return wellFormed.filter((c) => {
+      if (seen.has(c.id)) return false
+      seen.add(c.id)
+      return true
+    })
   } catch {
     return []
   }
