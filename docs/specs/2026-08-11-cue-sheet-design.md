@@ -155,10 +155,41 @@ Cue grounding is a new, narrow check in `cuesheet.ts`:
 - `script` is **extractive by construction** — ingest selects a span of the
   source document rather than writing prose. Verification is a containment check
   against the normalised source, not a judgement call.
-- `cues` are compressions of their own card's `script`, verified by content-word
-  coverage: every content word in a cue must appear in that card's `script`. A
-  cue introducing a claim, number, or employer absent from the span the user
-  wrote is dropped, and the card shows fewer cues.
+- `cues` are compressions of their own card's `script`, and are verified against
+  it by **order-preserving subsequence plus negation parity** (see the correction
+  below). A cue introducing a claim, number, or employer absent from the span the
+  user wrote is dropped, and the card shows fewer cues.
+
+**Correction (2026-08-11, found in review of the implementation).** This spec
+originally specified cue verification as content-word *coverage* — every content
+word in the cue must appear in the script. That check is unsound. Set membership
+is blind to both order and omission, so these pass while inverting the source:
+
+| script | cue | verdict under coverage |
+|---|---|---|
+| "I did not cut costs." | "Cut costs" | passes — **claim inverted** |
+| "I cut costs and grew the team." | "Grew costs, cut team" | passes — **roles reversed** |
+
+Both produce a bold line the user reads aloud in a live interview, which is
+precisely the failure this check exists to prevent. The check is now:
+
+1. A cue tokenising to nothing is rejected. Under `.every()` an empty array is
+   vacuously true, so an all-stopword cue previously survived even when its
+   script had already been rejected.
+2. The cue's tokens must appear in the script **in order**, as a subsequence.
+   This defeats scrambling.
+3. Every negation token within the script span the cue covers must also appear in
+   the cue. This defeats omission — the inverted example above is a valid
+   subsequence, and is caught only by this rule.
+
+Negation words are deliberately excluded from `STOPWORDS`; adding one there would
+silently re-open the inversion hole.
+
+**Accepted cost:** a legitimate cue that reorders for readability ("Cut payload,
+reduced latency" from "reduced latency by cutting the payload") is now rejected.
+That asymmetry is intentional — dropping a good cue degrades a card, keeping a
+misleading one puts a false claim in the user's mouth — and the ingest prompt
+asks for order-preserving cues to keep the false-rejection rate low.
 
 Dropping a cue degrades a card; it never invalidates the sheet.
 
