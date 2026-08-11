@@ -279,3 +279,83 @@ export class CueMatcher {
     return this.sheet.cards.find((c) => c.id === id)
   }
 }
+
+import type { Command } from './speculation'
+
+export interface LatchState {
+  /** The card currently on screen, or null. Holds until the next question. */
+  cardId: string | null
+  /** True when generation was skipped for the question now in progress. */
+  suppressedQuestion: boolean
+}
+
+export function newLatchState(): LatchState {
+  return { cardId: null, suppressedQuestion: false }
+}
+
+export interface GateDecision {
+  suppress: boolean
+  latch: string | null
+  isFinal: boolean
+}
+
+/**
+ * Filters the scheduler's commands without modifying the scheduler.
+ *
+ * `SpeculationScheduler` is ported verbatim to `hue-mobile/core-speculation`
+ * and `hue-edge`; making it cue-aware would mean the same change in three
+ * places and would couple a desktop-first feature to the phone and the edge.
+ * So the rules live out here, on the caller's side of the boundary.
+ *
+ * Returns the commands to actually perform, plus whether the caller must call
+ * `scheduler.reset()` afterwards — see the note on suppression above.
+ */
+export function gateCommands(
+  commands: Command[],
+  state: LatchState,
+  decision: GateDecision
+): { commands: Command[]; resetScheduler: boolean } {
+  let resetScheduler = false
+  const out: Command[] = []
+
+  if (decision.latch !== null) state.cardId = decision.latch
+
+  for (const command of commands) {
+    switch (command.kind) {
+      case 'fire':
+        if (decision.suppress) {
+          state.suppressedQuestion = true
+          resetScheduler = true
+          continue
+        }
+        out.push(command)
+        break
+
+      case 'regenerate':
+        // A latched card is the answer. Regenerating over it would replace the
+        // user's own prepared words with the model's, which is the whole thing
+        // this feature exists to avoid.
+        if (state.cardId !== null && decision.latch !== null) continue
+        out.push(command)
+        break
+
+      case 'reset':
+        // A new question. The latch does not survive it — that is what makes
+        // the card stable for the entire duration of the user's answer and no
+        // longer.
+        state.cardId = null
+        state.suppressedQuestion = false
+        out.push(command)
+        break
+
+      default:
+        // abort and commit always pass through, or scheduler state and the
+        // renderer's view of it drift apart.
+        out.push(command)
+    }
+  }
+
+  if (decision.isFinal && decision.latch === null) state.suppressedQuestion = false
+
+  return { commands: out, resetScheduler }
+}

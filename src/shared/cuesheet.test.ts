@@ -88,3 +88,53 @@ test('reciting the script is detected and never latches', () => {
 test('suppress threshold is stricter than render threshold', () => {
   assert.ok(DEFAULT_MATCH_CONFIG.suppressThreshold > DEFAULT_MATCH_CONFIG.renderThreshold)
 })
+
+import { gateCommands, newLatchState } from './cuesheet.ts'
+import type { Command } from './speculation.ts'
+
+test('suppression drops fire and asks for a scheduler reset', () => {
+  const state = newLatchState()
+  const fire: Command[] = [{ kind: 'fire', specId: 1, text: 'why support' }]
+  const out = gateCommands(fire, state, { suppress: true, latch: null, isFinal: false })
+  assert.deepEqual(out.commands, [])
+  assert.equal(out.resetScheduler, true, 'dropping fire without a reset desyncs the scheduler')
+  assert.equal(state.suppressedQuestion, true)
+})
+
+test('abort, commit and reset always pass through', () => {
+  const state = newLatchState()
+  const cmds: Command[] = [
+    { kind: 'abort', specId: 1 },
+    { kind: 'commit', specId: 1 },
+    { kind: 'reset' }
+  ]
+  const out = gateCommands(cmds, state, { suppress: true, latch: null, isFinal: false })
+  assert.deepEqual(out.commands, cmds)
+})
+
+test('a suppressed question that fails to latch still regenerates', () => {
+  const state = newLatchState()
+  gateCommands([{ kind: 'fire', specId: 1, text: 'x' }], state, {
+    suppress: true, latch: null, isFinal: false
+  })
+  const out = gateCommands([{ kind: 'regenerate', specId: 2, text: 'full question' }], state, {
+    suppress: false, latch: null, isFinal: true
+  })
+  assert.deepEqual(out.commands, [{ kind: 'regenerate', specId: 2, text: 'full question' }])
+})
+
+test('a latch drops the regenerate that would overwrite it', () => {
+  const state = newLatchState()
+  const out = gateCommands([{ kind: 'regenerate', specId: 2, text: 'q' }], state, {
+    suppress: false, latch: 'c-support', isFinal: true
+  })
+  assert.deepEqual(out.commands, [])
+  assert.equal(state.cardId, 'c-support')
+})
+
+test('a new question clears the previous latch', () => {
+  const state = newLatchState()
+  gateCommands([], state, { suppress: false, latch: 'c-support', isFinal: true })
+  gateCommands([{ kind: 'reset' }], state, { suppress: false, latch: null, isFinal: false })
+  assert.equal(state.cardId, null)
+})
