@@ -711,7 +711,7 @@ function indexScript(script: string): ScriptIndex {
  *
  * ## What this check does NOT verify
  *
- * It verifies the provenance of WORDS, not the provenance of CLAIMS. Two
+ * It verifies the provenance of WORDS, not the provenance of CLAIMS. Three
  * classes of misleading cue are outside what containment can see, and are
  * documented in the design spec rather than implied to be covered:
  *
@@ -721,8 +721,21 @@ function indexScript(script: string): ScriptIndex {
  * - RE-PAIRING. Script "I cut costs by 5 percent while the target was 40
  *   percent", cue "Cut costs by 40 percent". Both numbers are the user's own
  *   words, in order; the fabrication is in the pairing, not in the vocabulary.
+ * - QUALIFIER-DROPPING. NARROWED, not closed. The clause-end span (see below)
+ *   stops the cue from keeping a leading negation while shedding a qualifier
+ *   in the SAME clause — but `CLAUSE_BREAK` splits on a comma or dash, so a
+ *   qualifier written as its own clause is outside the span and the cue is
+ *   kept anyway: script "I never cut costs, without approval from finance."
+ *   or "I never cut costs — without approval from finance." both still keep
+ *   cue "Never cut costs". So does a qualifier joined without punctuation at
+ *   all, e.g. "I never cut costs while there was no approval." And because
+ *   the whole check is negation-parity, a qualifier that reverses the claim
+ *   without using a NEGATIONS word is invisible at any scope — script "I
+ *   never cut costs at the expense of quality." also keeps "Never cut costs".
+ *   The general class "the cue drops a qualifier that reverses the claim" is
+ *   open, not handled; only the single same-clause, negation-worded case is.
  *
- * Closing either one needs a claim-level model, which is a different check
+ * Closing any of these needs a claim-level model, which is a different check
  * from this one and would itself be a thing that can be wrong.
  *
  * ACCEPTED TRADEOFF: A cue that reorders content for readability (e.g. "Cut
@@ -785,6 +798,12 @@ export function verifyCard(card: CueCard, source: string): CueCard {
     // measured 12 points of keep rate to do it. Counting rather than
     // set-testing is what separates "I never miss deadlines and I never cut
     // corners" from a cue carrying a single "never".
+    //
+    // This only reaches a qualifier that is in the SAME clause as the match.
+    // `CLAUSE_BREAK` splits on a comma or dash, so "I never cut costs,
+    // without approval from finance" puts the qualifier in the next clause
+    // and outside this span — the defeat is narrowed, not closed. See "What
+    // this check does NOT verify" above.
     const covered = st.slice(anchor, Math.max(clauseEnd[lastIdx], lastIdx + 1))
 
     // An unsourced negation is only ever an echo of a contrast the script is

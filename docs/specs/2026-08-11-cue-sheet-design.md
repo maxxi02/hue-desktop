@@ -286,13 +286,38 @@ used. Three changes, each measured against the corpus:
   into the span. A cue drawn from the third sentence is now judged against the
   third sentence.
 
-Two further defeats found in review are also closed. Negation parity is
-**counted**, not set-tested, so one "never" in a cue no longer satisfies two in
-the script. And the span runs to the end of the **clause** containing the last
-matched token, so "I never cut costs without approval from finance" no longer
-licenses "Never cut costs". Extending to the end of the *sentence* instead was
-measured and rejected: it pulls in negations from later, unrelated clauses and
-costs 12 points of keep rate to catch the same case.
+Two further defeats found in review are addressed, one closed and one only
+**narrowed**. Negation parity is **counted**, not set-tested, so one "never"
+in a cue no longer satisfies two in the script — that one is closed. And the
+span runs to the end of the **clause** containing the last matched token, so
+"I never cut costs without approval from finance" no longer licenses "Never
+cut costs" — but only when the qualifier is in the same clause as the match.
+Extending to the end of the *sentence* instead was measured and rejected: it
+pulls in negations from later, unrelated clauses and costs 12 points of keep
+rate to catch the same case.
+
+A final review, run against the current code rather than reasoned about,
+showed the clause boundary itself reopens the case it was meant to close.
+`CLAUSE_BREAK` splits on a comma or dash, so a qualifier written as its own
+clause lands outside the span and the cue is kept anyway:
+
+| script | cue | kept? |
+|---|---|---|
+| "I never cut costs, without approval from finance." | "Never cut costs" | yes |
+| "I never cut costs — without approval from finance." | "Never cut costs" | yes |
+| "I never cut costs while there was no approval." | "Never cut costs" | yes |
+| "I never took the shortcut, instead of doing it properly." | "Never took the shortcut" | yes |
+
+The last two show the same cause reached a different way: `while` and
+`instead` are themselves clause-break words in `CLAUSE_BREAK` (that's by
+design, for the reasons in "Anchoring at any sentence start" above), so a
+qualifier introduced by either one is split into its own clause exactly the
+way a comma-led one is. In every case the span still ends at the clause
+boundary as designed; the boundary itself is just closer than the qualifier.
+This is documented as a known gap (see "What this check does not verify"
+below and the `KNOWN GAP` test in `cuesheet.test.ts`), not fixed here — the
+matching logic itself is unchanged and endorsed on its own merits; only the
+claim about what it achieves is corrected.
 
 **Measured result: keep rate 0.143 → 0.500 (8/56 → 28/56); cards left with no
 cues 10/15 → 1/15.**
@@ -310,19 +335,25 @@ that gave way. The bar in `cuesheet-corpus.test.ts` is set at what was measured.
 
 **It verifies the provenance of WORDS, not the provenance of CLAIMS.** It can
 tell you every word in a cue came from the script, in the script's own order,
-without dropping a negation. It cannot tell you the cue asserts what the script
-asserted. Two classes of distortion are outside it entirely, and no amount of
-tightening the containment rule reaches them:
+without dropping a negation *in the same clause*. It cannot tell you the cue
+asserts what the script asserted. Three classes of distortion are outside it
+entirely, or only narrowed, and no amount of tightening the containment rule
+reaches the first two:
 
 | script | cue | why it passes |
 |---|---|---|
 | "My manager decided the architecture and I implemented it." | "Decided the architecture" | `my` and `i` are stopwords, so **who did what never enters the compared token stream**. Re-attribution is invisible. |
 | "I cut costs by 5 percent while the target was 40 percent." | "Cut costs by 40 percent" | both numbers are the user's own words, in the script's own order. The fabrication is in the **pairing**, not in the vocabulary. |
+| "I never cut costs, without approval from finance." (also true with a dash, with "while", or with "instead of") | "Never cut costs" | **qualifier-dropping, only narrowed above, not closed.** The qualifier is split into the next clause by `CLAUSE_BREAK`, outside the span the parity check covers. A qualifier not spelled with a `NEGATIONS` word — "I never cut costs at the expense of quality." keeping "Never cut costs" — passes at any scope, same clause or not, because the check is negation-parity only. |
 
-Both are recorded in a test named `KNOWN GAP` so the passing suite is never
-read as a claim that cue text is safe against every distortion. Closing either
+The first two are recorded, and the third is locked as currently-kept, in a
+test named `KNOWN GAP` so the passing suite is never read as a claim that cue
+text is safe against every distortion. Closing re-attribution or re-pairing
 needs a claim-level model — a different check from this one, and one that can
 itself be wrong, which is exactly what containment was chosen to avoid.
+Closing qualifier-dropping in general needs the same; closing the narrow
+same-clause, comma/dash-free case further would need a different clause
+boundary, at a cost this change does not take on.
 
 Dropping a cue degrades a card; it never invalidates the sheet.
 

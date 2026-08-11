@@ -97,6 +97,12 @@ test('wrong-card render rate stays at or below 0.078', () => {
  * The three outcomes of a positive case, together, so the spec's table can be
  * read off one test rather than inferred from three separate bars. They must
  * account for every positive case exactly once.
+ *
+ * This used to lock the exact triple ({hit: 70, wrong: 7, none: 13}), which
+ * fails a future change that only IMPROVES things — a none-render becoming a
+ * hit, say — as loudly as one that regresses. The three assertions below are
+ * a real guard (a wrong-card rate above today's bar, or a hit rate below it,
+ * still fails), just not one that also fails on improvement.
  */
 test('the three positive-case outcomes partition the corpus', () => {
   let hit = 0
@@ -112,8 +118,10 @@ test('the three positive-case outcomes partition the corpus', () => {
       else wrong++
     }
   }
-  assert.equal(hit + wrong + none, 90, 'every positive case must land in exactly one bucket')
-  assert.deepEqual({ hit, wrong, none }, { hit: 70, wrong: 7, none: 13 })
+  const total = hit + wrong + none
+  assert.equal(total, 90, 'every positive case must land in exactly one bucket')
+  assert.ok(hit / total >= 70 / 90, `hit rate ${hit}/${total} fell below the measured bar of 70/90`)
+  assert.ok(wrong / total <= 7 / 90, `wrong-card rate ${wrong}/${total} rose above the measured bar of 7/90`)
 })
 
 /**

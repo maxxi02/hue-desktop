@@ -480,3 +480,49 @@ test('KNOWN GAP: re-attribution and re-pairing are not detectable by containment
     'both numbers are the user\'s own words in order; the fabrication is in the pairing'
   )
 })
+
+/**
+ * KNOWN GAP, NOT APPROVAL. These assertions lock TODAY'S imperfect behaviour
+ * so a future change that closes any of them fails loudly and gets noticed —
+ * they are a tripwire, not a spec. Do not read a passing assertion here as
+ * this behaviour being fine; see "What this check does NOT verify" on
+ * `verifyCard` and the corresponding table in
+ * `docs/specs/2026-08-11-cue-sheet-design.md`.
+ *
+ * The clause-end negation span (the fix for the "defeat" test above) only
+ * reaches a qualifier in the SAME clause as the match. `CLAUSE_BREAK` splits
+ * on a comma, an em/en dash, or one of its listed conjunctions (`while`,
+ * `instead`, ...), so a qualifier introduced any of those ways is pushed into
+ * the next clause and outside the span — the defeat above is narrowed to the
+ * no-punctuation, no-clause-word case, not closed generally. Separately, the
+ * whole check is negation-parity only, so a qualifier that reverses the claim
+ * without spelling a `NEGATIONS` word is invisible at any scope.
+ */
+test('KNOWN GAP: a qualifier split into the next clause, or not spelled as a negation, is not caught', () => {
+  assert.equal(
+    keeps('I never cut costs, without approval from finance.', 'Never cut costs'),
+    true,
+    'a comma before the qualifier moves it into the next clause, past CLAUSE_BREAK'
+  )
+  assert.equal(
+    keeps('I never cut costs — without approval from finance.', 'Never cut costs'),
+    true,
+    'a dash before the qualifier does the same as a comma'
+  )
+  assert.equal(
+    keeps('I never cut costs while there was no approval.', 'Never cut costs'),
+    true,
+    '"while" is itself a CLAUSE_BREAK word, so it splits the clause the same way'
+  )
+  assert.equal(
+    keeps('I never took the shortcut, instead of doing it properly.', 'Never took the shortcut'),
+    true,
+    '"instead" is also a CLAUSE_BREAK word; the comma is not even doing the work here'
+  )
+  assert.equal(
+    keeps('I never cut costs at the expense of quality.', 'Never cut costs'),
+    true,
+    'the qualifier stays in the same clause but is not spelled with a NEGATIONS word, ' +
+      'so negation-parity counting never sees it'
+  )
+})
