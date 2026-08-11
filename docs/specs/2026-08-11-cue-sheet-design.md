@@ -38,22 +38,44 @@ An honest 111-case corpus (3 sheets, 15 cards, 90 positive and 21 negative
 transcripts, written as an interviewer would speak rather than back-derived from
 the triggers) gives:
 
-| | |
-|---|---|
-| Hit rate — the right card renders | **0.778** |
-| Suppression coverage — generation actually skipped | **0.133** |
-| False suppressions | **0** |
-| False renders | **0** |
+The 90 positive cases have **three** outcomes, not two, and they are reported
+here as three because the difference matters to the user: not rendering is a
+missed opportunity, rendering the WRONG card is a wrong answer on screen.
 
-So the feature reliably shows the user their own prepared answer, and reliably
-does not show the wrong one. But it skips generating on roughly one question in
-eight, not on most of them. **The token-saving argument above is largely
-unrealised.** In practice this is a display path that usually runs alongside
-generation rather than replacing it.
+| Outcome of a positive case | | |
+|---|---|---|
+| Hit — the right card renders | 70/90 | **0.778** |
+| Wrong-card render — a card renders, but not the prepared one | 7/90 | **0.078** |
+| No render — falls through to generation | 13/90 | **0.144** |
+
+| Other bars | | |
+|---|---|---|
+| False renders on the 21 negative cases | 0/21 | **0** |
+| False suppressions | 0/111 | **0** |
+| Suppression coverage — generation actually skipped | 10/90 | **0.111** |
+
+**The wrong-card rate is not zero, and an earlier draft of this document implied
+it was.** That claim was only ever true of the 21 negative cases, which are the
+only ones the original test walked. The worst case is "Tell me about saying no
+to a stakeholder who wanted something unreasonable", which renders
+`pm-prioritize` over `pm-stakeholder` at 0.741 — two cards that genuinely share
+most of their vocabulary. `cuesheet-corpus.test.ts` now asserts this rate as a
+regression bar rather than leaving it unmeasured.
+
+So the feature usually shows the user their own prepared answer, occasionally
+shows a neighbouring one, and skips generating on roughly one question in nine.
+**The token-saving argument above is largely unrealised.** In practice this is a
+display path that usually runs alongside generation rather than replacing it.
 
 An initial scoring defect accounted for part of the gap — bigrams were two-thirds
 of the score's denominator, capping paraphrase matches near 0.33 — and fixing it
 moved suppression coverage from 0.078 to 0.133 and hit rate from 0.722 to 0.778.
+Coverage then went back to 0.111 deliberately: `suppressThreshold` was raised
+from 0.75 to 0.80 because the old bar cleared the highest wrong-card score
+(0.741) by 0.0086, which on a 111-case corpus is luck rather than safety. Two
+suppressions is a cheap price for seven times the headroom, given that a false
+suppression is the failure that blanks the card mid-interview.
+
 The remaining gap is structural: suppression is deliberately the stricter gate,
 because a wrong suppression leaves a blank card mid-interview while a wrong
 render costs only a glance. A threshold sweep found no configuration that
@@ -223,23 +245,84 @@ precisely the failure this check exists to prevent. The check is now:
    excludes the very `not` that inverts it. The negation would slip through and
    the Critical bug would be live again.
 
-   **Known cost, deferred to Task 12.** Anchoring at 0 over-rejects: a script
-   reading "I have never been to Paris. I cut costs by renegotiating contracts."
-   drops the faithful cue "Cut costs by renegotiating contracts" because of an
-   unrelated earlier negation. This fails safe, but on multi-sentence scripts it
-   will thin cards out. The principled fix is to scope the span to the sentence
-   containing the cue, which needs sentence-aware tokenisation the current
-   `cueTokens` discards. Measure the false-rejection rate against the corpus
-   first — if it is low, the conservative rule stays.
+   **The known cost was measured, and it was far worse than "will thin cards
+   out".** See the correction below.
 
 Negation words are deliberately excluded from `STOPWORDS`; adding one there would
 silently re-open the inversion hole.
 
 **Accepted cost:** a legitimate cue that reorders for readability ("Cut payload,
-reduced latency" from "reduced latency by cutting the payload") is now rejected.
+reduced latency" from "reduced latency by cutting the payload") is rejected.
 That asymmetry is intentional — dropping a good cue degrades a card, keeping a
-misleading one puts a false claim in the user's mouth — and the ingest prompt
-asks for order-preserving cues to keep the false-rejection rate low.
+misleading one puts a false claim in the user's mouth.
+
+### Second correction (2026-08-11, from measuring the rule above)
+
+Run over the corpus's own 56 hand-written faithful cues, each against its own
+card's script, the rule above kept **8**. Every one of the 15 cards lost cues
+and **10 of 15 lost all of them**. A card with no cues is filtered out at
+ingest, so a sheet built from that corpus would have reported "no usable cue
+cards were found": the feature would have appeared simply broken.
+
+The dominant cause was not the negation span. Subsequence-over-`cueTokens`
+demanded exact surface forms, in exact order, with no inserted words, and real
+compression does none of those things — "Read replicas plus a write queue" from
+a script saying "split reads onto replicas… moved the hottest write path onto a
+queue" fails twice over, on `read`/`reads` and on a "plus" the script never
+used. Three changes, each measured against the corpus:
+
+- **Stem, not surface form.** A small hand-written suffix stripper (`ies`→`y`,
+  `ing`, `ed`, plural `s`, a doubled final consonant, a trailing `e`), applied
+  to both sides. Deliberately not a stemming library: this needs to unify
+  `read`/`reads` and `cause`/`causing`, not to decide that "university" and
+  "universe" are one word.
+- **A bounded connective budget.** `ceil(n/4)` cue tokens may be absent from the
+  script — the "plus", "first", "instead" that compression inserts. An
+  unmatched token may never carry a digit, and may only be a negation where the
+  script's own covered span already contains a contrast marker: a cue may echo
+  the user's "instead of" as a "not", it may not invent a "never".
+- **Anchoring at any sentence start.** Matching greedily from token zero picks
+  the first occurrence of a repeated word and drags every negation in between
+  into the span. A cue drawn from the third sentence is now judged against the
+  third sentence.
+
+Two further defeats found in review are also closed. Negation parity is
+**counted**, not set-tested, so one "never" in a cue no longer satisfies two in
+the script. And the span runs to the end of the **clause** containing the last
+matched token, so "I never cut costs without approval from finance" no longer
+licenses "Never cut costs". Extending to the end of the *sentence* instead was
+measured and rejected: it pulls in negations from later, unrelated clauses and
+costs 12 points of keep rate to catch the same case.
+
+**Measured result: keep rate 0.143 → 0.500 (8/56 → 28/56); cards left with no
+cues 10/15 → 1/15.**
+
+**0.500 is short of the 0.80 the review asked for, and the target is not
+reachable.** With the reordering rule abandoned entirely, the measured ceiling
+on this corpus is 0.786 — because roughly a third of the corpus's own faithful
+cues locally reorder ("Block deep work before meetings fill the day" from "I
+block time for deep work before the day fills with meetings"). Rejecting
+reordering and reaching 0.80 are in direct conflict on real compression;
+rejecting reordering was the explicit safety requirement, so it is the target
+that gave way. The bar in `cuesheet-corpus.test.ts` is set at what was measured.
+
+### What this check does not verify
+
+**It verifies the provenance of WORDS, not the provenance of CLAIMS.** It can
+tell you every word in a cue came from the script, in the script's own order,
+without dropping a negation. It cannot tell you the cue asserts what the script
+asserted. Two classes of distortion are outside it entirely, and no amount of
+tightening the containment rule reaches them:
+
+| script | cue | why it passes |
+|---|---|---|
+| "My manager decided the architecture and I implemented it." | "Decided the architecture" | `my` and `i` are stopwords, so **who did what never enters the compared token stream**. Re-attribution is invisible. |
+| "I cut costs by 5 percent while the target was 40 percent." | "Cut costs by 40 percent" | both numbers are the user's own words, in the script's own order. The fabrication is in the **pairing**, not in the vocabulary. |
+
+Both are recorded in a test named `KNOWN GAP` so the passing suite is never
+read as a claim that cue text is safe against every distortion. Closing either
+needs a claim-level model — a different check from this one, and one that can
+itself be wrong, which is exactly what containment was chosen to avoid.
 
 Dropping a cue degrades a card; it never invalidates the sheet.
 
@@ -498,15 +581,35 @@ This is the mobile hazard, present on desktop, and it was not obvious: "desktop
 takes clean loopback" is true of the default, not of the setting. Two mitigations,
 both in scope:
 
-1. **Never re-latch the currently latched card.** Costs nothing, kills the common
-   case outright.
+1. ~~**Never re-latch the currently latched card.**~~ **Dropped — see below.**
 2. **Score `script` as an anti-signal.** An utterance matching a card's `script`
    far better than its `triggers` is someone reciting an answer, not asking a
    question; matching is suppressed for that utterance. Triggers are questions and
    scripts are answers — lexically distinct enough to separate.
 
-Both are cheap and apply regardless of `audioSource`, so they ship with v1 rather
-than waiting for mobile.
+**Amended (2026-08-11, review found mitigation 1 was never implemented).** Only
+mitigation 2 ships. The spec is corrected here rather than the code, and the
+reasoning is that mitigation 1 is not free after all — "costs nothing" was
+wrong on both halves.
+
+It does not add coverage. The failure it targets is the user's own recited
+answer arriving labelled `interviewer` and re-matching the card it was read
+from. Mitigation 2 catches exactly that, earlier and by a better signal: it
+tests whether the utterance looks like an *answer*, which is the actual
+property, rather than whether it happens to hit the same card, which is a
+proxy.
+
+And it has a real cost mitigation 2 does not. `decide()` sees `this.latch`
+holding the previous question's card, so a re-latch block cannot distinguish a
+recitation from an interviewer genuinely repeating themselves — "sorry, say
+that again, how do you prioritise?", or a follow-up circling the same ground.
+Those are questions the user prepared for, and the rule would deny them their
+card and send them down the generation path instead. That is a worse outcome
+than the one it prevents, in a case that is more common in a real interview.
+
+The remaining exposure is a recitation whose script/trigger ratio falls under
+`recitationRatio` — real, and better addressed by tuning that ratio against
+recorded sessions than by a structural rule with this side effect.
 
 ## Out of scope
 
