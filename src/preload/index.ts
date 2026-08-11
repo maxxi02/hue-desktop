@@ -14,6 +14,7 @@ import type {
   StealthStatus
 } from '../shared/types'
 import type { IngestOutcome, IngestProgress } from '../shared/profile'
+import type { CueSheet } from '../shared/cuesheet'
 
 function sub<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: IpcRendererEvent, payload: T): void => cb(payload)
@@ -61,6 +62,21 @@ const hue = {
     refresh: (): Promise<IngestOutcome> => ipcRenderer.invoke('hue:profile:refresh'),
     /** Deletes the profile here and on the server. */
     delete: (): Promise<void> => ipcRenderer.invoke('hue:profile:delete')
+  },
+  cueSheet: {
+    /**
+     * Upload a cue sheet document and wait for the parsed cards. Takes a while;
+     * subscribe to `onProgress` first or the pane looks frozen.
+     */
+    ingest: (bytes: ArrayBuffer, filename: string, label: string): Promise<CueSheet> =>
+      ipcRenderer.invoke('hue:cuesheet:ingest', bytes, filename, label),
+    list: (): Promise<CueSheet[]> => ipcRenderer.invoke('hue:cuesheet:list'),
+    /** Arms the given sheet id as `selectedCueSheetId`. */
+    select: (id: string): Promise<HueSettings> => ipcRenderer.invoke('hue:cuesheet:select', id),
+    /** Deletes the sheet; clears the selection if it was the one selected. */
+    delete: (id: string): Promise<void> => ipcRenderer.invoke('hue:cuesheet:delete', id),
+    onProgress: (cb: (p: { phase: string; pct: number }) => void): (() => void) =>
+      sub('hue:cuesheet:progress', cb)
   },
   phone: {
     status: (): Promise<PhoneMirrorStatus> => ipcRenderer.invoke('hue:phone:status'),

@@ -19,6 +19,8 @@ import {
 } from './phone-mirror'
 import { startRelay, stopRelay, getRelayStatus, publishRelayEvent } from './relay-client'
 import { deleteProfile, ingestResume, refreshBundle } from './ingest'
+import { ingestCueSheet } from './cuesheet-ingest'
+import { listSheets, deleteSheet, sheetsDir } from './cuesheet-store'
 import { applyStealth, isStealthSupported } from './stealth'
 import { applyWindowAnchor } from './window-placement'
 import type {
@@ -145,6 +147,25 @@ export function registerIpc(): void {
 
   ipcMain.handle('hue:profile:refresh', () => refreshBundle())
   ipcMain.handle('hue:profile:delete', () => deleteProfile())
+
+  // Cue sheets. Same progress-on-a-side-channel shape as profile ingest: the
+  // call takes long enough that a pane showing nothing is indistinguishable
+  // from a hang.
+  ipcMain.handle(
+    'hue:cuesheet:ingest',
+    async (event, bytes: ArrayBuffer, filename: string, label: string) => {
+      return ingestCueSheet(new Uint8Array(bytes), filename, label, (progress) => {
+        if (!event.sender.isDestroyed()) event.sender.send('hue:cuesheet:progress', progress)
+      })
+    }
+  )
+
+  ipcMain.handle('hue:cuesheet:list', () => listSheets(sheetsDir()))
+  ipcMain.handle('hue:cuesheet:select', (_e, id: string) => updateSettings({ selectedCueSheetId: id }))
+  ipcMain.handle('hue:cuesheet:delete', (_e, id: string) => {
+    deleteSheet(sheetsDir(), id)
+    if (getSettings().selectedCueSheetId === id) updateSettings({ selectedCueSheetId: '' })
+  })
 
   // Stealth status for the renderer: the setting alone doesn't tell the UI
   // whether the window is really hidden from capture, so the platform's verdict
