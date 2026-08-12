@@ -1,28 +1,29 @@
 // src/main/cuesheet-ingest.ts
 /**
- * Cue sheet ingest, in the main process.
+ * Cue sheet ingest, in the main process, on the configured ingest provider.
  *
- * Unlike `ingest.ts`, this does **not** call the remote `hue-ingest` service.
- * That client POSTs bytes to `${ingestBaseUrl}/v1/accounts/{id}/ingest` and
- * polls a job; routing cue sheets through it would mean shipping a coordinated
- * change to a second repo before anything worked here.
+ * This used to call `completeOnce` from `./anthropic.ts` directly, which threw
+ * without an Anthropic key no matter which provider Settings named — so a user
+ * who picked Ollama for privacy could upload a resume but not a cue sheet, and
+ * the app's offline story was only half true. It now shares the resume
+ * pipeline's client, so both uploads honour one setting.
  *
- * It also buys a real privacy property worth stating plainly: a cue sheet is a
- * user's rehearsed answers for a named employer, and under this design it
- * reaches the model provider and nowhere else — never Hue's own infrastructure.
+ * The privacy property that motivated keeping this local is unchanged and worth
+ * restating: a cue sheet is a user's rehearsed answers for a named employer, and
+ * it reaches the model provider and nowhere else — never Hue's own
+ * infrastructure, and with Ollama selected, never off the machine at all.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { extractText as extractPdf } from 'unpdf'
 import mammoth from 'mammoth'
 import { saveSheet, sheetsDir } from './cuesheet-store.ts'
 import { verifyCard, type CueCard, type CueSheet } from '../shared/cuesheet.ts'
-// `completeOnce` (and everything it pulls in via `./settings`, including real
+// The model client (and everything it pulls in via `./settings`, including real
 // Electron `app`/`safeStorage` bindings) is imported lazily inside
-// `ingestCueSheet` below rather than at module scope. `segment` and
-// `parseCards` are the pure, unit-tested surface of this file and must be
-// loadable under plain `node --test`, outside Electron; a static import here
-// would drag Electron's runtime into every test run of this module, even
-// though nothing test-covered ever calls it.
+// `ingestCueSheet` below rather than at module scope. `segment`, `parseCards`
+// and `cardsFromStructured` are the pure, unit-tested surface of this file and
+// must be loadable under plain `node --test`, outside Electron; a static import
+// here would drag Electron's runtime into every test run of this module.
 
 export async function extractText(bytes: Uint8Array, filename: string): Promise<string> {
   const lower = filename.toLowerCase()
@@ -110,6 +111,58 @@ export function parseCards(raw: string): CueCard[] {
   }
 }
 
+/**
+ * Cards from a structured response, falling back to the prose-tolerant parser.
+ *
+ * Strict `json_schema` is not universal — local models in particular hand back
+ * JSON wrapped in prose or fenced in backticks, which is exactly what
+ * `parseCards` was written to survive. So it stays, as the second attempt.
+ *
+ * Both paths funnel through `parseCards` rather than validating separately:
+ * the id-uniqueness rule it enforces is load-bearing (a duplicate id makes a
+ * correct match render the wrong prepared answer), and a second validator would
+ * be a second place to forget it.
+ */
+export function cardsFromStructured(response: unknown): CueCard[] {
+  if (Array.isArray(response)) return parseCards(JSON.stringify(response))
+  if (response && typeof response === 'object') {
+    const cards = (response as { cards?: unknown }).cards
+    if (Array.isArray(cards)) return parseCards(JSON.stringify(cards))
+  }
+  return parseCards(typeof response === 'string' ? response : '')
+}
+
+/**
+ * The shape the provider must return.
+ *
+ * Every object carries `additionalProperties: false` because the strict
+ * `json_schema` dialect requires it. Lengths are bounded in code, not here —
+ * `minItems`/`maxItems` are not enforced by the dialect, and `verifyCard` is
+ * the thing that actually decides whether a card is usable.
+ */
+const CUESHEET_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['cards'],
+  properties: {
+    cards: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'heading', 'cues', 'script', 'triggers'],
+        properties: {
+          id: { type: 'string' },
+          heading: { type: 'string' },
+          cues: { type: 'array', items: { type: 'string' } },
+          script: { type: 'string' },
+          triggers: { type: 'array', items: { type: 'string' } }
+        }
+      }
+    }
+  }
+}
+
 const SYSTEM = `You turn a candidate's prepared interview notes into cue cards.
 
 For each section you are given, return one card as JSON with these fields:
@@ -134,16 +187,22 @@ export async function ingestCueSheet(
   const sections = segment(source)
 
   onProgress({ phase: 'Building cue cards', pct: 50 })
-  const { completeOnce } = await import('./anthropic.ts')
-  const raw = await completeOnce({
+  // Was `completeOnce` from `./anthropic.ts`, which threw without an Anthropic
+  // key regardless of the configured provider — so a user who chose Ollama for
+  // privacy could upload a resume but not a cue sheet. Routed through the same
+  // client the resume pipeline uses, "local only" is now true for both.
+  const { clientForSettings } = await import('./structured-llm.ts')
+  const llm = await clientForSettings('ingest')
+  const response = await llm.structured<unknown>({
+    label: 'cue sheet',
     system: SYSTEM,
-    prompt: sections.map((s) => `## ${s.heading}\n${s.body}`).join('\n\n'),
-    model: 'claude-sonnet-5',
+    schema: CUESHEET_SCHEMA,
+    user: sections.map((s) => `## ${s.heading}\n${s.body}`).join('\n\n'),
     maxTokens: 8000
   })
 
   onProgress({ phase: 'Checking against your notes', pct: 80 })
-  const cards = parseCards(raw)
+  const cards = cardsFromStructured(response)
     .map((c) => verifyCard(c, source))
     .filter((c) => c.script.length > 0 && c.cues.length > 0 && c.triggers.length > 0)
 

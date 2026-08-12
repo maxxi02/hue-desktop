@@ -1,7 +1,7 @@
 // src/main/cuesheet-ingest.test.ts
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { segment, parseCards } from './cuesheet-ingest.ts'
+import { segment, parseCards, cardsFromStructured } from './cuesheet-ingest.ts'
 
 test('splits on markdown headings', () => {
   const out = segment('# Intro\nHello there.\n\n## Why support\nBecause reasons.')
@@ -55,4 +55,41 @@ test('duplicate card ids are dropped, because CueMatcher resolves them inconsist
     ['why-us', 'other']
   )
   assert.equal(cards[0].heading, 'a', 'the first card of a colliding pair is the one kept')
+})
+
+// --- Structured responses (provider-neutral ingest) ---
+
+test('a structured response is used directly', () => {
+  const cards = cardsFromStructured({
+    cards: [{ id: 'c1', heading: 'Why us', cues: ['a'], script: 's', triggers: ['t'] }]
+  })
+  assert.deepEqual(cards.map((c) => c.id), ['c1'])
+})
+
+test('a bare array is accepted too — providers disagree about wrapping', () => {
+  const cards = cardsFromStructured([
+    { id: 'c1', heading: 'h', cues: ['a'], script: 's', triggers: ['t'] }
+  ])
+  assert.deepEqual(cards.map((c) => c.id), ['c1'])
+})
+
+test('a provider that ignored the schema and returned prose still parses', () => {
+  const raw = 'Sure:\n```json\n[{"id":"c1","heading":"h","cues":["a"],"script":"s","triggers":["t"]}]\n```'
+  assert.deepEqual(cardsFromStructured(raw).map((c) => c.id), ['c1'])
+})
+
+test('unusable output yields no cards rather than throwing', () => {
+  assert.deepEqual(cardsFromStructured(null), [])
+  assert.deepEqual(cardsFromStructured({ nope: true }), [])
+})
+
+test('duplicate ids are dropped on the structured path too, not just the prose one', () => {
+  const cards = cardsFromStructured({
+    cards: [
+      { id: 'dup', heading: 'first', cues: ['a'], script: 's', triggers: ['t'] },
+      { id: 'dup', heading: 'second', cues: ['b'], script: 's', triggers: ['t'] }
+    ]
+  })
+  assert.equal(cards.length, 1)
+  assert.equal(cards[0].heading, 'first')
 })
