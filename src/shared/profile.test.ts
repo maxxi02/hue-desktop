@@ -1,6 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  BUNDLE_VERSION,
+  COMPETENCIES,
+  HIGH_RISK_COMPETENCIES,
+  canonicalJson,
   describeBundle,
   isProfileBundle,
   parseProfileBundle,
@@ -129,4 +133,24 @@ test('the summary counts open gaps, since that is the only actionable half', () 
     describeBundle(bundle({ gaps: [] })),
     '1 story across 2 roles'
   )
+})
+
+// --- Ingest contract additions (ported from hue-ingest/src/profile.ts) ---
+
+test('BUNDLE_VERSION stays 1 — an existing saved bundle must keep loading', () => {
+  assert.equal(BUNDLE_VERSION, 1)
+})
+
+test('every high-risk competency is a real competency', () => {
+  for (const c of HIGH_RISK_COMPETENCIES) {
+    assert.ok((COMPETENCIES as readonly string[]).includes(c), `${c} is not in COMPETENCIES`)
+  }
+})
+
+test('canonicalJson sorts keys, so hash input does not depend on insertion order', () => {
+  assert.equal(canonicalJson({ b: 1, a: 2 }), canonicalJson({ a: 2, b: 1 }))
+})
+
+test('canonicalJson preserves array order, which is meaningful', () => {
+  assert.notEqual(canonicalJson([1, 2]), canonicalJson([2, 1]))
 })

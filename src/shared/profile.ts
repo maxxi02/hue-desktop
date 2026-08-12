@@ -83,6 +83,73 @@ export interface ProfileBundle {
   gaps: ProfileGap[]
 }
 
+export const BUNDLE_VERSION = 1
+
+/** Competencies an interviewer actually probes for. The gap scan is measured against this list. */
+export const COMPETENCIES = [
+  'conflict',
+  'failure',
+  'leadership',
+  'ambiguity',
+  'scaling',
+  'deadline-pressure',
+  'influence-without-authority',
+  'technical-tradeoff',
+  'mentorship',
+  'customer-focus',
+  'data-driven-decision',
+  'ownership'
+] as const
+
+export type Competency = (typeof COMPETENCIES)[number]
+
+/**
+ * Competencies a resume essentially never evidences on its own, so their absence
+ * is expected rather than informative. The gap scan asks about these first —
+ * they are where the model would otherwise invent, which is the failure this
+ * whole pipeline exists to prevent.
+ */
+export const HIGH_RISK_COMPETENCIES: readonly Competency[] = [
+  'failure',
+  'conflict',
+  'ambiguity',
+  'influence-without-authority'
+]
+
+/**
+ * Deterministic JSON, for hashing.
+ *
+ * Keys are sorted so that two bundles with the same content hash the same
+ * regardless of the order the extractor happened to emit fields in. Array order
+ * is preserved, because it is meaningful — the story bank has an order.
+ */
+export function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(',')}}`
+}
+
+/**
+ * Aliases for the names the ingest pipeline used before it moved in here.
+ *
+ * The shapes were always identical; only the names differed, because
+ * `hue-ingest` and the desktop grew apart while the bundle contract stayed
+ * frozen by its hash. Aliasing rather than renaming keeps the ported pipeline
+ * diffable against its origin, which matters while the grounding eval is the
+ * thing proving the port changed no behaviour.
+ */
+export type Identity = ProfileIdentity
+export type Role = ProfileRole
+export type Education = ProfileEducation
+export type Metric = ProfileMetric
+export type Story = ProfileStory
+export type Gap = ProfileGap
+export type StorySource = ProfileStory['source']
+export type GapStatus = ProfileGap['status']
+
 export type IngestPhase = 'uploading' | 'extracting' | 'working'
 
 /** Progress for the Settings label while an ingest runs. */
