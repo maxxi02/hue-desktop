@@ -57,13 +57,31 @@
   height: 9px;
   border-radius: 50%;
   background: var(--text-muted);
-  transition: background 400ms, box-shadow 400ms;
+  transition:
+    background 400ms,
+    box-shadow 400ms;
 }
-.brand-orb--connecting   { background: var(--indigo); box-shadow: 0 0 8px var(--indigo-glow); animation: breathe 1.6s ease-in-out infinite; }
-.brand-orb--listening    { background: var(--green);  box-shadow: 0 0 8px var(--green-glow); }
-.brand-orb--transcribing { background: var(--amber);  box-shadow: 0 0 8px var(--amber-glow); }
-.brand-orb--thinking     { background: var(--indigo); box-shadow: 0 0 8px var(--indigo-glow); }
-.brand-orb--speaking     { background: var(--blue);   box-shadow: 0 0 8px var(--blue-glow); }
+.brand-orb--connecting {
+  background: var(--indigo);
+  box-shadow: 0 0 8px var(--indigo-glow);
+  animation: breathe 1.6s ease-in-out infinite;
+}
+.brand-orb--listening {
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green-glow);
+}
+.brand-orb--transcribing {
+  background: var(--amber);
+  box-shadow: 0 0 8px var(--amber-glow);
+}
+.brand-orb--thinking {
+  background: var(--indigo);
+  box-shadow: 0 0 8px var(--indigo-glow);
+}
+.brand-orb--speaking {
+  background: var(--blue);
+  box-shadow: 0 0 8px var(--blue-glow);
+}
 
 .brand-name {
   /* 800, per HueType's rule that display weights are extra-bold. */
@@ -83,7 +101,9 @@
   border: 1px solid var(--border);
   color: var(--text-muted);
   background: var(--bg-card);
-  transition: color 280ms var(--ease-out), background 280ms var(--ease-out),
+  transition:
+    color 280ms var(--ease-out),
+    background 280ms var(--ease-out),
     border-color 280ms var(--ease-out);
 }
 .header-pills {
@@ -109,11 +129,31 @@
   border-color: var(--accent-border);
   background: var(--accent-tint);
 }
-.state-pill--connecting   { color: var(--indigo); border-color: var(--accent-border); background: var(--accent-tint); }
-.state-pill--listening    { color: var(--green);  border-color: var(--green-glow); background: var(--green-glow); }
-.state-pill--transcribing { color: var(--amber);  border-color: var(--amber-glow); background: var(--amber-glow); }
-.state-pill--thinking     { color: var(--indigo); border-color: var(--accent-border); background: var(--accent-tint); }
-.state-pill--speaking     { color: var(--blue);   border-color: var(--blue-glow); background: var(--blue-glow); }
+.state-pill--connecting {
+  color: var(--indigo);
+  border-color: var(--accent-border);
+  background: var(--accent-tint);
+}
+.state-pill--listening {
+  color: var(--green);
+  border-color: var(--green-glow);
+  background: var(--green-glow);
+}
+.state-pill--transcribing {
+  color: var(--amber);
+  border-color: var(--amber-glow);
+  background: var(--amber-glow);
+}
+.state-pill--thinking {
+  color: var(--indigo);
+  border-color: var(--accent-border);
+  background: var(--accent-tint);
+}
+.state-pill--speaking {
+  color: var(--blue);
+  border-color: var(--blue-glow);
+  background: var(--blue-glow);
+}
 
 .icon-btn {
   width: 34px;
@@ -126,8 +166,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 200ms var(--ease-out), color 200ms var(--ease-out),
-    border-color 200ms var(--ease-out), transform 140ms var(--ease-out);
+  transition:
+    background 200ms var(--ease-out),
+    color 200ms var(--ease-out),
+    border-color 200ms var(--ease-out),
+    transform 140ms var(--ease-out);
   -webkit-app-region: no-drag;
 }
 .icon-btn:hover {
@@ -183,7 +226,9 @@
      would put near-white on pale lavender and lose the icon entirely. */
   color: var(--on-ink);
   box-shadow: 0 6px 20px var(--aurora-shadow);
-  transition: border-color 400ms, box-shadow 400ms;
+  transition:
+    border-color 400ms,
+    box-shadow 400ms;
 }
 .voice-orb--connecting {
   border-color: var(--indigo);
@@ -240,8 +285,12 @@
   background: currentColor;
   animation: dot-bounce 1.4s ease-in-out infinite;
 }
-.thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
-.thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+.thinking-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.thinking-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
 
 /* ── Transcript ── */
 .transcript {
@@ -254,8 +303,13 @@
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
-.transcript::-webkit-scrollbar       { width: 3px; }
-.transcript::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+.transcript::-webkit-scrollbar {
+  width: 3px;
+}
+.transcript::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 2px;
+}
 
 .transcript-empty {
   flex: 1;
@@ -273,8 +327,14 @@
   max-width: 78%;
   animation: fade-in-up 240ms var(--ease-out);
 }
-.bubble--user      { align-self: flex-end;   align-items: flex-end; }
-.bubble--assistant { align-self: flex-start; align-items: flex-start; }
+.bubble--user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.bubble--assistant {
+  align-self: flex-start;
+  align-items: flex-start;
+}
 
 .bubble-label {
   font-size: 10px;
@@ -283,8 +343,12 @@
   text-transform: uppercase;
   padding: 0 4px;
 }
-.bubble--user .bubble-label      { color: var(--accent); }
-.bubble--assistant .bubble-label { color: var(--text-muted); }
+.bubble--user .bubble-label {
+  color: var(--accent);
+}
+.bubble--assistant .bubble-label {
+  color: var(--text-muted);
+}
 
 .bubble-text {
   padding: 9px 14px;
@@ -429,8 +493,13 @@
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
-.glance::-webkit-scrollbar       { width: 3px; }
-.glance::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+.glance::-webkit-scrollbar {
+  width: 3px;
+}
+.glance::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 2px;
+}
 
 .glance-text {
   font-size: var(--glance-size);
@@ -552,8 +621,11 @@
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 200ms var(--ease-out), color 200ms var(--ease-out),
-    border-color 200ms var(--ease-out), transform 160ms var(--ease-out);
+  transition:
+    background 200ms var(--ease-out),
+    color 200ms var(--ease-out),
+    border-color 200ms var(--ease-out),
+    transform 160ms var(--ease-out);
 }
 .capture-btn:hover:not(:disabled) {
   background: var(--bg-elevated);
@@ -596,8 +668,11 @@
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 200ms var(--ease-out), box-shadow 200ms var(--ease-out),
-    border-color 200ms var(--ease-out), transform 160ms var(--ease-out);
+  transition:
+    background 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out),
+    border-color 200ms var(--ease-out),
+    transform 160ms var(--ease-out);
   letter-spacing: 0.01em;
 }
 .voice-btn:active:not(:disabled) {
@@ -689,7 +764,9 @@
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.drawer-header h2 { font-size: 15px; }
+.drawer-header h2 {
+  font-size: 15px;
+}
 
 .drawer-body {
   flex: 1;
@@ -706,8 +783,13 @@
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
-.drawer-body::-webkit-scrollbar       { width: 3px; }
-.drawer-body::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+.drawer-body::-webkit-scrollbar {
+  width: 3px;
+}
+.drawer-body::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 2px;
+}
 
 .drawer-footer {
   padding: 14px 20px;
@@ -755,7 +837,9 @@
   color: var(--text);
   width: 100%;
   outline: none;
-  transition: border-color 200ms, box-shadow 200ms;
+  transition:
+    border-color 200ms,
+    box-shadow 200ms;
 }
 /* Focus is the accent's job (rule 1: it marks selection, it does not fill). */
 .settings-input:focus {
@@ -813,7 +897,10 @@ textarea.settings-input {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 200ms, transform 200ms, box-shadow 200ms;
+  transition:
+    background 200ms,
+    transform 200ms,
+    box-shadow 200ms;
   box-shadow: 0 4px 14px var(--shadow-soft);
 }
 .save-btn:hover {
@@ -854,7 +941,9 @@ textarea.settings-input {
   background: var(--bg-elevated);
   cursor: pointer;
   padding: 3px;
-  transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out);
+  transition:
+    background 160ms var(--ease-out),
+    border-color 160ms var(--ease-out);
 }
 .anchor-cell:hover {
   background: var(--accent-tint);
@@ -878,12 +967,24 @@ textarea.settings-input {
 
 /* Push the dot into the corner the cell represents, so the picker previews the
    result rather than just recording a choice. */
-.anchor-cell:nth-child(3n + 1) { justify-content: flex-start; }
-.anchor-cell:nth-child(3n + 2) { justify-content: center; }
-.anchor-cell:nth-child(3n)     { justify-content: flex-end; }
-.anchor-cell:nth-child(-n + 3) { align-items: flex-start; }
-.anchor-cell:nth-child(n + 4):nth-child(-n + 6) { align-items: center; }
-.anchor-cell:nth-child(n + 7) { align-items: flex-end; }
+.anchor-cell:nth-child(3n + 1) {
+  justify-content: flex-start;
+}
+.anchor-cell:nth-child(3n + 2) {
+  justify-content: center;
+}
+.anchor-cell:nth-child(3n) {
+  justify-content: flex-end;
+}
+.anchor-cell:nth-child(-n + 3) {
+  align-items: flex-start;
+}
+.anchor-cell:nth-child(n + 4):nth-child(-n + 6) {
+  align-items: center;
+}
+.anchor-cell:nth-child(n + 7) {
+  align-items: flex-end;
+}
 
 /* ── Post-session review ──
    A scorecard read after the call, inside the same card the transcript lives in.
@@ -962,7 +1063,9 @@ textarea.settings-input {
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
-  transition: background 160ms var(--ease-out), color 160ms var(--ease-out);
+  transition:
+    background 160ms var(--ease-out),
+    color 160ms var(--ease-out);
 }
 .review-step:hover:not(:disabled) {
   background: var(--bg-elevated);
@@ -996,7 +1099,9 @@ textarea.settings-input {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 160ms var(--ease-out), transform 160ms var(--ease-out);
+  transition:
+    background 160ms var(--ease-out),
+    transform 160ms var(--ease-out);
 }
 .review-close:hover {
   background: var(--bg-elevated);
@@ -1014,8 +1119,13 @@ textarea.settings-input {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
-.review-body::-webkit-scrollbar       { width: 3px; }
-.review-body::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+.review-body::-webkit-scrollbar {
+  width: 3px;
+}
+.review-body::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 2px;
+}
 
 .review-section {
   display: flex;
@@ -1211,10 +1321,13 @@ textarea.settings-input {
   overflow: hidden;
   /* Two offset conic gradients are the standard way to draw a checkerboard
      without shipping an image; 8px keeps the squares visible at this size. */
-  background-image:
-    conic-gradient(from 90deg at 50% 50%,
-      var(--bg-elevated) 25%, transparent 0 50%,
-      var(--bg-elevated) 0 75%, transparent 0);
+  background-image: conic-gradient(
+    from 90deg at 50% 50%,
+    var(--bg-elevated) 25%,
+    transparent 0 50%,
+    var(--bg-elevated) 0 75%,
+    transparent 0
+  );
   background-size: 8px 8px;
 }
 .opacity-preview-fill {
@@ -1223,4 +1336,84 @@ textarea.settings-input {
   /* Alpha is set inline from the live slider value, so this must not also read
      --bg-alpha or the two would fight during a drag. */
   background: rgb(var(--bg-rgb));
+}
+
+/* ── Setup checklist ──
+ *
+ * A list of what is left to do, not a progress bar. Done steps collapse to a
+ * single tick and their title alone: the reward for finishing one is that it
+ * stops taking up room, which is also what makes the remaining work obvious at
+ * a glance rather than something to be counted.
+ */
+.setup-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 2px 0 0;
+  padding: 0;
+}
+
+.setup-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+/* A fixed-width gutter so the titles align whether or not a step is ticked —
+   text that shifts sideways as you complete steps reads as the list redrawing
+   itself rather than as progress. */
+.setup-mark {
+  flex: 0 0 16px;
+  height: 16px;
+  margin-top: 2px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: transparent;
+  transition:
+    background 200ms var(--ease-out),
+    border-color 200ms var(--ease-out),
+    color 200ms var(--ease-out);
+}
+.setup-step--done .setup-mark {
+  background: var(--success-tint);
+  border-color: transparent;
+  color: var(--success-text);
+}
+
+.setup-body {
+  min-width: 0;
+}
+
+.setup-title {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
+/* Muted rather than struck through: a finished step is still a true statement
+   about the setup, and strikethrough reads as "cancelled". */
+.setup-step--done .setup-title {
+  color: var(--text-muted);
+}
+
+.setup-detail {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+.setup-done-note {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }

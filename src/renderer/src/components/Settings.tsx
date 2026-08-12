@@ -421,6 +421,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   // `s` is null until settings load; the pane renders a loading state then.
   const profileBundle = s ? parseProfileBundle(s.profileBundleJson) : null
   const openGaps = profileBundle ? profileBundle.gaps.filter((g) => g.status === 'open') : []
+
   // Groq's free tier caps a single request at 8,000 tokens; story mining asks
   // for roughly 10,000. Resolved the same way `providerFor` does in the main
   // process — empty means "same as drafting".
@@ -639,6 +640,60 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   const compat: OpenAiCompatProvider | null = isCompatProvider(s.llmProvider) ? s.llmProvider : null
   const cfg = compat ? COMPAT_PROVIDERS[compat] : null
   const apiKey = cfg ? (s[cfg.keyField] as string) : ''
+
+  /**
+   * Whether a provider is usable right now — i.e. it has the credential it
+   * needs. Ollama is the exception on purpose: a local server has no key, and
+   * demanding a placeholder would make the offline path the only one that
+   * looks unconfigured.
+   */
+  const providerReady = (p: LlmProvider): boolean => {
+    if (p === 'ollama') return true
+    if (p === 'anthropic') return s.anthropicApiKey.trim().length > 0
+    return (s[COMPAT_PROVIDERS[p].keyField] as string).trim().length > 0
+  }
+
+  // Mirrors `providerFor` in the main process: empty means "same as drafting".
+  const ingestResolved: LlmProvider = s.ingestProvider || s.llmProvider
+
+  const setupSteps: { title: string; detail: string; done: boolean }[] = [
+    {
+      title: 'Add a key for the provider that drafts answers',
+      detail:
+        s.llmProvider === 'ollama'
+          ? 'Ollama runs locally and needs no key — make sure it is running and the model name below matches one you have pulled.'
+          : `Pick a provider under Assistant and paste its API key. There are step-by-step instructions under the key field.`,
+      done: providerReady(s.llmProvider)
+    },
+    {
+      title: 'Choose a provider that can read a whole résumé',
+      detail:
+        ingestResolved === 'groq'
+          ? 'Ingest is currently set to Groq, which cannot finish it: reading a résumé needs about 10,000 tokens in one request and Groq’s free tier caps that at 8,000. Set Ingest provider to Google or Ollama. Drafting can stay on Groq.'
+          : 'Set an Ingest provider and give it a key. Ingest sends a whole document at once, so it needs more headroom per request than drafting does.',
+      done: ingestResolved !== 'groq' && providerReady(ingestResolved)
+    },
+    {
+      title: 'Upload your résumé',
+      detail:
+        'Under Your background. Hue turns it into a story bank and checks every claim against the document, so it can only cite things you actually wrote.',
+      done: profileBundle !== null
+    },
+    {
+      title: 'Answer the gap questions',
+      detail:
+        'They cover what a résumé cannot show. Answering them — or saying you have no story — is what stops Hue inventing one under pressure.',
+      // Vacuously true with no bundle: the previous step is the one to do, and
+      // marking this one outstanding would show two blockers for one cause.
+      done: profileBundle === null || openGaps.length === 0
+    },
+    {
+      title: 'Upload your prepared answers',
+      detail:
+        'Optional. Under Prepared answers. When Hue hears a question you prepared for, it shows your own words instead of generating something.',
+      done: s.selectedCueSheetId !== ''
+    }
+  ]
   const modelVal = cfg ? (s[cfg.modelField] as string) : ''
 
   const save = async (): Promise<void> => {
@@ -861,6 +916,46 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
         </div>
 
         <div className="drawer-body">
+          {/*
+            Setup, as a checklist that knows where you are.
+
+            Static instructions would sit at the top being ignored once they no
+            longer applied. These read live state, so a finished step visibly
+            drops out of the way and the one thing left to do is the one thing
+            highlighted — which is what someone setting this up an hour before an
+            interview actually needs.
+          */}
+          <div className="settings-section">
+            <div className="settings-section-title">Setup</div>
+            <ol className="setup-list">
+              {setupSteps.map((step) => (
+                <li
+                  key={step.title}
+                  className={`setup-step${step.done ? ' setup-step--done' : ''}`}
+                >
+                  <span className="setup-mark" aria-hidden="true">
+                    {step.done ? '✓' : ''}
+                  </span>
+                  <div className="setup-body">
+                    <div className="setup-title">{step.title}</div>
+                    {!step.done && <div className="setup-detail">{step.detail}</div>}
+                  </div>
+                </li>
+              ))}
+            </ol>
+            {setupSteps.every((step) => step.done) ? (
+              <div className="setup-done-note">
+                Everything is set up. Close Settings and start a session.
+              </div>
+            ) : (
+              <div className="setup-done-note">
+                Steps tick themselves off as you finish them. Nothing below is required to start a
+                session — Hue works without a résumé or cue sheet, it just has less of your own
+                material to draw on.
+              </div>
+            )}
+          </div>
+
           <div className="settings-section">
             <div className="settings-section-title">Assistant</div>
             <div className="settings-field">
