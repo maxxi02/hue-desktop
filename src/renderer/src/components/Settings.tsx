@@ -271,6 +271,92 @@ function CloseIcon(): React.JSX.Element {
   )
 }
 
+function EyeIcon({ off }: { off: boolean }): React.JSX.Element {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+      {/* The slash is the whole difference between the two states, so it has to
+          read at 16px — a full-width stroke rather than a subtle mark. */}
+      {off && <line x1="3" y1="21" x2="21" y2="3" />}
+    </svg>
+  )
+}
+
+/**
+ * An API key field with a reveal toggle.
+ *
+ * Masked by default, because these sit in a pane a user may well have open
+ * while screen-sharing — which, for this app specifically, is the normal case
+ * rather than the unusual one.
+ *
+ * Reveal state is per-field and deliberately not persisted: it resets whenever
+ * the pane is closed, so a key cannot be left visible by a decision made in a
+ * previous session. Typing is what a reveal is usually for, so the toggle is
+ * beside the input rather than hidden behind a menu.
+ */
+function SecretInput({
+  value,
+  onChange,
+  placeholder,
+  id
+}: {
+  value: string
+  onChange: (next: string) => void
+  placeholder?: string
+  id?: string
+}): React.JSX.Element {
+  const [revealed, setRevealed] = useState(false)
+
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+      <input
+        id={id}
+        type={revealed ? 'text' : 'password'}
+        className="settings-input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        // Password managers offering to save an API key is noise, and their
+        // overlay covers the reveal button.
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <button
+        type="button"
+        className="icon-btn"
+        onClick={() => setRevealed((r) => !r)}
+        // The control is an icon, so the label is the only thing a screen
+        // reader has, and the title is the only thing a mouse user gets.
+        aria-label={revealed ? 'Hide API key' : 'Show API key'}
+        aria-pressed={revealed}
+        title={revealed ? 'Hide' : 'Show'}
+        style={{
+          width: 'auto',
+          flex: '0 0 auto',
+          padding: '0 10px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'var(--text-muted)'
+        }}
+      >
+        <EyeIcon off={revealed} />
+      </button>
+    </div>
+  )
+}
+
 /**
  * The nine docking positions, in reading order so the array maps straight onto a
  * 3x3 CSS grid. 'free' is deliberately absent: it is not a position you aim at,
@@ -794,11 +880,9 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
               <>
                 <div className="settings-field">
                   <label className="settings-label">Anthropic API key</label>
-                  <input
-                    type="password"
-                    className="settings-input"
+                  <SecretInput
                     value={s.anthropicApiKey}
-                    onChange={(e) => set('anthropicApiKey', e.target.value)}
+                    onChange={(next) => set('anthropicApiKey', next)}
                     placeholder="sk-ant-…"
                   />
                 </div>
@@ -815,11 +899,9 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
               <>
                 <div className="settings-field">
                   <label className="settings-label">{cfg.label} API key</label>
-                  <input
-                    type="password"
-                    className="settings-input"
+                  <SecretInput
                     value={apiKey}
-                    onChange={(e) => setStr(cfg.keyField, e.target.value)}
+                    onChange={(next) => setStr(cfg.keyField, next)}
                     placeholder={cfg.keyPlaceholder}
                   />
                   <details style={{ marginTop: 6 }}>
@@ -1245,15 +1327,15 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
               {ingestWillExceedQuota ? (
                 <span style={{ color: '#d08b2c', fontSize: 12, marginTop: 4 }}>
                   Ingest is set to run on Groq, which cannot complete it. Reading a whole résumé
-                  needs about 10,000 tokens in one request and Groq’s free tier caps that at
-                  8,000, so the upload will fail. Pick Google or Ollama here — drafting can stay
-                  on Groq, where its speed is worth having.
+                  needs about 10,000 tokens in one request and Groq’s free tier caps that at 8,000,
+                  so the upload will fail. Pick Google or Ollama here — drafting can stay on Groq,
+                  where its speed is worth having.
                 </span>
               ) : (
                 <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                  Reading a whole résumé takes far more tokens at once than drafting an answer
-                  does, so the fastest provider is not always able to do it. Leave this on “Same
-                  as drafting” unless an upload tells you otherwise.
+                  Reading a whole résumé takes far more tokens at once than drafting an answer does,
+                  so the fastest provider is not always able to do it. Leave this on “Same as
+                  drafting” unless an upload tells you otherwise.
                 </span>
               )}
               {profileBundle ? (
@@ -1521,11 +1603,9 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                   <label className="settings-label">
                     {CLOUD_ASR[s.cloudAsrProvider].label} API key
                   </label>
-                  <input
-                    type="password"
-                    className="settings-input"
+                  <SecretInput
                     value={s[CLOUD_ASR[s.cloudAsrProvider].keyField] as string}
-                    onChange={(e) => setStr(CLOUD_ASR[s.cloudAsrProvider].keyField, e.target.value)}
+                    onChange={(next) => setStr(CLOUD_ASR[s.cloudAsrProvider].keyField, next)}
                   />
                   <details style={{ marginTop: 6 }}>
                     <summary
