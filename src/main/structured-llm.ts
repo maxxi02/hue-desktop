@@ -266,6 +266,23 @@ export class MissingApiKey extends Error {
 }
 
 /**
+ * How long one ingest request may take before it is abandoned.
+ *
+ * The compat client's own default is ten minutes, chosen when ingest ran as a
+ * service: the client held a job id and polled, so nobody was waiting on the
+ * socket and a generous ceiling cost nothing. In the desktop that is no longer
+ * true — the user is the one holding it, watching a progress line — and ten
+ * minutes of silence is indistinguishable from a hang.
+ *
+ * Local models get the long ceiling anyway, because there the wait is real
+ * rather than wedged: a small model on CPU has been measured at nearly two
+ * minutes for a single step, and cutting it off would break the offline path
+ * to protect a user who is not paying for the time.
+ */
+const CLOUD_INGEST_TIMEOUT_MS = 2 * 60 * 1000
+const LOCAL_INGEST_TIMEOUT_MS = 10 * 60 * 1000
+
+/**
  * Builds the client a workload runs on, from settings.
  *
  * Async because `./settings` is imported lazily: it pulls in real Electron
@@ -290,7 +307,8 @@ export async function clientForSettings(role: 'drafting' | 'ingest'): Promise<Ll
     return openAiCompatClient({
       apiKey: 'ollama',
       baseUrl: baseUrlFor('ollama', s.ollamaBaseUrl),
-      model: s.ollamaModel || undefined
+      model: s.ollamaModel || undefined,
+      timeoutMs: LOCAL_INGEST_TIMEOUT_MS
     })
   }
 
@@ -314,6 +332,7 @@ export async function clientForSettings(role: 'drafting' | 'ingest'): Promise<Ll
     apiKey,
     baseUrl: baseUrlFor(provider, s.ollamaBaseUrl),
     // Empty means "auto-pick", which the compat client's default already does.
-    model: models[provider] || undefined
+    model: models[provider] || undefined,
+    timeoutMs: CLOUD_INGEST_TIMEOUT_MS
   })
 }

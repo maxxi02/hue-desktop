@@ -19,6 +19,25 @@ import type { CueSheet } from '@shared/cuesheet'
 
 const KOKORO_VOICES = ['af_heart', 'af_bella', 'af_nicole', 'am_michael', 'bf_emma', 'bm_george']
 
+/**
+ * Résumé ingest as a percentage.
+ *
+ * The pipeline reports which of four phases it is in, not a fraction, so these
+ * are the four points the bar can honestly occupy. They are not evenly spaced
+ * because the phases are not: story mining is by far the longest, so giving it
+ * the widest span stops the bar sprinting to 75% and then appearing to stall.
+ *
+ * It deliberately never reaches 100 while running — the last step is the one
+ * that writes the bundle, and a bar at 100% with work still happening is the
+ * exact thing that makes people think an app has hung.
+ */
+const RESUME_PHASE_PCT: Record<string, number> = {
+  extracting: 8,
+  'mining-profile': 25,
+  'mining-stories': 60,
+  'gap-scan': 92
+}
+
 interface CompatProviderInfo {
   label: string
   keyField: keyof HueSettings
@@ -271,6 +290,78 @@ function CloseIcon(): React.JSX.Element {
   )
 }
 
+/**
+ * "This is already added."
+ *
+ * A tick and a chip rather than another line of grey text. The status line
+ * below these controls is transient — it says what just happened — and a user
+ * returning to Settings a day later needs to know what is *loaded*, which is a
+ * different question and was previously answerable only by reading prose.
+ */
+function AddedChip({ label }: { label: string }): React.JSX.Element {
+  return (
+    <span className="added-chip">
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M20 6L9 17l-5-5" />
+      </svg>
+      <span className="added-chip-label">{label}</span>
+    </span>
+  )
+}
+
+/**
+ * Upload progress: a bar, a percentage, and the name of the step.
+ *
+ * The percentage exists because the alternative is a line of text that changes
+ * every twenty seconds, which is indistinguishable from a hang for the nineteen
+ * seconds in between.
+ *
+ * `percent` may be null when the work reports steps rather than a fraction. The
+ * bar then runs indeterminate instead of inventing a number — a made-up
+ * percentage that stalls at 40% is worse than no percentage, because it implies
+ * a rate that is not real.
+ */
+function UploadProgress({
+  percent,
+  label
+}: {
+  percent: number | null
+  label: string
+}): React.JSX.Element {
+  const known = percent !== null && Number.isFinite(percent)
+  const clamped = known ? Math.max(0, Math.min(100, Math.round(percent as number))) : 0
+  return (
+    <div className="upload-progress" role="status" aria-live="polite">
+      <div className="upload-progress-head">
+        <span className="upload-progress-label">{label}</span>
+        {known && <span className="upload-progress-pct">{clamped}%</span>}
+      </div>
+      <div
+        className="upload-progress-track"
+        role="progressbar"
+        aria-valuenow={known ? clamped : undefined}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <div
+          className={known ? 'upload-progress-bar' : 'upload-progress-bar is-indeterminate'}
+          style={known ? { width: `${clamped}%` } : undefined}
+        />
+      </div>
+    </div>
+  )
+}
+
 function EyeIcon({ off }: { off: boolean }): React.JSX.Element {
   return (
     <svg
@@ -406,8 +497,9 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   // Set once a file is picked; cleared once its ingest is confirmed or
   // cancelled. Holding the label here (rather than ingesting immediately on
   // pick) is what lets the user see and edit the default before it's sent.
-  const [pendingCueFile, setPendingCueFile] = useState<File | null>(null)
-  const [pendingCueLabel, setPendingCueLabel] = useState('')
+  const [cueProgress, setCueProgress] = useState<number | null>(null)
+  const [resumeProgress, setResumeProgress] = useState<number | null>(null)
+  const [resumeIngesting, setResumeIngesting] = useState(false)
   const [cueIngesting, setCueIngesting] = useState(false)
   const cueFileInputRef = useRef<HTMLInputElement>(null)
   // Tracks whether unmount has already happened, so a slow ingest that finishes
@@ -717,10 +809,17 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
     e.target.value = '' // allow re-selecting the same file
     if (!file) return
 
+    setResumeIngesting(true)
+    setResumeProgress(RESUME_PHASE_PCT.extracting)
     setResumeStatus(`Reading ${file.name}…`)
     // Subscribed before the call, not after: ingest takes about a minute, and
     // the first progress event fires immediately.
     const stopProgress = window.hue.profile.onProgress((p) => {
+      // A step count, not a rate. Résumé ingest reports which of four phases it
+      // is in and nothing finer, so the bar advances in four jumps — honest
+      // about being coarse, rather than a smooth animation implying a
+      // measurement nobody is taking.
+      setResumeProgress(RESUME_PHASE_PCT[p.phase] ?? null)
       setResumeStatus(
         p.phase === 'extracting'
           ? `Reading ${file.name}…`
@@ -746,6 +845,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
       setResumeStatus(err instanceof Error ? err.message : String(err))
     } finally {
       stopProgress()
+      setResumeIngesting(false)
+      setResumeProgress(null)
     }
   }
 
@@ -808,22 +909,26 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   // confirm step (as the fallback when the field is left blank).
   const defaultCueLabel = (filename: string): string => filename.replace(/\.[^./\\]+$/, '')
 
-  // A file has been picked; stage it and pre-fill the editable label rather
-  // than ingesting immediately — the user needs to see and change the name
-  // before it's sent, since "notes-final-v2" isn't something they can pick
-  // between under pressure later.
+  /** The sheet currently armed, for the "already added" chip. */
+  const armedCueSheet = cueSheets.find((sheet) => sheet.id === s.selectedCueSheetId) ?? null
+
+  /**
+   * A file has been picked, so ingest it.
+   *
+   * This used to stage the file behind a name field and an "Add cue sheet"
+   * button, so the sheet could be renamed before it was sent. That cost every
+   * upload two extra clicks to buy something the filename usually already says,
+   * and the confirm step was easy to miss — a picked file that was never
+   * confirmed looked exactly like an upload that had silently failed.
+   *
+   * The name now comes from the filename. That is a real reduction in control,
+   * and the honest mitigation is that the user picks the filename.
+   */
   const onCueFilePicked = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const file = e.target.files?.[0]
     e.target.value = '' // allow re-selecting the same file
     if (!file) return
-    setPendingCueFile(file)
-    setPendingCueLabel(defaultCueLabel(file.name))
-    setCueSheetStatus(null)
-  }
-
-  const onCancelCueSheet = (): void => {
-    setPendingCueFile(null)
-    setPendingCueLabel('')
+    void ingestCueFile(file, defaultCueLabel(file.name))
   }
 
   /**
@@ -834,24 +939,18 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
    * so every path (throw, or a sheet with an empty `cards` array) has to land
    * on screen rather than leaving the progress line stuck mid-upload.
    */
-  const onConfirmCueSheet = async (): Promise<void> => {
-    const file = pendingCueFile
-    if (!file || cueIngesting) return
-
-    // Blank/whitespace-only falls back to the filename default rather than
-    // creating an unnamed sheet; always trimmed before it's sent.
-    const trimmed = pendingCueLabel.trim()
-    const label = trimmed || defaultCueLabel(file.name)
+  const ingestCueFile = async (file: File, label: string): Promise<void> => {
+    if (cueIngesting) return
 
     setCueIngesting(true)
-    setPendingCueFile(null)
-    setPendingCueLabel('')
-    setCueSheetStatus(`Uploading ${file.name}…`)
+    setCueProgress(0)
+    setCueSheetStatus(`Reading ${file.name}…`)
     // Subscribed before the call, not after: ingest takes a while, and the
     // first progress event fires immediately.
     const stopProgress = window.hue.cueSheet.onProgress((p) => {
       if (!mountedRef.current) return
-      setCueSheetStatus(`${p.phase}… ${Math.round(p.pct)}%`)
+      setCueProgress(Math.round(p.pct))
+      setCueSheetStatus(p.phase)
     })
     cueStopProgressRef.current = stopProgress
 
@@ -880,7 +979,10 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
     } finally {
       stopProgress()
       if (cueStopProgressRef.current === stopProgress) cueStopProgressRef.current = null
-      if (mountedRef.current) setCueIngesting(false)
+      if (mountedRef.current) {
+        setCueIngesting(false)
+        setCueProgress(null)
+      }
     }
   }
 
@@ -1388,13 +1490,21 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                   fontSize: 13
                 }}
                 onClick={() => fileInputRef.current?.click()}
+                disabled={resumeIngesting}
               >
-                Upload PDF / DOCX / TXT
+                {profileBundle ? 'Replace résumé' : 'Upload PDF / DOCX / TXT'}
               </button>
-              {resumeStatus && (
-                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                  {resumeStatus}
-                </span>
+              {resumeIngesting ? (
+                <UploadProgress percent={resumeProgress} label={resumeStatus ?? 'Working…'} />
+              ) : (
+                <>
+                  {profileBundle && <AddedChip label={describeBundle(profileBundle)} />}
+                  {resumeStatus && (
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                      {resumeStatus}
+                    </span>
+                  )}
+                </>
               )}
               {/*
                 Ingest sends a whole résumé in one request, which is an order of
@@ -1557,48 +1667,23 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
               >
                 Upload PDF / DOCX / TXT / MD
               </button>
-              {pendingCueFile && (
-                <div
-                  style={{
-                    marginTop: 8,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 6,
-                    alignItems: 'flex-start'
-                  }}
-                >
-                  <label className="settings-label">Name this cue sheet</label>
-                  <input
-                    className="settings-input"
-                    value={pendingCueLabel}
-                    onChange={(e) => setPendingCueLabel(e.target.value)}
-                    placeholder={defaultCueLabel(pendingCueFile.name)}
-                  />
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      style={{ width: 'auto', padding: '6px 12px', fontSize: 13 }}
-                      onClick={() => void onConfirmCueSheet()}
-                      disabled={cueIngesting}
-                    >
-                      Add cue sheet
-                    </button>
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={onCancelCueSheet}
-                      disabled={cueIngesting}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-              {cueSheetStatus && (
-                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                  {cueSheetStatus}
-                </span>
+              {cueIngesting ? (
+                <UploadProgress percent={cueProgress} label={cueSheetStatus ?? 'Working…'} />
+              ) : (
+                <>
+                  {armedCueSheet && (
+                    <AddedChip
+                      label={`${armedCueSheet.label} — ${armedCueSheet.cards.length} cue card${
+                        armedCueSheet.cards.length === 1 ? '' : 's'
+                      }`}
+                    />
+                  )}
+                  {cueSheetStatus && (
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                      {cueSheetStatus}
+                    </span>
+                  )}
+                </>
               )}
               {cueSheets.length === 0 ? (
                 <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 8 }}>

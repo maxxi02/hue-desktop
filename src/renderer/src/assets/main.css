@@ -1417,3 +1417,107 @@ textarea.settings-input {
   padding-top: 10px;
   border-top: 1px solid var(--border);
 }
+
+/* ── "Already added" chip ──
+ *
+ * Answers a different question from the status line beside it. The status line
+ * is transient — what just happened — and goes stale the moment the drawer is
+ * reopened. This says what is currently loaded, which is what someone coming
+ * back to Settings actually wants to know.
+ */
+.added-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 4px 11px 4px 9px;
+  border-radius: var(--r-pill);
+  background: var(--success-tint);
+  color: var(--success-text);
+  font-size: 12px;
+  font-weight: 600;
+  /* The label can be a whole bundle summary, so it must be allowed to wrap
+     rather than push the drawer into a horizontal scroll. */
+  max-width: 100%;
+}
+.added-chip-label {
+  color: var(--text);
+  font-weight: 500;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ── Upload progress ── */
+.upload-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.upload-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.upload-progress-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Tabular figures so the number does not jiggle the layout as it counts up. */
+.upload-progress-pct {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+.upload-progress-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.upload-progress-bar {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  /* Eased, because the résumé bar moves in four jumps rather than continuously
+     — an instant jump reads as a glitch, a slide reads as a step completing. */
+  transition: width 420ms var(--ease-out);
+}
+
+/*
+ * No percentage available: sweep instead of filling. A bar that fills to a
+ * number nobody measured is a lie; a bar that sweeps says "working, duration
+ * unknown", which is the truth.
+ */
+.upload-progress-bar.is-indeterminate {
+  width: 35%;
+  animation: upload-sweep 1.15s ease-in-out infinite;
+}
+@keyframes upload-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .upload-progress-bar {
+    transition: none;
+  }
+  .upload-progress-bar.is-indeterminate {
+    animation-duration: 2.4s;
+  }
+}
