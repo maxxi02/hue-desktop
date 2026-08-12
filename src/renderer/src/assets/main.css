@@ -1,4 +1,5 @@
 @import './base.css';
+@import './cuesheet-doc.css';
 
 #root {
   height: 100vh;
@@ -23,9 +24,10 @@
   border: 1px solid var(--border);
   border-radius: var(--r-card);
   overflow: hidden;
-  /* Tinted rather than black: on a cream surface a neutral drop shadow reads as
-     dirt, so the lift is cast in the aurora's violet (HueColors.AuroraShadow). */
-  box-shadow: 0 18px 48px var(--aurora-shadow);
+  /* Black, not tinted. The violet cast existed because a neutral shadow on cream
+     reads as dirt; against a dark surface a tinted shadow reads as a colour
+     halo and does not darken anything, so the reason for it is gone. */
+  box-shadow: 0 18px 48px var(--shadow-strong);
   animation: app-enter 280ms var(--ease-out);
 }
 
@@ -104,14 +106,14 @@
    reads as a distinct, deliberate state rather than another mode label. */
 .mode-pill--stealth {
   color: var(--accent);
-  border-color: rgba(108, 92, 224, 0.28);
-  background: rgba(108, 92, 224, 0.08);
+  border-color: var(--accent-border);
+  background: var(--accent-tint);
 }
-.state-pill--connecting   { color: var(--indigo); border-color: rgba(108, 92, 224, 0.28); background: rgba(108, 92, 224, 0.08); }
-.state-pill--listening    { color: var(--green);  border-color: rgba(63, 191, 106, 0.30); background: rgba(63, 191, 106, 0.10); }
-.state-pill--transcribing { color: var(--amber);  border-color: rgba(199, 122, 74, 0.30); background: rgba(199, 122, 74, 0.10); }
-.state-pill--thinking     { color: var(--indigo); border-color: rgba(108, 92, 224, 0.28); background: rgba(108, 92, 224, 0.08); }
-.state-pill--speaking     { color: var(--blue);   border-color: rgba(62, 147, 176, 0.30); background: rgba(62, 147, 176, 0.10); }
+.state-pill--connecting   { color: var(--indigo); border-color: var(--accent-border); background: var(--accent-tint); }
+.state-pill--listening    { color: var(--green);  border-color: var(--green-glow); background: var(--green-glow); }
+.state-pill--transcribing { color: var(--amber);  border-color: var(--amber-glow); background: var(--amber-glow); }
+.state-pill--thinking     { color: var(--indigo); border-color: var(--accent-border); background: var(--accent-tint); }
+.state-pill--speaking     { color: var(--blue);   border-color: var(--blue-glow); background: var(--blue-glow); }
 
 .icon-btn {
   width: 34px;
@@ -175,8 +177,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Ink, not muted: the icon sits on a light gradient. */
-  color: var(--ink);
+  /* The aurora gradient is pastel and stays pastel — it is Hue's identity, not
+     a themed surface. So the icon on top of it must be the DARK colour, which
+     after the palette inversion is `--on-ink`, not `--ink`. Using `--ink` here
+     would put near-white on pale lavender and lose the icon entirely. */
+  color: var(--on-ink);
   box-shadow: 0 6px 20px var(--aurora-shadow);
   transition: border-color 400ms, box-shadow 400ms;
 }
@@ -290,8 +295,8 @@
 /* The user's own words are marked with the accent; Hue's replies sit on the
    Card white, which is the system's surface for content you read. */
 .bubble--user .bubble-text {
-  background: rgba(108, 92, 224, 0.09);
-  border: 1px solid rgba(108, 92, 224, 0.18);
+  background: var(--accent-tint);
+  border: 1px solid var(--accent-border);
   border-radius: var(--r-card-s) var(--r-card-s) 4px var(--r-card-s);
 }
 .bubble--assistant .bubble-text {
@@ -362,7 +367,7 @@
   width: 100%;
   height: auto;
   border-radius: var(--r-card-s) var(--r-card-s) 4px var(--r-card-s);
-  border: 1px solid rgba(108, 92, 224, 0.25);
+  border: 1px solid var(--accent-border);
   display: block;
   /* A touch gentler than the bubble's own enter so the image settles in. */
   animation: fade-in-up 280ms var(--ease-out);
@@ -372,8 +377,8 @@
   align-self: center;
   padding: 9px 16px;
   border-radius: var(--r-card-s);
-  background: rgba(192, 83, 63, 0.08);
-  border: 1px solid rgba(192, 83, 63, 0.22);
+  background: var(--danger-tint);
+  border: 1px solid var(--danger-border);
   color: var(--danger);
   font-size: 13px;
   animation: fade-in-up 240ms var(--ease-out);
@@ -601,17 +606,17 @@
 .voice-btn--start {
   background: var(--ink);
   color: var(--on-ink);
-  box-shadow: 0 4px 14px rgba(23, 21, 26, 0.18);
+  box-shadow: 0 4px 14px var(--shadow-soft);
 }
 .voice-btn--start:hover {
-  background: #2A2732;
-  box-shadow: 0 6px 20px rgba(23, 21, 26, 0.24);
+  background: var(--ink-hover);
+  box-shadow: 0 6px 20px var(--shadow-strong);
   transform: translateY(-1px);
 }
 .voice-btn--connecting {
-  background: rgba(108, 92, 224, 0.10);
+  background: var(--accent-tint);
   color: var(--accent);
-  border-color: rgba(108, 92, 224, 0.28);
+  border-color: var(--accent-border);
 }
 .voice-btn:disabled {
   cursor: default;
@@ -619,12 +624,12 @@
 }
 /* Stopping is destructive, so it takes Danger as *text*, never as a fill. */
 .voice-btn--stop {
-  background: rgba(192, 83, 63, 0.10);
+  background: var(--danger-tint);
   color: var(--danger);
-  border-color: rgba(192, 83, 63, 0.28);
+  border-color: var(--danger-border);
 }
 .voice-btn--stop:hover {
-  background: rgba(192, 83, 63, 0.16);
+  background: var(--danger-tint-strong);
   transform: translateY(-1px);
 }
 
@@ -655,10 +660,22 @@
 .drawer {
   width: 100%;
   height: 100%;
-  /* Transparent, not opaque --bg. The window transparency slider lives in this
-     drawer: painting over the card here is what made its live preview invisible,
-     so the setting looked broken because nothing on screen could respond to it. */
-  background: transparent;
+  /*
+   * Opaque, and deliberately not `rgba(var(--bg-rgb), var(--bg-alpha))`.
+   *
+   * This used to be transparent so the transparency slider's own live preview
+   * showed through it. That was a fair trade when the slider was the only thing
+   * in here, but Settings has grown into the pane where you type API keys and
+   * read gap questions, and at 40% alpha over a bright video call the text sat
+   * on whatever happened to be behind the window. Legibility of the whole pane
+   * outranks in-place preview of one control.
+   *
+   * The preview is not lost, just moved: the opacity row carries its own swatch
+   * (`.opacity-preview`), which paints the real surface colour at the live alpha
+   * over a checkerboard. That shows the setting more honestly than the old
+   * behaviour did, because it works regardless of what is behind the window.
+   */
+  background: var(--bg);
   display: flex;
   flex-direction: column;
   animation: slide-in-right 280ms var(--ease-drawer);
@@ -743,7 +760,7 @@
 /* Focus is the accent's job (rule 1: it marks selection, it does not fill). */
 .settings-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(108, 92, 224, 0.14);
+  box-shadow: 0 0 0 3px var(--accent-tint-strong);
 }
 .settings-input::placeholder {
   color: var(--text-muted);
@@ -797,20 +814,20 @@ textarea.settings-input {
   font-weight: 600;
   cursor: pointer;
   transition: background 200ms, transform 200ms, box-shadow 200ms;
-  box-shadow: 0 4px 14px rgba(23, 21, 26, 0.18);
+  box-shadow: 0 4px 14px var(--shadow-soft);
 }
 .save-btn:hover {
-  background: #2A2732;
+  background: var(--ink-hover);
   transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(23, 21, 26, 0.24);
+  box-shadow: 0 6px 20px var(--shadow-strong);
 }
 .save-btn:active {
   transform: scale(0.98);
 }
 /* Confirmation reads in the connected green, as text on a tint. */
 .save-btn--saved {
-  background: rgba(63, 191, 106, 0.14);
-  color: #2E8B4F;
+  background: var(--success-tint);
+  color: var(--success-text);
   box-shadow: none;
 }
 
@@ -840,13 +857,13 @@ textarea.settings-input {
   transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out);
 }
 .anchor-cell:hover {
-  background: rgba(108, 92, 224, 0.10);
+  background: var(--accent-tint);
 }
 /* A chosen anchor is a selection, which is exactly what the accent marks —
    it is never a fill on a button elsewhere in the system. */
 .anchor-cell--on {
   border-color: var(--accent);
-  background: rgba(108, 92, 224, 0.14);
+  background: var(--accent-tint-strong);
 }
 
 .anchor-dot {
@@ -1173,4 +1190,37 @@ textarea.settings-input {
   font-size: 12px;
   line-height: 1.6;
   color: var(--text-muted);
+}
+
+/*
+ * Live preview for the window-transparency slider.
+ *
+ * The drawer is opaque so Settings stays readable (see `.drawer`), which means
+ * the slider can no longer be previewed by looking through the pane. This shows
+ * the same thing more honestly: the app's real surface colour at the chosen
+ * alpha, over a checkerboard standing in for "whatever is behind the window".
+ * The old behaviour previewed against one particular desktop; this previews
+ * against the worst case, which is the one worth seeing.
+ */
+.opacity-preview {
+  width: 46px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: var(--r-menu);
+  border: 1px solid var(--border-strong);
+  overflow: hidden;
+  /* Two offset conic gradients are the standard way to draw a checkerboard
+     without shipping an image; 8px keeps the squares visible at this size. */
+  background-image:
+    conic-gradient(from 90deg at 50% 50%,
+      var(--bg-elevated) 25%, transparent 0 50%,
+      var(--bg-elevated) 0 75%, transparent 0);
+  background-size: 8px 8px;
+}
+.opacity-preview-fill {
+  width: 100%;
+  height: 100%;
+  /* Alpha is set inline from the live slider value, so this must not also read
+     --bg-alpha or the two would fight during a drag. */
+  background: rgb(var(--bg-rgb));
 }

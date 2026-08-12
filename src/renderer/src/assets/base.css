@@ -4,11 +4,18 @@
  * values track `HueColors`, `HueShapes` and `HueSpacing` so the two apps can be
  * reasoned about as one system rather than two lookalikes.
  *
+ * The desktop palette is dark; hue-mobile's is cream. That is a deliberate
+ * divergence, not drift: this window floats translucent over someone else's
+ * video call at whatever brightness they run, where cream washed out and stopped
+ * separating text from hairlines. The token *names* still track `HueColors`, so
+ * the two apps remain one system in structure even where the values differ.
+ *
  * Two rules carry over from mobile, and they are what keep the system coherent:
  *
  *  1. **Ink is the primary action colour, not the accent.** Buttons are
- *     ink-on-cream. `--accent` is for links, focus rings and selection marks
- *     only. A screen full of violet buttons is off-system.
+ *     ink-on-surface — here that is light-on-dark rather than dark-on-cream,
+ *     but the rule is the same. `--accent` is for links, focus rings and
+ *     selection marks only. A screen full of violet buttons is off-system.
  *  2. **The aurora gradient means "Hue is here".** It belongs to the voice orb
  *     and nothing else. It is never a background for reading text against.
  */
@@ -30,36 +37,56 @@
 }
 
 :root {
-  /* ── Surfaces ── */
-  /* HueColors.Surface — the app's own background. */
-  --bg:          #F6F4EF;
+  /* ── Surfaces ──
+     Dark, because of where this window actually lives: floating over a video
+     call, translucent, on someone else's screen brightness. The cream palette
+     this file used to carry is the right answer on a phone and the wrong one
+     here — at 90% alpha over a bright call it washed out until body text and
+     hairlines stopped separating. Dark also draws less attention on a screen
+     share, which matters for a companion that is meant to go unnoticed.
+
+     The names are unchanged and every rule downstream reads them, so this is a
+     value swap rather than a restyle. Anything that hardcodes a colour instead
+     of using these tokens is a bug — it will not have followed the palette. */
+  /* The app's own background. Near-black, warmed slightly toward the accent's
+     violet so the shell and the orb belong to the same family. */
+  --bg:          #16151C;
   /* RGB channels of --bg, so the floating card can paint it at a configurable
      alpha (--bg-alpha, driven by the windowOpacity setting). */
-  --bg-rgb:      246, 244, 239;
+  --bg-rgb:      22, 21, 28;
   --bg-alpha:    0.9;
-  /* HueColors.Card — raised cards, list groups, input fields. */
-  --bg-card:     #FFFFFF;
-  /* HueColors.Canvas — the darker cream, used where a surface must recede. */
-  --bg-elevated: #EFEBE4;
+  /* Raised cards, list groups, input fields. Lighter than the surface: on dark,
+     nearer the light is nearer the viewer. */
+  --bg-card:     #201E29;
+  /* Used where a surface must recede — so darker than the surface, which is the
+     same intent the cream palette expressed by going darker than its cream. */
+  --bg-elevated: #100F15;
 
   /* ── Content ── */
-  /* HueColors.Ink / OnSurface. Also the primary button fill (rule 1 above). */
-  --ink:         #17151A;
-  --on-ink:      #FFFFFF;
-  --text:        #17151A;
-  /* HueColors.TextSecondary — ink @ 58%. Emphasis comes from this ramp, never
-     from bumping body text to bold. */
-  --text-muted:  rgba(23, 21, 26, 0.58);
+  /* The primary button fill (rule 1 above), inverted for a dark surface: the
+     high-contrast ink is now the light one, and its label is dark. The rule
+     itself is unchanged — buttons are ink, and violet is still not a fill. */
+  --ink:         #EFEBE4;
+  --on-ink:      #16151C;
+  --text:        #EDEAF2;
+  /* Secondary text — text @ 62%. Slightly stronger than the 58% the light
+     palette used: the same ratio reads fainter against dark. Emphasis comes
+     from this ramp, never from bumping body text to bold. */
+  --text-muted:  rgba(237, 234, 242, 0.62);
 
-  /* Hairlines. HueColors.Border / BorderStrong. */
-  --border:        rgba(23, 21, 26, 0.08);
-  --border-strong: rgba(23, 21, 26, 0.12);
+  /* Hairlines. Light-on-dark, and proportionally stronger than the light
+     theme's: a 8% black line on cream is visible, an 8% white line on near
+     black is not. */
+  --border:        rgba(237, 234, 242, 0.12);
+  --border-strong: rgba(237, 234, 242, 0.20);
 
-  /* HueColors.Accent — links, focus rings, selection. Not a button fill. */
-  --accent:         #6C5CE0;
-  --accent-pressed: #5847C9;
-  /* HueColors.Danger — destructive text. Never a fill. */
-  --danger:         #C0533F;
+  /* Links, focus rings, selection. Not a button fill. Lightened from the
+     mobile #6C5CE0, which is a mid-tone chosen to hold contrast against cream
+     and goes muddy against near-black. */
+  --accent:         #9B8CFF;
+  --accent-pressed: #B4A8FF;
+  /* Destructive text. Never a fill. Lightened for the same reason. */
+  --danger:         #FF8A73;
 
   /* ── Aurora ──
      HueColors.Aurora*. Reserved for Hue's own presence: the voice orb. */
@@ -69,6 +96,38 @@
   /* AuroraShadow — #6C5CE0 @ 32%. Shadows cast by the system are tinted, never
      neutral black; a black drop shadow on cream reads as grime. */
   --aurora-shadow:   rgba(108, 92, 224, 0.32);
+
+  /* ── Derived tints ──
+     Every one of these existed as a literal `rgba(108, 92, 224, …)` scattered
+     through main.css, mixed by eye against cream. That is why the palette swap
+     needed an audit rather than a token edit: a literal cannot follow a theme.
+     They live here now so the next change is one file.
+
+     The alphas are raised relative to their cream originals. A tint is read as
+     a departure from the surface, and the eye needs more of a departure to see
+     one against near-black than against paper. */
+  --accent-tint:        rgba(155, 140, 255, 0.14);
+  --accent-tint-strong: rgba(155, 140, 255, 0.22);
+  --accent-border:      rgba(155, 140, 255, 0.34);
+  --accent-ring:        rgba(155, 140, 255, 0.26);
+
+  --danger-tint:        rgba(255, 138, 115, 0.14);
+  --danger-tint-strong: rgba(255, 138, 115, 0.22);
+  --danger-border:      rgba(255, 138, 115, 0.34);
+
+  --success-tint:       rgba(74, 222, 128, 0.16);
+  --success-text:       #6EE7A0;
+
+  /* Ink is the light colour now, so its hover state goes lighter still rather
+     than darker — the direction reverses with the palette. */
+  --ink-hover:   #FFFDF7;
+  --ink-pressed: #DCD7CD;
+
+  /* Drop shadows. Tinted violet on cream because neutral black read as dirt;
+     on near-black the opposite holds — a tinted shadow reads as a colour cast,
+     and only real black actually darkens. */
+  --shadow-soft:   rgba(0, 0, 0, 0.42);
+  --shadow-strong: rgba(0, 0, 0, 0.58);
 
   /* ── Shapes ── HueShapes. Nothing in this system has a sharp corner. */
   --r-pill:   999px;  /* Pill — buttons and chips, fully round. */
@@ -84,24 +143,28 @@
 
   /* ── Status ──
      Mobile defines only Connected/Disconnected; the desktop voice pipeline has
-     five states, so the rest are derived from the same palette. The two aurora
-     hues are darkened here specifically for legibility on cream — the raw
-     pastel values are backgrounds, not text colours. */
-  --green:      #3FBF6A;
-  --green-glow: rgba(63, 191, 106, 0.22);
-  --amber:      #C77A4A;   /* AuroraPeach, darkened to hold contrast on cream. */
-  --amber-glow: rgba(199, 122, 74, 0.20);
-  --indigo:     #6C5CE0;   /* = Accent. Connecting / thinking. */
-  --indigo-glow: rgba(108, 92, 224, 0.22);
-  --blue:       #3E93B0;   /* AuroraSky, darkened for the same reason. */
-  --blue-glow:  rgba(62, 147, 176, 0.20);
-  --red:        #C0533F;   /* = Danger. */
-  --red-glow:   rgba(192, 83, 63, 0.20);
+     five states, so the rest are derived from the same palette.
+
+     These were previously darkened to hold contrast against cream. On a dark
+     surface that inverts: a darkened hue disappears, and the raw aurora pastels
+     — which the cream palette could only use as backgrounds — are now exactly
+     right as status colours. Glows are stronger for the same reason; on dark
+     they read as light rather than as smudge. */
+  --green:      #4ADE80;
+  --green-glow: rgba(74, 222, 128, 0.30);
+  --amber:      #FFB27A;   /* AuroraPeach, used raw now that it sits on dark. */
+  --amber-glow: rgba(255, 178, 122, 0.28);
+  --indigo:     #9B8CFF;   /* = Accent. Connecting / thinking. */
+  --indigo-glow: rgba(155, 140, 255, 0.30);
+  --blue:       #8FD3E8;   /* AuroraSky, likewise raw. */
+  --blue-glow:  rgba(143, 211, 232, 0.28);
+  --red:        #FF8A73;   /* = Danger. */
+  --red-glow:   rgba(255, 138, 115, 0.28);
 }
 
-/* Status rings/pulses. On cream these are soft tinted halos rather than the
-   neon glows a dark UI can carry — a bloom that reads as light on #080D1A
-   reads as smudge on #F6F4EF. */
+/* Status rings/pulses. On dark these carry as real glows — the bloom reads as
+   emitted light, which is what the animation is imitating. The same halo on
+   cream read as a smudge, which is why it used to be kept soft. */
 @keyframes pulse-green {
   0%, 100% { box-shadow: 0 0 0  0 var(--green-glow), 0 2px 12px var(--green-glow); }
   50%       { box-shadow: 0 0 0 14px transparent,    0 4px 22px var(--green-glow); }

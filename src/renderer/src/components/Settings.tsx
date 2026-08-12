@@ -1796,9 +1796,25 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                   }}
                 />
                 <span className="range-value">{Math.round(s.windowOpacity * 100)}%</span>
+                {/*
+                  Settings is opaque now, so the slider can no longer be
+                  previewed by looking through the pane at the desktop. This
+                  swatch is the replacement, and it is the better test: it shows
+                  the surface at the chosen alpha over a checkerboard, which
+                  stands in for an arbitrary background rather than whichever
+                  one happens to be behind the window right now.
+                */}
+                <span
+                  className="opacity-preview"
+                  title={`Preview at ${Math.round(s.windowOpacity * 100)}%`}
+                  aria-hidden="true"
+                >
+                  <span className="opacity-preview-fill" style={{ opacity: s.windowOpacity }} />
+                </span>
               </div>
               <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
                 How opaque the floating window is. Lower lets more of the desktop show through.
+                Settings itself stays solid regardless, so your keys and notes are always readable.
               </span>
             </div>
           </div>
