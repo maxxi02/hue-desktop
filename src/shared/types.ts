@@ -68,6 +68,17 @@ export type ResolvedTier = 'on-device' | 'cloud'
 export interface HueSettings {
   /** Which LLM backend powers the assistant: cloud Claude or local Ollama. */
   llmProvider: LlmProvider
+  /**
+   * Provider for résumé and cue-sheet ingest. `''` means "same as `llmProvider`".
+   *
+   * Separate from drafting because Groq — the right pick for drafting, being
+   * both the cheapest and the fastest — cannot run ingest on its free tier:
+   * `gpt-oss-120b` is capped at 8,000 tokens per minute, and one story-mining
+   * call is 11–12k tokens including the résumé. Groq's Developer tier cannot
+   * currently be bought (it is at capacity), so this is not a limit that waiting
+   * resolves. Everyone not on Groq should leave this empty.
+   */
+  ingestProvider: LlmProvider | ''
   anthropicApiKey: string
   model: string
   ollamaBaseUrl: string
@@ -211,6 +222,7 @@ export interface HueSettings {
 
 export const DEFAULT_SETTINGS: HueSettings = {
   llmProvider: 'anthropic',
+  ingestProvider: '',
   anthropicApiKey: '',
   model: 'claude-opus-4-8',
   ollamaBaseUrl: 'http://localhost:11434',
