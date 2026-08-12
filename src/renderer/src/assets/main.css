@@ -1521,3 +1521,23 @@ textarea.settings-input {
     animation-duration: 2.4s;
   }
 }
+
+/*
+ * Settings is hidden, not unmounted.
+ *
+ * Unmounting it threw away the state tracking an in-flight upload, so closing
+ * the drawer mid-ingest made a still-running upload look cancelled. `display:
+ * none` keeps the component alive; it also restarts the drawer's entry
+ * animation on reopen, because an element returning from `display: none` runs
+ * its animation again.
+ */
+.drawer-overlay--hidden {
+  display: none;
+}
+
+/* Elapsed seconds beside the percentage. Muted, because it is diagnostic
+   rather than progress — it answers "is this alive", not "how far along". */
+.upload-progress-elapsed {
+  color: var(--text-muted);
+  font-weight: 500;
+}

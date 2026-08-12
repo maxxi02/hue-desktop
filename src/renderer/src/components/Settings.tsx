@@ -333,18 +333,37 @@ function AddedChip({ label }: { label: string }): React.JSX.Element {
  */
 function UploadProgress({
   percent,
-  label
+  label,
+  startedAt
 }: {
   percent: number | null
   label: string
+  /** When the upload began, so the wait can be counted rather than guessed at. */
+  startedAt: number | null
 }): React.JSX.Element {
   const known = percent !== null && Number.isFinite(percent)
   const clamped = known ? Math.max(0, Math.min(100, Math.round(percent as number))) : 0
+
+  // A ticking count is the difference between "slow" and "hung". Without it a
+  // bar sitting at 0% says nothing about whether anything is happening, which
+  // is exactly the state that makes people close the app and start over.
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (startedAt === null) return
+    const tick = (): void => setElapsed(Math.floor((Date.now() - startedAt) / 1000))
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [startedAt])
+
   return (
     <div className="upload-progress" role="status" aria-live="polite">
       <div className="upload-progress-head">
         <span className="upload-progress-label">{label}</span>
-        {known && <span className="upload-progress-pct">{clamped}%</span>}
+        <span className="upload-progress-pct">
+          {known ? `${clamped}%` : ''}
+          {elapsed > 0 && <span className="upload-progress-elapsed"> {elapsed}s</span>}
+        </span>
       </div>
       <div
         className="upload-progress-track"
@@ -478,7 +497,13 @@ const ANCHOR_LABELS: Record<(typeof ANCHOR_CELLS)[number], string> = {
   'bottom-right': 'Bottom right'
 }
 
-export function Settings({ onClose }: { onClose: () => void }): React.JSX.Element {
+export function Settings({
+  open,
+  onClose
+}: {
+  open: boolean
+  onClose: () => void
+}): React.JSX.Element {
   const [s, setS] = useState<HueSettings | null>(null)
   const [saved, setSaved] = useState(false)
   const [ollamaModels, setOllamaModels] = useState<string[]>([])
@@ -498,6 +523,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   // cancelled. Holding the label here (rather than ingesting immediately on
   // pick) is what lets the user see and edit the default before it's sent.
   const [cueProgress, setCueProgress] = useState<number | null>(null)
+  const [cueStartedAt, setCueStartedAt] = useState<number | null>(null)
+  const [resumeStartedAt, setResumeStartedAt] = useState<number | null>(null)
   const [resumeProgress, setResumeProgress] = useState<number | null>(null)
   const [resumeIngesting, setResumeIngesting] = useState(false)
   const [cueIngesting, setCueIngesting] = useState(false)
@@ -703,7 +730,10 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
 
   if (!s) {
     return (
-      <div className="drawer-overlay" onClick={onClose}>
+      <div
+        className={open ? 'drawer-overlay' : 'drawer-overlay drawer-overlay--hidden'}
+        onClick={onClose}
+      >
         <div className="drawer" onClick={(e) => e.stopPropagation()}>
           <div className="drawer-header">
             <h2>Settings</h2>
@@ -811,6 +841,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
 
     setResumeIngesting(true)
     setResumeProgress(RESUME_PHASE_PCT.extracting)
+    setResumeStartedAt(Date.now())
     setResumeStatus(`Reading ${file.name}…`)
     // Subscribed before the call, not after: ingest takes about a minute, and
     // the first progress event fires immediately.
@@ -944,6 +975,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
 
     setCueIngesting(true)
     setCueProgress(0)
+    setCueStartedAt(Date.now())
     setCueSheetStatus(`Reading ${file.name}…`)
     // Subscribed before the call, not after: ingest takes a while, and the
     // first progress event fires immediately.
@@ -1008,7 +1040,10 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   }
 
   return (
-    <div className="drawer-overlay" onClick={onClose}>
+    <div
+      className={open ? 'drawer-overlay' : 'drawer-overlay drawer-overlay--hidden'}
+      onClick={onClose}
+    >
       <div className="drawer" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-header">
           <h2>Settings</h2>
@@ -1495,7 +1530,11 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                 {profileBundle ? 'Replace résumé' : 'Upload PDF / DOCX / TXT'}
               </button>
               {resumeIngesting ? (
-                <UploadProgress percent={resumeProgress} label={resumeStatus ?? 'Working…'} />
+                <UploadProgress
+                  percent={resumeProgress}
+                  label={resumeStatus ?? 'Working…'}
+                  startedAt={resumeStartedAt}
+                />
               ) : (
                 <>
                   {profileBundle && <AddedChip label={describeBundle(profileBundle)} />}
@@ -1668,7 +1707,11 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                 Upload PDF / DOCX / TXT / MD
               </button>
               {cueIngesting ? (
-                <UploadProgress percent={cueProgress} label={cueSheetStatus ?? 'Working…'} />
+                <UploadProgress
+                  percent={cueProgress}
+                  label={cueSheetStatus ?? 'Working…'}
+                  startedAt={cueStartedAt}
+                />
               ) : (
                 <>
                   {armedCueSheet && (

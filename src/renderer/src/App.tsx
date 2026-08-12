@@ -1265,16 +1265,24 @@ export default function App(): React.JSX.Element {
         </div>
       </footer>
 
-      {settingsOpen && (
-        <Settings
-          onClose={() => {
-            setSettingsOpen(false)
-            voice.reloadConfig()
-            applySettings()
-            refreshStealth()
-          }}
-        />
-      )}
+      {/*
+        Always mounted, hidden with CSS rather than unmounted.
+
+        Closing the drawer used to destroy this component, and with it the state
+        tracking an upload in progress. The ingest itself kept running in the
+        main process and the sheet was still saved — but the pane came back
+        blank, so the upload looked cancelled and got started again. Keeping the
+        component alive is what makes "close Settings and carry on" safe.
+      */}
+      <Settings
+        open={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false)
+          voice.reloadConfig()
+          applySettings()
+          refreshStealth()
+        }}
+      />
     </div>
   )
 }
