@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { outcomeForExtractFailure, outcomeForError } from './ingest.ts'
-import { LlmRefusal, MissingApiKey } from './structured-llm.ts'
+import { LlmRefusal, MissingApiKey, ProviderError } from './structured-llm.ts'
 
 /**
  * `ingest.ts` imports `./settings`, which pulls in Electron, so the functions
@@ -48,4 +48,22 @@ test('an unknown transport error is retryable, because a blip genuinely might no
 test('a non-Error throw still produces a message rather than "[object Object]"', () => {
   const outcome = outcomeForError('everything broke')
   assert.match(outcome.ok === false ? outcome.message : '', /everything broke/)
+})
+
+test('a request larger than the whole per-minute cap names the fix, not the rate limit', () => {
+  // The exact body Groq's free tier returns for story mining.
+  const err = new ProviderError(
+    413,
+    '{"error":{"message":"Request too large for model `openai/gpt-oss-120b` ... on tokens per minute (TPM): Limit 8000, Requested 9779","code":"rate_limit_exceeded"}}'
+  )
+  const outcome = outcomeForError(err)
+  assert.equal(outcome.ok, false)
+  // Not retryable: the same document is the same size next time.
+  assert.equal(outcome.ok === false && outcome.retryable, false)
+  assert.match(outcome.ok === false ? outcome.message : '', /Ingest provider/i)
+})
+
+test('an ordinary rate limit is still retryable — that one does clear on its own', () => {
+  const err = new ProviderError(429, '{"error":{"message":"Too many requests, slow down."}}')
+  assert.equal(outcomeForError(err).ok === false && outcomeForError(err).retryable, true)
 })

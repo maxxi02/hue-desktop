@@ -50,13 +50,44 @@ export function outcomeForExtractFailure(
   return failure(result.message, false)
 }
 
+/**
+ * Is this the provider saying the request itself exceeds a per-minute cap?
+ *
+ * Distinct from ordinary throttling. A normal 429 clears on its own and the
+ * client's backoff handles it; this one never clears, because a single request
+ * is larger than the whole budget. Groq's free tier is where this bites — its
+ * cap is 8,000 tokens per minute and story mining asks for roughly 10,000 — and
+ * the raw provider text ("Request too large… tokens per minute (TPM): Limit
+ * 8000, Requested 9779") tells a user nothing about what to change.
+ */
+function isRequestOverQuota(err: unknown): boolean {
+  const status = (err as { status?: number } | null)?.status
+  if (status !== 413 && status !== 429) return false
+  const body = String((err as { body?: string } | null)?.body ?? (err as Error)?.message ?? '')
+  return /tokens per minute|TPM|request too large/i.test(body)
+}
+
 /** Turns a thrown pipeline error into something a user can act on. */
 export function outcomeForError(err: unknown): IngestOutcome {
   // The one configuration a user can still get wrong now that there is no
   // endpoint to misconfigure. Points at Settings, not at the network.
   if (err instanceof MissingApiKey) return failure(err.message, false)
+
+  if (isRequestOverQuota(err)) {
+    // Not retryable: the same document will be the same size next time. The
+    // only thing that helps is a different provider for ingest, so say that
+    // rather than making the user decode a rate-limit body.
+    return failure(
+      'Reading a whole résumé needs more tokens in one request than this provider allows. ' +
+        'Free tiers cap this well below what ingest needs — Groq allows 8,000 tokens and ' +
+        'ingest asks for about 10,000. Set a different “Ingest provider” in Settings ' +
+        '(Google or Ollama) and try again; drafting can stay where it is.',
+      false
+    )
+  }
+
   // A refusal or a truncation is not worth retrying with the same input; a
-  // transport error or a rate limit is.
+  // transport error or an ordinary rate limit is.
   if (err instanceof LlmRefusal) return failure(err.message, false)
   return failure(err instanceof Error ? err.message : String(err))
 }

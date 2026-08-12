@@ -335,6 +335,11 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   // `s` is null until settings load; the pane renders a loading state then.
   const profileBundle = s ? parseProfileBundle(s.profileBundleJson) : null
   const openGaps = profileBundle ? profileBundle.gaps.filter((g) => g.status === 'open') : []
+  // Groq's free tier caps a single request at 8,000 tokens; story mining asks
+  // for roughly 10,000. Resolved the same way `providerFor` does in the main
+  // process — empty means "same as drafting".
+  const effectiveIngestProvider = s ? s.ingestProvider || s.llmProvider : ''
+  const ingestWillExceedQuota = effectiveIngestProvider === 'groq'
   const fileInputRef = useRef<HTMLInputElement>(null)
   const detectSeq = useRef(0)
   const llmDetectSeq = useRef(0)
@@ -1231,12 +1236,26 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                 <option value="mistral">Mistral</option>
                 <option value="cohere">Cohere</option>
               </select>
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Reading a whole résumé takes far more tokens at once than drafting an answer does.
-                Groq’s free tier caps a single request at 8,000 tokens and cannot finish one — if
-                you draft on Groq, pick Google or Ollama here. Otherwise leave it on “Same as
-                drafting”.
-              </span>
+              {/*
+                Warned before the upload rather than after it. The failure this
+                prevents costs a minute of waiting and then returns a raw
+                provider rate-limit body, which a user reasonably reads as Hue
+                being broken.
+              */}
+              {ingestWillExceedQuota ? (
+                <span style={{ color: '#d08b2c', fontSize: 12, marginTop: 4 }}>
+                  Ingest is set to run on Groq, which cannot complete it. Reading a whole résumé
+                  needs about 10,000 tokens in one request and Groq’s free tier caps that at
+                  8,000, so the upload will fail. Pick Google or Ollama here — drafting can stay
+                  on Groq, where its speed is worth having.
+                </span>
+              ) : (
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Reading a whole résumé takes far more tokens at once than drafting an answer
+                  does, so the fastest provider is not always able to do it. Leave this on “Same
+                  as drafting” unless an upload tells you otherwise.
+                </span>
+              )}
               {profileBundle ? (
                 <div style={{ marginTop: 8, fontSize: 13 }}>
                   <div>{describeBundle(profileBundle)}</div>
