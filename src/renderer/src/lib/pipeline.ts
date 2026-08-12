@@ -234,30 +234,7 @@ export class VoicePipeline {
     // directory, a truncated sheet that makes `new CueMatcher` throw — would
     // propagate out of `start()` and the interview would never begin. A cue
     // sheet is an optional aid; it must never be able to stop a session.
-    this.matcher = null
-    let armedSheet: CueSheet | null = null
-    const selectedId = this.settings.selectedCueSheetId
-    if (selectedId) {
-      try {
-        const sheets = await window.hue.cueSheet.list()
-        const sheet = sheets.find((s: CueSheet) => s.id === selectedId)
-        armedSheet = sheet ?? null
-        this.matcher = sheet ? new CueMatcher(sheet) : null
-      } catch {
-        armedSheet = null
-        this.matcher = null
-      }
-    }
-    // Handing the whole sheet to the renderer is subject to the same rule as
-    // loading it: a subscriber that throws (a bad render, a stale ref) must not
-    // be able to take the session down with it, so the emit is guarded on its
-    // own rather than folded into the load's catch — which would otherwise
-    // discard a perfectly good matcher over a UI failure.
-    try {
-      this.callbacks.onCueSheet?.(armedSheet)
-    } catch {
-      // The panel is an aid; the interview is not.
-    }
+    await this.armCueSheet()
     this.latch = newLatchState()
 
     // Listen for streamed LLM tokens once; filter by the active streamId.
@@ -553,6 +530,47 @@ export class VoicePipeline {
    * while the interviewer was still talking is exactly the distraction the
    * glance UI exists to avoid.
    */
+  /**
+   * Load the armed cue sheet and build its matcher.
+   *
+   * Public and callable mid-session, which is the whole point. This used to run
+   * only inside `start()`, so a sheet armed while a session was already running
+   * was never matched against — and once the panel began reading the armed
+   * sheet straight from settings, the sheet was visibly on screen the entire
+   * time it was being ignored. A user watching their own prepared answer sit
+   * there while Hue invented a different one has every reason to conclude the
+   * feature is broken; it was simply matching against nothing.
+   *
+   * `settings` is re-read rather than trusted, because the selection changes in
+   * the drawer and the pipeline's copy predates it.
+   *
+   * Never throws. A cue sheet is an optional aid and must not be able to stop
+   * or interrupt a session — hence the load and the emit guarded separately, so
+   * a failing subscriber cannot discard a perfectly good matcher.
+   */
+  async armCueSheet(): Promise<void> {
+    this.matcher = null
+    let armedSheet: CueSheet | null = null
+    try {
+      const settings = await window.hue.settings.get()
+      this.settings = settings
+      if (settings.selectedCueSheetId) {
+        const sheets = await window.hue.cueSheet.list()
+        const sheet = sheets.find((s: CueSheet) => s.id === settings.selectedCueSheetId)
+        armedSheet = sheet ?? null
+        this.matcher = sheet ? new CueMatcher(sheet) : null
+      }
+    } catch {
+      armedSheet = null
+      this.matcher = null
+    }
+    try {
+      this.callbacks.onCueSheet?.(armedSheet)
+    } catch {
+      // The panel is an aid; the interview is not.
+    }
+  }
+
   private decide(text: string, isFinal: boolean): GateDecision {
     if (!this.matcher || text.trim().length === 0) {
       return { suppress: false, latch: null, isFinal }

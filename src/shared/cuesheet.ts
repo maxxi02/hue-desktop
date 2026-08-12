@@ -926,3 +926,28 @@ export function verifyCard(card: CueCard, source: string): CueCard {
     })
   }
 }
+
+/**
+ * Strip markdown emphasis from text that is rendered as plain text.
+ *
+ * The cue-card prompt asks for "bold lines", and models take that literally and
+ * return `**200 success**`. Nothing downstream renders markdown — the cues are
+ * set in bold by CSS — so the asterisks reach the screen verbatim, which is
+ * both wrong and distracting at the exact moment the card is being read under
+ * pressure.
+ *
+ * Applied at render as well as at ingest, deliberately: sheets already stored
+ * carry the asterisks, and asking someone to re-upload and re-spend a model
+ * call to fix a display bug is not a fix.
+ *
+ * Only emphasis runs are touched. A lone asterisk is left alone — it may be a
+ * real character in the user's own prose, and this must never silently edit
+ * what someone prepared to say.
+ */
+export function stripEmphasis(text: string): string {
+  return text
+    .replace(/\*\*\*(.+?)\*\*\*/g, '$1')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/(^|\s)\*(\S(?:.*?\S)?)\*(?=\s|$)/g, '$1$2')
+    .replace(/(^|\s)__(.+?)__(?=\s|$)/g, '$1$2')
+}

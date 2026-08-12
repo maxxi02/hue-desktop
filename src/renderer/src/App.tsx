@@ -4,7 +4,7 @@ import type { PipelineState } from './lib/pipeline'
 import type { VoiceTurn, CaptureTurn } from './hooks/useVoiceMode'
 import type { ScreenCapture } from '@shared/types'
 import { describeStory, type Grounding } from '@shared/grounding'
-import type { CueCard, CueSheet } from '@shared/cuesheet'
+import { stripEmphasis, type CueCard, type CueSheet } from '@shared/cuesheet'
 import { parseProfileBundle, type ProfileBundle } from '@shared/profile'
 import { describeReview, reviewSession, type SessionReview } from '@shared/session-review'
 import {
@@ -309,7 +309,7 @@ function CueCardBody({ card, textClass }: { card: CueCard; textClass: string }):
       <div className={textClass}>
         {card.cues.map((cue, i) => (
           <div key={i}>
-            <strong>{cue}</strong>
+            <strong>{stripEmphasis(cue)}</strong>
           </div>
         ))}
       </div>

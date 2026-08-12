@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { CueCard, CueSheet } from '@shared/cuesheet'
+import { stripEmphasis, type CueCard, type CueSheet } from '@shared/cuesheet'
 
 /**
  * The armed cue sheet, as a document.
@@ -87,7 +87,7 @@ function CueSheetSection({
         <ul className="cuedoc-cues">
           {card.cues.map((cue, i) => (
             <li key={i} className="cuedoc-cue">
-              <strong>{cue}</strong>
+              <strong>{stripEmphasis(cue)}</strong>
             </li>
           ))}
         </ul>

@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { Command } from './speculation.ts'
 import {
+  stripEmphasis,
   cueTokens,
   buildDf,
   scoreAgainst,
@@ -631,4 +632,17 @@ test('KNOWN GAP: a qualifier split into the next clause, or not spelled as a neg
     'the qualifier stays in the same clause but is not spelled with a NEGATIONS word, ' +
       'so negation-parity counting never sees it'
   )
+})
+
+test('markdown emphasis is stripped from cues rendered as plain text', () => {
+  assert.equal(stripEmphasis('**200 success**'), '200 success')
+  assert.equal(stripEmphasis('***critical***'), 'critical')
+  assert.equal(stripEmphasis('__underlined__'), 'underlined')
+  assert.equal(stripEmphasis('mixed **bold** and plain'), 'mixed bold and plain')
+})
+
+test('a lone asterisk in the user’s own prose is left alone', () => {
+  // Never silently edit what someone prepared to say.
+  assert.equal(stripEmphasis('we hit 99.9% * uptime'), 'we hit 99.9% * uptime')
+  assert.equal(stripEmphasis('2 * 3 = 6'), '2 * 3 = 6')
 })

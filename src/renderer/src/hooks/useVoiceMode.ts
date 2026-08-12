@@ -92,6 +92,13 @@ export function useVoiceMode(): UseVoiceMode {
   const cancelGreetingRef = useRef<(() => void) | null>(null)
 
   const reloadConfig = useCallback((): void => {
+    // Re-arm the cue sheet against a session that is already running. Arming a
+    // sheet mid-call used to leave the matcher untouched until the next
+    // session, so prepared answers were silently not used while the panel
+    // displayed them — the worst version of this failure, because the sheet
+    // being on screen is exactly what tells the user it is in play.
+    void pipelineRef.current?.armCueSheet()
+
     void window.hue.settings.get().then((s) => {
       setMode(s.hueMode)
       setAudioSource(s.audioSource)
