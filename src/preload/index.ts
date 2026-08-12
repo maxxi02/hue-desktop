@@ -28,6 +28,8 @@ function sub<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 const hue = {
+  /** The running build's version, for the label in Settings. */
+  version: (): Promise<string> => ipcRenderer.invoke('hue:app:version'),
   settings: {
     get: (): Promise<HueSettings> => ipcRenderer.invoke('hue:settings:get'),
     set: (partial: Partial<HueSettings>): Promise<HueSettings> =>

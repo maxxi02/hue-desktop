@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { app, ipcMain, BrowserWindow } from 'electron'
 import { getSettings, updateSettings } from './settings'
 import { captureScreen } from './capture'
 import { startLlmStream, abortLlmStream } from './anthropic'
@@ -49,6 +49,11 @@ let registered = false
 export function registerIpc(): void {
   if (registered) return
   registered = true
+
+  // The running build's version. Surfaced in Settings because 'which build am
+  // I on' is otherwise unanswerable from inside the app, and a stale install
+  // looks identical to a bug in the current one.
+  ipcMain.handle('hue:app:version', () => app.getVersion())
 
   ipcMain.handle('hue:settings:get', () => getSettings())
   ipcMain.handle('hue:settings:set', (event, partial: Partial<HueSettings>) => {

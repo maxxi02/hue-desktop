@@ -503,6 +503,7 @@ export function Settings({
 }): React.JSX.Element {
   const [s, setS] = useState<HueSettings | null>(null)
   const [saved, setSaved] = useState(false)
+  const [appVersion, setAppVersion] = useState<string>('')
   const [ollamaModels, setOllamaModels] = useState<string[]>([])
   const [ollamaStatus, setOllamaStatus] = useState<'idle' | 'detecting' | 'ok' | 'unreachable'>(
     'idle'
@@ -547,6 +548,7 @@ export function Settings({
 
   useEffect(() => {
     window.hue.settings.get().then(setS)
+    void window.hue.version().then(setAppVersion)
   }, [])
 
   const loadCueSheets = useCallback(async (): Promise<void> => {
@@ -743,6 +745,8 @@ export function Settings({
         <div className="drawer" onClick={(e) => e.stopPropagation()}>
           <div className="drawer-header">
             <h2>Settings</h2>
+            <span className="drawer-version">{appVersion ? `v${appVersion}` : ''}</span>
+            <span className="drawer-version">{appVersion ? `v${appVersion}` : ''}</span>
             <button className="icon-btn" onClick={onClose}>
               <CloseIcon />
             </button>
@@ -1056,6 +1060,8 @@ export function Settings({
       <div className="drawer" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-header">
           <h2>Settings</h2>
+          <span className="drawer-version">{appVersion ? `v${appVersion}` : ''}</span>
+          <span className="drawer-version">{appVersion ? `v${appVersion}` : ''}</span>
           <button className="icon-btn" onClick={onClose}>
             <CloseIcon />
           </button>
