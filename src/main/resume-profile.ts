@@ -19,11 +19,19 @@ export function contentHash(bundle: Omit<ProfileBundle, 'hash' | 'createdAt'>): 
   return createHash('sha256').update(canonicalJson({ version, profile, stories, gaps })).digest('hex')
 }
 
-/** Stamps a bundle with its content hash. The only supported way to build one. */
-export function sealBundle(
-  parts: Omit<ProfileBundle, 'hash' | 'createdAt'>,
+/**
+ * Stamps a bundle with its content hash. The only supported way to build one.
+ *
+ * Generic over the parts, so a caller working in the pipeline's narrow types
+ * (`resume-types.ts`, where competencies are a closed union) gets those types
+ * back rather than the renderer's wider ones. Fixing the return type to the
+ * shared `ProfileBundle` would silently widen every bundle the pipeline seals
+ * and undo the exhaustiveness checking the narrow types exist for.
+ */
+export function sealBundle<T extends Omit<ProfileBundle, 'hash' | 'createdAt'>>(
+  parts: T,
   createdAt: string
-): ProfileBundle {
+): T & { hash: string; createdAt: string } {
   return { ...parts, hash: contentHash(parts), createdAt }
 }
 

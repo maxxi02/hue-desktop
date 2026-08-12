@@ -116,6 +116,11 @@ export const HIGH_RISK_COMPETENCIES: readonly Competency[] = [
   'influence-without-authority'
 ]
 
+/** Story ids the model is allowed to cite. The renderer flags anything else as ungrounded. */
+export function storyIds(bundle: ProfileBundle): Set<string> {
+  return new Set(bundle.stories.map((s) => s.id))
+}
+
 /** A profile with every field explicitly empty — never a guess, never absent. */
 export function emptyProfile(): Profile {
   return {

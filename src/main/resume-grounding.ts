@@ -1,4 +1,4 @@
-import type { Profile, ProfileBundle, Story } from '../shared/profile.ts'
+import type { Profile, ProfileBundle, Story } from './resume-types.ts'
 
 /**
  * Ingest-time grounding. **Not** the same thing as `shared/grounding.ts`.

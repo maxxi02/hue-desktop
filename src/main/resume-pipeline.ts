@@ -1,0 +1,658 @@
+import { checkBundle, pruneUngrounded, type GroundingIssue } from './resume-grounding.ts'
+import type { LlmClient } from './structured-llm.ts'
+// Sealing and token estimation live in main, not in `shared/`: they need
+// `node:crypto`, which the renderer bundle cannot have.
+import { estimateTokens, sealBundle } from './resume-profile.ts'
+import {
+  BUNDLE_VERSION,
+  COMPETENCIES,
+  HIGH_RISK_COMPETENCIES,
+  type Competency
+} from '../shared/profile.ts'
+import type { Gap, Profile, ProfileBundle, Story } from './resume-types.ts'
+import {
+  GAP_ANSWER_SCHEMA,
+  GAP_QUESTIONS_SCHEMA,
+  JD_SCHEMA,
+  PROFILE_SCHEMA,
+  STORIES_SCHEMA
+} from './resume-schemas.ts'
+
+/**
+ * The ingest pipeline: resume text in, versioned `ProfileBundle` out.
+ *
+ * Runs once per upload, asynchronously, and nothing here is on the hot path —
+ * that is the entire design. Work that would otherwise happen while an
+ * interviewer is mid-sentence happens at upload time instead.
+ *
+ * Every model call is followed by a deterministic pass that bounds it: counts
+ * clamped, competencies filtered to the known set, ids made unique, claims
+ * checked against the source document. The model proposes; this file decides.
+ */
+
+/** ADR-004 budgets the whole bundle at ~3k tokens. Past this it stops being cheap to cache. */
+export const MAX_BUNDLE_TOKENS = 6000
+/** Profile & Ingest specifies 15–25 mined stories. */
+export const MAX_STORIES = 25
+export const MIN_STORIES = 15
+/** "5–8 targeted questions in-app" — more than that and nobody finishes the flow. */
+export const MAX_GAP_QUESTIONS = 8
+
+const MAX_FIELD_CHARS = 1200
+const MAX_METRICS_PER_STORY = 6
+
+/**
+ * Output budget per step, sized to what that step actually emits.
+ *
+ * These are not a safety net, they are a cost. Several providers — Groq's free
+ * tier is the one this was found on — bill the *requested* ceiling against a
+ * tokens-per-minute quota rather than what the model returns, so a blanket
+ * 32k budget on a call that emits four questions gets the whole ingest refused
+ * with a rate-limit error. The observed failure was 33,322 tokens requested
+ * against an 8,000 TPM limit, on a job whose real output was under 3,000.
+ *
+ * Even without a quota it was wrong: a ceiling should describe the work.
+ *
+ * Sized from the shape of each output, with headroom: a profile is a page of
+ * structured fields; a bank of 15–25 STAR stories is the only genuinely large
+ * one; a gap scan is at most eight questions; a gap answer is a single story.
+ * Too small is not silent — the client raises `LlmRefusal` on a truncated
+ * response, because a half-extracted profile looks complete and silently omits
+ * a job.
+ */
+const STEP_TOKENS = {
+  extraction: 4_000,
+  mining: 8_000,
+  gapScan: 1_000,
+  gapAnswer: 1_500,
+  jobDescription: 3_000
+} as const
+
+export interface IngestReport {
+  /** Every grounding problem found, including the advisory ones. */
+  issues: GroundingIssue[]
+  /** Claims removed because they were not in the document. */
+  dropped: GroundingIssue[]
+  storiesMined: number
+  storiesKept: number
+  estimatedTokens: number
+  /** True when the bank came in under the mining floor — the UI nudges the user to add detail. */
+  thin: boolean
+  /**
+   * Competencies carried by so many stories that the tag no longer selects
+   * anything, with the fraction of the bank each covers.
+   *
+   * A tag is a selection key: at interview time the model is asked for a
+   * *conflict* story and picks by tag. A tag on 100% of the bank returns the
+   * whole bank, which is the same as having no tag — and it is invisible from
+   * inside a single story, so nothing else in this pipeline would catch it.
+   * Observed on a real resume: `technical-tradeoff` on 17 of 17 stories.
+   *
+   * Reported rather than corrected. Which of seventeen tags is the wrong one is
+   * a judgement this code cannot make, and silently dropping tags would lose
+   * real ones; surfacing it lets the prompt be tuned against a number.
+   */
+  overusedTags: { competency: Competency; fraction: number }[]
+}
+
+/**
+ * Above this share of the bank, a tag has stopped discriminating.
+ *
+ * Two thirds is a judgement, not a derivation: a competency genuinely central
+ * to someone's career can honestly cover half their stories, but past two
+ * thirds "select by tag" and "return everything" are the same query.
+ */
+const TAG_SATURATION = 2 / 3
+
+export interface IngestResult {
+  bundle: ProfileBundle
+  report: IngestReport
+}
+
+const EXTRACT_SYSTEM = `You extract a structured career profile from a resume.
+
+The single rule that outranks every other: **you may only record what the document says.**
+If a field is not in the document, its value is null (or an empty array). Never infer a
+date from context, never expand an abbreviation into a company you assume it means, never
+round or restate a number, and never supply a job title that "must" have applied.
+
+An unfilled field is not a failure. A fabricated one is — this profile is read aloud by
+the candidate in a live job interview, and a wrong employer or an invented metric is
+unrecoverable for them.
+
+Specifics:
+- Company and title must appear verbatim in the document (spelling and casing may differ).
+- Dates are "YYYY-MM", or "YYYY" when only a year is given, or null. Do not guess a month.
+- \`metrics\` holds only figures actually printed in the document, each with the claim it
+  supports. This list is what the candidate is later permitted to state out loud.
+- \`stack\` holds the technologies the document attributes **to that role**. A resume's
+  general skills section is not a stack: it belongs in \`skills\`, once, and copying it into
+  every role makes the profile longer without making it more true, and makes it impossible
+  to tell which role a technology was actually used in.
+- Give every role a short stable id derived from the company, e.g. "acme-robotics".`
+
+const MINE_SYSTEM = `You mine STAR stories from a candidate's resume and structured profile.
+
+Each story must be traceable to something the document actually describes. Elaborating the
+phrasing of an accomplishment the resume states is expected; inventing an accomplishment it
+does not state is not. Where the resume is terse, write the story terse — a thin, true story
+is useful, and a rich, invented one is a liability the candidate discovers mid-interview.
+
+For each story:
+- \`id\`: a readable slug naming the competency and the subject, e.g. "conflict-manager-roadmap".
+  The candidate sees this id in the live UI as the receipt for where an answer came from.
+- \`roleId\`: the id of the role it happened at, or null if the document does not make that clear.
+- \`competencies\`: every tag an interviewer would actually file this story under, and no
+  others. A tag is a selection key, not a description: at interview time the model is asked
+  for a *conflict* story and must get the conflict story back. So the test for each tag is
+  "if an interviewer asked about this competency, is this the story I would tell?" — not
+  "does this story touch on it".
+
+  Do not cap yourself at one tag. A story that genuinely answers three questions should
+  carry three; dropping the real ones to look disciplined makes the bank less useful, not
+  more. What to avoid is the opposite failure: a tag that fits every engineering story
+  ever written, applied to every entry, which selects nothing.
+- \`situation\` / \`task\` / \`action\` / \`result\`: two or three sentences each, first person.
+- \`metrics\`: only figures printed in the resume. Empty is the correct answer when the
+  resume quantifies nothing — the candidate will be asked to fill that in later.
+
+Cover the roles broadly rather than exhausting the most recent one, and prefer distinct
+situations over several angles on the same project.`
+
+const GAP_SYSTEM = `You find what a candidate's story bank cannot answer, and ask about it.
+
+You are given the competencies with no story behind them. Write one question per competency,
+in the voice of a friendly coach rather than an interviewer: short, concrete, and easy to
+answer out loud in thirty seconds.
+
+A good question names the shape of the answer ("a project that didn't ship — what happened,
+and what did you do next?"). A bad one restates the competency ("tell me about failure").
+
+Ask only about the competencies given. Do not invent the answers.`
+
+const GAP_ANSWER_SYSTEM = `You turn a candidate's spoken answer into one STAR story.
+
+Use only what the candidate said. Do not smooth over a gap by supplying a plausible detail
+they did not give — an unstated result stays vague, and that is correct.
+
+If the answer does not contain a usable story — they declined, drew a blank, or said
+something unrelated — set \`usable\` to false, explain briefly in \`reason\`, and set
+\`story\` to null. Recording "no story here" honestly is the point of asking: a competency
+the candidate has no experience of is exactly the one a model would otherwise invent.`
+
+const JD_SYSTEM = `You prepare a candidate for one specific job description.
+
+Predict the questions this role's interviewers will actually ask, and for each one name the
+story bank entry that answers it. If nothing in the bank fits, set \`storyId\` to null —
+that is the most valuable output here, because it tells the candidate their weak flank
+before they walk in rather than after.
+
+Then list requirements in the job description that no story supports. Be direct about it.
+Never map a question to a story that does not really answer it.`
+
+function clamp(text: unknown, limit = MAX_FIELD_CHARS): string {
+  return typeof text === 'string' ? text.slice(0, limit).trim() : ''
+}
+
+function clampNullable(text: unknown, limit = MAX_FIELD_CHARS): string | null {
+  const value = clamp(text, limit)
+  return value.length > 0 ? value : null
+}
+
+function stringList(value: unknown, limit: number): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .slice(0, limit)
+}
+
+/**
+ * A slug the user could read aloud, made unique within its bank.
+ *
+ * The model is asked for a readable id and usually gives one, but it has no way
+ * to guarantee uniqueness across a long list — and a duplicate id silently
+ * breaks the grounding receipt, since two different stories would answer to the
+ * same name.
+ */
+function uniqueId(raw: unknown, fallback: string, taken: Set<string>): string {
+  const base =
+    clamp(raw, 64)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || fallback
+  let id = base
+  let n = 2
+  while (taken.has(id)) id = `${base}-${n++}`
+  taken.add(id)
+  return id
+}
+
+const KNOWN_COMPETENCIES = new Set<string>(COMPETENCIES)
+
+function competencies(value: unknown): Competency[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<Competency>()
+  for (const item of value) {
+    if (typeof item === 'string' && KNOWN_COMPETENCIES.has(item)) seen.add(item as Competency)
+  }
+  return [...seen]
+}
+
+/** Normalises whatever the extractor returned into a `Profile`. */
+export function normaliseProfile(raw: unknown): Profile {
+  const source = (raw ?? {}) as Record<string, unknown>
+  const identity = (source.identity ?? {}) as Record<string, unknown>
+  const taken = new Set<string>()
+
+  const roles = (Array.isArray(source.roles) ? source.roles : [])
+    .map((entry, i) => {
+      const role = (entry ?? {}) as Record<string, unknown>
+      const company = clamp(role.company, 200)
+      const title = clamp(role.title, 200)
+      if (!company || !title) return null
+      return {
+        id: uniqueId(role.id, `role-${i + 1}`, taken),
+        company,
+        title,
+        start: clampNullable(role.start, 16),
+        end: clampNullable(role.end, 16),
+        current: role.current === true,
+        stack: stringList(role.stack, 40),
+        summary: clampNullable(role.summary)
+      }
+    })
+    .filter((role): role is NonNullable<typeof role> => role !== null)
+
+  const roleIds = new Set(roles.map((r) => r.id))
+
+  return {
+    identity: {
+      name: clampNullable(identity.name, 200),
+      headline: clampNullable(identity.headline, 300),
+      location: clampNullable(identity.location, 200),
+      email: clampNullable(identity.email, 320),
+      links: stringList(identity.links, 10)
+    },
+    roles,
+    education: (Array.isArray(source.education) ? source.education : [])
+      .map((entry) => {
+        const edu = (entry ?? {}) as Record<string, unknown>
+        const institution = clamp(edu.institution, 200)
+        if (!institution) return null
+        return {
+          institution,
+          credential: clampNullable(edu.credential, 200),
+          field: clampNullable(edu.field, 200),
+          end: clampNullable(edu.end, 16)
+        }
+      })
+      .filter((edu): edu is NonNullable<typeof edu> => edu !== null),
+    skills: stringList(source.skills, 60),
+    metrics: (Array.isArray(source.metrics) ? source.metrics : [])
+      .map((entry) => {
+        const metric = (entry ?? {}) as Record<string, unknown>
+        const value = clamp(metric.value, 120)
+        if (!value) return null
+        const roleId = clampNullable(metric.roleId, 64)
+        return {
+          // A metric pointing at a role that did not survive normalisation is
+          // still a real metric; detach rather than drop it.
+          roleId: roleId && roleIds.has(roleId) ? roleId : null,
+          value,
+          claim: clamp(metric.claim, 300)
+        }
+      })
+      .filter((metric): metric is NonNullable<typeof metric> => metric !== null)
+      .slice(0, 40)
+  }
+}
+
+export function normaliseStories(raw: unknown, source: Story['source'] = 'resume'): Story[] {
+  const list = Array.isArray((raw as { stories?: unknown })?.stories)
+    ? ((raw as { stories: unknown[] }).stories)
+    : []
+  const taken = new Set<string>()
+
+  return list
+    .map((entry, i) => {
+      const story = (entry ?? {}) as Record<string, unknown>
+      const situation = clamp(story.situation)
+      const action = clamp(story.action)
+      // A story with no situation and no action is not a story; keeping it
+      // would give the model an empty slot to improvise into.
+      if (!situation || !action) return null
+      return {
+        id: uniqueId(story.id, `story-${i + 1}`, taken),
+        roleId: clampNullable(story.roleId, 64),
+        competencies: competencies(story.competencies),
+        situation,
+        task: clamp(story.task),
+        action,
+        result: clamp(story.result),
+        metrics: stringList(story.metrics, MAX_METRICS_PER_STORY),
+        source
+      }
+    })
+    .filter((story): story is Story => story !== null)
+    .slice(0, MAX_STORIES)
+}
+
+/**
+ * Competencies with no story behind them.
+ *
+ * Deterministic rather than a model call: it is a set difference, and asking a
+ * model to compute one is both slower and less reliable than computing it.
+ * High-risk competencies sort first — they are where the model would otherwise
+ * invent, which is the failure the gap scan exists to prevent.
+ */
+
+/**
+ * Tags that cover more than [TAG_SATURATION] of the bank.
+ *
+ * Sorted commonest first so the report leads with the worst offender.
+ */
+export function overusedTags(stories: Story[]): { competency: Competency; fraction: number }[] {
+  if (stories.length === 0) return []
+  const counts = new Map<Competency, number>()
+  for (const story of stories) {
+    // Count each competency once per story even if a story repeats it, so the
+    // fraction is 'share of the bank' rather than 'share of tag mentions'.
+    for (const tag of new Set(story.competencies)) counts.set(tag, (counts.get(tag) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .map(([competency, n]) => ({ competency, fraction: n / stories.length }))
+    .filter((entry) => entry.fraction > TAG_SATURATION)
+    .sort((a, b) => b.fraction - a.fraction)
+}
+
+export function findGaps(stories: Story[]): Competency[] {
+  const covered = new Set<Competency>()
+  for (const story of stories) for (const tag of story.competencies) covered.add(tag)
+
+  const missing = COMPETENCIES.filter((c) => !covered.has(c))
+  const risky = missing.filter((c) => HIGH_RISK_COMPETENCIES.includes(c))
+  const rest = missing.filter((c) => !HIGH_RISK_COMPETENCIES.includes(c))
+  return [...risky, ...rest]
+}
+
+function buildGaps(questions: unknown, missing: Competency[]): Gap[] {
+  const raw = Array.isArray((questions as { questions?: unknown })?.questions)
+    ? ((questions as { questions: unknown[] }).questions)
+    : []
+  const wanted = new Set<Competency>(missing)
+  const taken = new Set<string>()
+  const gaps: Gap[] = []
+
+  for (const entry of raw) {
+    const item = (entry ?? {}) as Record<string, unknown>
+    const competency = item.competency
+    const question = clamp(item.question, 400)
+    // Only ask about competencies that are genuinely missing — a question about
+    // a covered one wastes the user's attention and one of eight slots.
+    if (typeof competency !== 'string' || !wanted.has(competency as Competency)) continue
+    if (!question) continue
+    wanted.delete(competency as Competency)
+    gaps.push({
+      id: uniqueId(`gap-${competency}`, `gap-${gaps.length + 1}`, taken),
+      competency: competency as Competency,
+      question,
+      status: 'open',
+      storyId: null
+    })
+    if (gaps.length >= MAX_GAP_QUESTIONS) break
+  }
+
+  return gaps
+}
+
+/** The phases a caller can report while an ingest runs. One per model call. */
+export type IngestPhaseName = 'mining-profile' | 'mining-stories' | 'gap-scan'
+
+export interface IngestOptions {
+  /** Injected so bundle timestamps are deterministic in tests. */
+  now?: () => Date
+  /**
+   * Called before each model call.
+   *
+   * A local ingest is otherwise a silent minute, and a Settings pane showing
+   * nothing for that long is indistinguishable from a hang. Each phase maps to
+   * exactly one model call, so the label is a true statement about what the
+   * wait is buying rather than a spinner with a caption on it.
+   */
+  onPhase?: (phase: IngestPhaseName) => void
+}
+
+export async function runIngest(
+  sourceText: string,
+  llm: LlmClient,
+  opts: IngestOptions = {}
+): Promise<IngestResult> {
+  const now = opts.now ?? (() => new Date())
+
+  opts.onPhase?.('mining-profile')
+  const extracted = await llm.structured<unknown>({
+    label: 'profile extraction',
+    maxTokens: STEP_TOKENS.extraction,
+    system: EXTRACT_SYSTEM,
+    schema: PROFILE_SCHEMA,
+    user: `Resume:\n\n${sourceText}`
+  })
+  const rawProfile = normaliseProfile(extracted)
+
+  opts.onPhase?.('mining-stories')
+  const mined = await llm.structured<unknown>({
+    label: 'story mining',
+    maxTokens: STEP_TOKENS.mining,
+    system: MINE_SYSTEM,
+    schema: STORIES_SCHEMA,
+    user:
+      `Structured profile:\n${JSON.stringify(rawProfile, null, 2)}\n\n` +
+      `Resume:\n\n${sourceText}\n\n` +
+      `Mine ${MIN_STORIES}–${MAX_STORIES} stories.`
+  })
+  const rawStories = normaliseStories(mined)
+
+  // The grounding gate. Everything above is a proposal; nothing past this line
+  // has a claim in it that the document does not support.
+  const pruned = pruneUngrounded(rawProfile, rawStories, sourceText)
+
+  const missing = findGaps(pruned.stories)
+  // A statement rather than the ternary this used to be, so the progress hook
+  // fires only on the branch that actually calls the model: a bank with no gaps
+  // must not display "looking for gaps" for a step it is skipping.
+  let gaps: Gap[] = []
+  if (missing.length > 0) {
+    opts.onPhase?.('gap-scan')
+    gaps = buildGaps(
+      await llm.structured<unknown>({
+        label: 'gap scan',
+        maxTokens: STEP_TOKENS.gapScan,
+        system: GAP_SYSTEM,
+        schema: GAP_QUESTIONS_SCHEMA,
+        // Only the roles are needed to make the question specific; sending
+        // the whole bank would cost tokens for no gain in question quality.
+        user:
+          `Roles:\n${JSON.stringify(pruned.profile.roles, null, 2)}\n\n` +
+          `Competencies with no story: ${missing.slice(0, MAX_GAP_QUESTIONS).join(', ')}`,
+        effort: 'medium'
+      }),
+      missing.slice(0, MAX_GAP_QUESTIONS)
+    )
+  }
+
+  const bundle = sealBundle(
+    { version: BUNDLE_VERSION, profile: pruned.profile, stories: pruned.stories, gaps },
+    now().toISOString()
+  )
+
+  const verdict = checkBundle(bundle, sourceText)
+
+  return {
+    bundle,
+    report: {
+      issues: verdict.issues,
+      dropped: pruned.dropped,
+      storiesMined: rawStories.length,
+      storiesKept: pruned.stories.length,
+      estimatedTokens: estimateTokens(bundle),
+      thin: pruned.stories.length < MIN_STORIES,
+      overusedTags: overusedTags(pruned.stories)
+    }
+  }
+}
+
+export interface GapAnswerResult {
+  bundle: ProfileBundle
+  /** False when the user had no story to give — recorded, not invented. */
+  accepted: boolean
+  reason: string | null
+}
+
+/**
+ * Folds one answered gap question back into the bank.
+ *
+ * Returns a **new** bundle with a new hash: the bank changed, so the prompt
+ * cache key and the device sync key must change with it. Mutating in place
+ * would leave every cached copy silently stale.
+ */
+export async function answerGap(
+  bundle: ProfileBundle,
+  gapId: string,
+  answerText: string,
+  llm: LlmClient,
+  opts: IngestOptions = {}
+): Promise<GapAnswerResult> {
+  const now = opts.now ?? (() => new Date())
+  const gap = bundle.gaps.find((g) => g.id === gapId)
+  if (!gap) throw new Error(`Unknown gap: ${gapId}`)
+
+  const raw = await llm.structured<{ usable?: unknown; reason?: unknown; story?: unknown }>({
+    label: 'gap answer',
+    maxTokens: STEP_TOKENS.gapAnswer,
+    system: GAP_ANSWER_SYSTEM,
+    schema: GAP_ANSWER_SCHEMA,
+    user:
+      `Competency: ${gap.competency}\n` +
+      `Question asked: ${gap.question}\n` +
+      `Roles: ${JSON.stringify(bundle.profile.roles.map((r) => ({ id: r.id, company: r.company, title: r.title })))}\n\n` +
+      `The candidate answered:\n${answerText}`,
+    effort: 'medium'
+  })
+
+  if (raw.usable !== true || raw.story === null || typeof raw.story !== 'object') {
+    const reason = clampNullable(raw.reason, 300)
+    const gaps = bundle.gaps.map((g) => (g.id === gapId ? { ...g, status: 'skipped' as const } : g))
+    return {
+      bundle: sealBundle(
+        { version: bundle.version, profile: bundle.profile, stories: bundle.stories, gaps },
+        now().toISOString()
+      ),
+      accepted: false,
+      reason
+    }
+  }
+
+  const [story] = normaliseStories({ stories: [raw.story] }, 'gap-answer')
+  if (!story) {
+    return { bundle, accepted: false, reason: 'That answer did not contain a story we could use.' }
+  }
+
+  // Re-run uniqueness against the existing bank, which `normaliseStories` could
+  // not see — it only deduplicates within the list it was handed.
+  const taken = new Set(bundle.stories.map((s) => s.id))
+  const id = uniqueId(story.id, `gap-${gap.competency}`, taken)
+  const stored: Story = {
+    ...story,
+    id,
+    // Answer the question that was asked: the competency is why we asked, so it
+    // belongs on the story even if the model tagged it differently.
+    competencies: story.competencies.includes(gap.competency)
+      ? story.competencies
+      : [gap.competency, ...story.competencies]
+  }
+
+  const gaps = bundle.gaps.map((g) =>
+    g.id === gapId ? { ...g, status: 'answered' as const, storyId: id } : g
+  )
+
+  return {
+    bundle: sealBundle(
+      {
+        version: bundle.version,
+        profile: bundle.profile,
+        stories: [...bundle.stories, stored],
+        gaps
+      },
+      now().toISOString()
+    ),
+    accepted: true,
+    reason: null
+  }
+}
+
+export interface JobDescriptionBrief {
+  likelyQuestions: { question: string; storyId: string | null; competency: Competency }[]
+  uncoveredRequirements: { requirement: string; note: string }[]
+}
+
+/**
+ * The optional job-description pass.
+ *
+ * Cached by the caller against the JD hash — it is deterministic input, run
+ * before an interview rather than during one.
+ */
+export async function jobDescriptionBrief(
+  bundle: ProfileBundle,
+  jobDescription: string,
+  llm: LlmClient
+): Promise<JobDescriptionBrief> {
+  const raw = await llm.structured<{ likelyQuestions?: unknown; uncoveredRequirements?: unknown }>({
+    label: 'job description pass',
+    maxTokens: STEP_TOKENS.jobDescription,
+    system: JD_SYSTEM,
+    schema: JD_SCHEMA,
+    user:
+      `Story bank:\n${JSON.stringify(
+        bundle.stories.map((s) => ({ id: s.id, competencies: s.competencies, situation: s.situation })),
+        null,
+        2
+      )}\n\nJob description:\n\n${jobDescription}`
+  })
+
+  const known = new Set(bundle.stories.map((s) => s.id))
+  const questions = Array.isArray(raw.likelyQuestions) ? raw.likelyQuestions : []
+  const uncovered = Array.isArray(raw.uncoveredRequirements) ? raw.uncoveredRequirements : []
+
+  return {
+    likelyQuestions: questions
+      .map((entry) => {
+        const item = (entry ?? {}) as Record<string, unknown>
+        const question = clamp(item.question, 400)
+        if (!question) return null
+        const storyId = clampNullable(item.storyId, 64)
+        const [competency] = competencies([item.competency])
+        return {
+          question,
+          // A story id that is not in the bank is the ungrounded case, and it
+          // must read as "no story" rather than as a broken reference.
+          storyId: storyId && known.has(storyId) ? storyId : null,
+          competency: competency ?? 'ownership'
+        }
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null)
+      .slice(0, 20),
+    uncoveredRequirements: uncovered
+      .map((entry) => {
+        const item = (entry ?? {}) as Record<string, unknown>
+        const requirement = clamp(item.requirement, 300)
+        if (!requirement) return null
+        return { requirement, note: clamp(item.note, 400) }
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null)
+      .slice(0, 12)
+  }
+}
+
+export { MAX_BUNDLE_TOKENS as BUNDLE_TOKEN_BUDGET }

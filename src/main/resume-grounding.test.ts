@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { checkProfile, checkStories, containsClaim, normalise, pruneUngrounded } from './resume-grounding.ts'
-import { emptyProfile, type Profile, type Story } from '../shared/profile.ts'
+import { emptyProfile, type Profile, type Story } from './resume-types.ts'
 
 const RESUME = `
 Jordan Reyes — Senior Platform Engineer
