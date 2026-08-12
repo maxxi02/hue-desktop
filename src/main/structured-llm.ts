@@ -207,7 +207,7 @@ import type { LlmProvider } from '../shared/types.ts'
 // The re-export at the foot of this file makes `openAiCompatClient` part of
 // this module's public surface, but a re-export does not bind the name locally
 // — `clientForSettings` below calls it, so it needs a real import too.
-import { openAiCompatClient } from './structured-llm-openai.ts'
+import { openAiCompatClient, ProviderError } from './structured-llm-openai.ts'
 
 /** The OpenAI-compatible surfaces the app already speaks (see `openai-compat.ts`). */
 export const PROVIDER_BASE_URLS: Record<'google' | 'groq' | 'mistral' | 'cohere', string> = {
@@ -263,6 +263,51 @@ export class MissingApiKey extends Error {
     this.name = 'MissingApiKey'
     this.provider = provider
   }
+}
+
+/**
+ * A provider quota failure, in words a user can act on.
+ *
+ * Returns null when the error is not a quota problem, so callers can fall
+ * through to their own handling.
+ *
+ * Two different failures arrive as the same 429/413 shape and need opposite
+ * advice, which is why this exists rather than a single "rate limited" string:
+ *
+ *  - **Per-minute or per-request** — the document is bigger than one request is
+ *    allowed to be. Waiting never fixes it; a provider with more headroom does.
+ *  - **Per-day** — the quota is spent. The document is fine, the account is out
+ *    of tokens until the window rolls over, and the provider tells us exactly
+ *    when. Suggesting a different provider here would be wrong twice over: it
+ *    implies the upload was faulty, and the same account may be fine in an hour.
+ */
+export function quotaMessage(err: unknown): string | null {
+  if (!(err instanceof ProviderError)) return null
+  if (err.status !== 429 && err.status !== 413) return null
+
+  const body = String(err.body ?? '')
+  if (!/rate.?limit|too large|tokens per/i.test(body)) return null
+
+  if (/tokens per day|\bTPD\b/i.test(body)) {
+    // The provider states the reset precisely; quoting it beats "try later".
+    const when = body.match(/try again in ([0-9hms.]+)/i)?.[1]
+    return (
+      `This provider's daily token allowance is used up${when ? `, and resets in about ${when}` : ''}. ` +
+      'Nothing is wrong with your document. Either wait for the allowance to reset, ' +
+      'or set a different Ingest provider in Settings to finish now.'
+    )
+  }
+
+  if (/tokens per minute|\bTPM\b|too large/i.test(body)) {
+    return (
+      'Reading a whole document needs more tokens in one request than this provider allows. ' +
+      'Free tiers cap this well below what ingest needs, and retrying will not help because ' +
+      'the document is the same size each time. Set a different Ingest provider in Settings ' +
+      '(Google or Ollama); drafting can stay where it is.'
+    )
+  }
+
+  return 'This provider is rate limiting the request. Try again shortly, or use a different Ingest provider.'
 }
 
 /**

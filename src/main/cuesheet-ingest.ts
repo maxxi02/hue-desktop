@@ -191,15 +191,25 @@ export async function ingestCueSheet(
   // key regardless of the configured provider — so a user who chose Ollama for
   // privacy could upload a resume but not a cue sheet. Routed through the same
   // client the resume pipeline uses, "local only" is now true for both.
-  const { clientForSettings } = await import('./structured-llm.ts')
+  const { clientForSettings, quotaMessage } = await import('./structured-llm.ts')
   const llm = await clientForSettings('ingest')
-  const response = await llm.structured<unknown>({
-    label: 'cue sheet',
-    system: SYSTEM,
-    schema: CUESHEET_SCHEMA,
-    user: sections.map((s) => `## ${s.heading}\n${s.body}`).join('\n\n'),
-    maxTokens: 8000
-  })
+  let response: unknown
+  try {
+    response = await llm.structured<unknown>({
+      label: 'cue sheet',
+      system: SYSTEM,
+      schema: CUESHEET_SCHEMA,
+      user: sections.map((s) => `## ${s.heading}\n${s.body}`).join('\n\n'),
+      maxTokens: 8000
+    })
+  } catch (err) {
+    // A quota failure reaches the renderer as the provider's raw JSON body
+    // otherwise — several lines of organisation ids and token arithmetic, in a
+    // status line, at the moment the user is trying to prepare for an
+    // interview. Rethrown rather than swallowed: this still failed.
+    const quota = quotaMessage(err)
+    throw quota ? new Error(quota) : err
+  }
 
   onProgress({ phase: 'Checking against your notes', pct: 80 })
   const cards = cardsFromStructured(response)

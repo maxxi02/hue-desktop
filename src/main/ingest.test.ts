@@ -67,3 +67,30 @@ test('an ordinary rate limit is still retryable — that one does clear on its o
   const err = new ProviderError(429, '{"error":{"message":"Too many requests, slow down."}}')
   assert.equal(outcomeForError(err).ok === false && outcomeForError(err).retryable, true)
 })
+
+test('a spent daily allowance says so, and does not blame the document', () => {
+  const err = new ProviderError(
+    429,
+    '{"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` ... on tokens per day (TPD): Limit 100000, Used 99051, Requested 5329. Please try again in 1h3m4.31s","code":"rate_limit_exceeded"}}'
+  )
+  const outcome = outcomeForError(err)
+  const message = outcome.ok === false ? outcome.message : ''
+  assert.match(message, /daily token allowance/i)
+  // The provider states the reset; quoting it beats "try again later".
+  assert.match(message, /1h3m4/)
+  // Must NOT tell the user the document is too big — it is not.
+  assert.doesNotMatch(message, /more tokens in one request/i)
+})
+
+test('a per-request cap blames the request size and points at the provider setting', () => {
+  const err = new ProviderError(
+    413,
+    '{"error":{"message":"Request too large ... on tokens per minute (TPM): Limit 8000, Requested 9779"}}'
+  )
+  const message = (() => {
+    const o = outcomeForError(err)
+    return o.ok === false ? o.message : ''
+  })()
+  assert.match(message, /more tokens in one request/i)
+  assert.match(message, /Ingest provider/i)
+})
