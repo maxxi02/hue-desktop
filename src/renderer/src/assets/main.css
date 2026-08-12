@@ -727,8 +727,14 @@
 /* The drawer replaces the card's contents rather than covering them, so the
    card's own translucent surface is the only thing painting behind it. Stacking
    a second translucent layer would both compound the alpha (0.5 over 0.5 reads
-   as 0.75) and leave the transcript legible through the settings labels. */
-.app:has(> .drawer-overlay) > *:not(.drawer-overlay) {
+   as 0.75) and leave the transcript legible through the settings labels.
+
+   The `:not(--hidden)` is load-bearing, not defensive. Settings is now mounted
+   for the whole session so an upload survives the drawer being closed, which
+   means the overlay element is ALWAYS in the tree — and this selector keyed on
+   its mere existence, so it hid the entire app permanently. Presence is no
+   longer the same question as openness. */
+.app:has(> .drawer-overlay:not(.drawer-overlay--hidden)) > *:not(.drawer-overlay) {
   visibility: hidden;
 }
 

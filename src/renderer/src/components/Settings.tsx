@@ -560,6 +560,17 @@ export function Settings({
   }, [])
 
   useEffect(() => {
+    // Re-arm on every mount, not just the first.
+    //
+    // `mountedRef` is initialised to `true` and set to `false` on cleanup, and
+    // nothing used to set it back. Under StrictMode an effect runs mount →
+    // cleanup → mount, so from the second run onward the ref was permanently
+    // false and every `if (mountedRef.current)` guard silently dropped its
+    // update: the cue sheet list never populated, and — the visible symptom —
+    // upload progress sat frozen at 0% while the ingest ran to completion
+    // behind it. An upload that works but cannot report is indistinguishable
+    // from one that hung.
+    mountedRef.current = true
     void loadCueSheets()
     return () => {
       mountedRef.current = false
@@ -804,10 +815,15 @@ export function Settings({
     {
       title: 'Answer the gap questions',
       detail:
-        'They cover what a résumé cannot show. Answering them — or saying you have no story — is what stops Hue inventing one under pressure.',
-      // Vacuously true with no bundle: the previous step is the one to do, and
-      // marking this one outstanding would show two blockers for one cause.
-      done: profileBundle === null || openGaps.length === 0
+        profileBundle === null
+          ? 'Appears once your résumé has been read — the questions are generated from what it does not cover.'
+          : 'They cover what a résumé cannot show. Answering them — or saying you have no story — is what stops Hue inventing one under pressure.',
+      // Ticked only when genuinely finished. This used to count as done while
+      // there was no résumé, on the reasoning that it was blocked by the step
+      // above and two open items for one cause reads as twice the work. Seen on
+      // screen that was worse: a tick sat above an unticked step, claiming
+      // credit for something the user had never done.
+      done: profileBundle !== null && openGaps.length === 0
     },
     {
       title: 'Upload your prepared answers',
