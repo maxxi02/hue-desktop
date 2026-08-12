@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import type { Command } from './speculation.ts'
 import {
   stripEmphasis,
+  type CueCard,
+  cueSheetPromptBlock,
   cueTokens,
   buildDf,
   scoreAgainst,
@@ -645,4 +647,55 @@ test('a lone asterisk in the user’s own prose is left alone', () => {
   // Never silently edit what someone prepared to say.
   assert.equal(stripEmphasis('we hit 99.9% * uptime'), 'we hit 99.9% * uptime')
   assert.equal(stripEmphasis('2 * 3 = 6'), '2 * 3 = 6')
+})
+
+test('the prompt block lists prepared questions with their cues, emphasis stripped', () => {
+  const sheet = {
+    id: 's',
+    label: 'L',
+    sourceHash: 'h',
+    createdAt: '',
+    cards: [
+      {
+        id: 'a',
+        heading: 'What is an API?',
+        cues: ['**Contract between systems**', 'REST over HTTP'],
+        script: 'long',
+        triggers: []
+      }
+    ]
+  }
+  const block = cueSheetPromptBlock(sheet)
+  assert.match(block, /What is an API\?/)
+  assert.match(block, /Contract between systems/)
+  assert.doesNotMatch(block, /\*\*/)
+  // The verbatim script must not be handed over as paraphrasable material.
+  assert.doesNotMatch(block, /long/)
+})
+
+test('the block is bounded and says how many it dropped', () => {
+  const card = (i: number): CueCard => ({
+    id: `c${i}`,
+    heading: `Question number ${i} about something`,
+    cues: ['a cue that takes up room'],
+    script: '',
+    triggers: []
+  })
+  const sheet = {
+    id: 's',
+    label: 'L',
+    sourceHash: 'h',
+    createdAt: '',
+    cards: Array.from({ length: 40 }, (_, i) => card(i))
+  }
+  const block = cueSheetPromptBlock(sheet, 300)
+  assert.ok(block.length < 1200, `block was ${block.length} chars`)
+  assert.match(block, /further prepared answers not listed/)
+})
+
+test('an empty sheet contributes nothing rather than an empty heading', () => {
+  assert.equal(
+    cueSheetPromptBlock({ id: 's', label: 'L', sourceHash: 'h', createdAt: '', cards: [] }),
+    ''
+  )
 })

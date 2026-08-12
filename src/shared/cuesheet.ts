@@ -951,3 +951,63 @@ export function stripEmphasis(text: string): string {
     .replace(/(^|\s)\*(\S(?:.*?\S)?)\*(?=\s|$)/g, '$1$2')
     .replace(/(^|\s)__(.+?)__(?=\s|$)/g, '$1$2')
 }
+
+/**
+ * The cue sheet as source material for a *generated* answer.
+ *
+ * A cue sheet has until now been all-or-nothing: match a card strongly and the
+ * user's own card replaces the answer, match nothing and the sheet may as well
+ * not exist. That leaves the common middle badly served — a question close to
+ * something the user prepared, but not close enough to latch, gets an answer
+ * invented from the résumé while their own better wording sits unused three
+ * inches away on screen.
+ *
+ * Headings and cues only, never the full scripts. Two reasons, and the second
+ * is the binding one:
+ *
+ *  - The scripts are what the user says *verbatim*; handing them to a model as
+ *    "material" invites paraphrase, and a paraphrased prepared answer is worse
+ *    than either a clean generation or the real card. The exact wording is
+ *    delivered by the card itself, on a match.
+ *  - Size. A 23-card sheet with scripts is several thousand tokens on every
+ *    turn, against providers whose free tiers meter exactly that. Headings and
+ *    cues are roughly a quarter of it and carry most of the signal.
+ *
+ * Bounded by `budgetChars` and truncated card-wise rather than mid-card, so the
+ * block is always a whole number of coherent entries. Says plainly when it has
+ * dropped some, because a silently shortened list would have the model conclude
+ * the user prepared less than they did.
+ */
+export function cueSheetPromptBlock(sheet: CueSheet, budgetChars = 4000): string {
+  const usable = sheet.cards.filter((c) => c.heading.trim().length > 0)
+  if (usable.length === 0) return ''
+
+  const lines: string[] = []
+  let used = 0
+  let included = 0
+  for (const card of usable) {
+    const cues = card.cues.map(stripEmphasis).filter(Boolean).join('; ')
+    const entry = `- ${stripEmphasis(card.heading)}${cues ? ` — ${cues}` : ''}`
+    if (used + entry.length > budgetChars && included > 0) break
+    lines.push(entry)
+    used += entry.length
+    included++
+  }
+
+  const dropped = usable.length - included
+  return [
+    '## The user’s own prepared answers',
+    '',
+    'These are points the user has already written for this interview, in their own words.',
+    'When the question is close to one of these, build the answer from the user’s points and',
+    'their vocabulary rather than inventing a different take — they intend to say these things,',
+    'and an answer that contradicts them is worse than no answer. Do not claim to be quoting them',
+    'verbatim; these are summaries, and the full text is shown separately when a question matches',
+    'one exactly. If the question is unrelated to all of them, ignore this section entirely.',
+    '',
+    ...lines,
+    dropped > 0 ? `\n(${dropped} further prepared answers not listed here.)` : ''
+  ]
+    .filter((l) => l !== '')
+    .join('\n')
+}

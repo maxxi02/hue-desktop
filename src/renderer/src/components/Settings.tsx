@@ -333,13 +333,10 @@ function AddedChip({ label }: { label: string }): React.JSX.Element {
  */
 function UploadProgress({
   percent,
-  label,
-  startedAt
+  label
 }: {
   percent: number | null
   label: string
-  /** When the upload began, so the wait can be counted rather than guessed at. */
-  startedAt: number | null
 }): React.JSX.Element {
   const known = percent !== null && Number.isFinite(percent)
   const clamped = known ? Math.max(0, Math.min(100, Math.round(percent as number))) : 0
@@ -349,12 +346,12 @@ function UploadProgress({
   // is exactly the state that makes people close the app and start over.
   const [elapsed, setElapsed] = useState(0)
   useEffect(() => {
-    if (startedAt === null) return
-    const tick = (): void => setElapsed(Math.floor((Date.now() - startedAt) / 1000))
-    tick()
-    const id = setInterval(tick, 1000)
+    // Counted from mount rather than from a timestamp handed in: this component
+    // exists exactly as long as the upload does, and reading the clock in the
+    // caller put an impure call on a render path.
+    const id = setInterval(() => setElapsed((n) => n + 1), 1000)
     return () => clearInterval(id)
-  }, [startedAt])
+  }, [])
 
   return (
     <div className="upload-progress" role="status" aria-live="polite">
@@ -523,8 +520,6 @@ export function Settings({
   // cancelled. Holding the label here (rather than ingesting immediately on
   // pick) is what lets the user see and edit the default before it's sent.
   const [cueProgress, setCueProgress] = useState<number | null>(null)
-  const [cueStartedAt, setCueStartedAt] = useState<number | null>(null)
-  const [resumeStartedAt, setResumeStartedAt] = useState<number | null>(null)
   const [resumeProgress, setResumeProgress] = useState<number | null>(null)
   const [resumeIngesting, setResumeIngesting] = useState(false)
   const [cueIngesting, setCueIngesting] = useState(false)
@@ -857,7 +852,6 @@ export function Settings({
 
     setResumeIngesting(true)
     setResumeProgress(RESUME_PHASE_PCT.extracting)
-    setResumeStartedAt(Date.now())
     setResumeStatus(`Reading ${file.name}…`)
     // Subscribed before the call, not after: ingest takes about a minute, and
     // the first progress event fires immediately.
@@ -991,7 +985,6 @@ export function Settings({
 
     setCueIngesting(true)
     setCueProgress(0)
-    setCueStartedAt(Date.now())
     setCueSheetStatus(`Reading ${file.name}…`)
     // Subscribed before the call, not after: ingest takes a while, and the
     // first progress event fires immediately.
@@ -1546,11 +1539,7 @@ export function Settings({
                 {profileBundle ? 'Replace résumé' : 'Upload PDF / DOCX / TXT'}
               </button>
               {resumeIngesting ? (
-                <UploadProgress
-                  percent={resumeProgress}
-                  label={resumeStatus ?? 'Working…'}
-                  startedAt={resumeStartedAt}
-                />
+                <UploadProgress percent={resumeProgress} label={resumeStatus ?? 'Working…'} />
               ) : (
                 <>
                   {profileBundle && <AddedChip label={describeBundle(profileBundle)} />}
@@ -1723,11 +1712,7 @@ export function Settings({
                 Upload PDF / DOCX / TXT / MD
               </button>
               {cueIngesting ? (
-                <UploadProgress
-                  percent={cueProgress}
-                  label={cueSheetStatus ?? 'Working…'}
-                  startedAt={cueStartedAt}
-                />
+                <UploadProgress percent={cueProgress} label={cueSheetStatus ?? 'Working…'} />
               ) : (
                 <>
                   {armedCueSheet && (

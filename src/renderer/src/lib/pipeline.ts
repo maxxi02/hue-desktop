@@ -10,6 +10,7 @@ import {
 } from '../../../shared/speculation'
 import {
   CueMatcher,
+  cueSheetPromptBlock,
   gateCommands,
   newLatchState,
   type CueSheet,
@@ -175,6 +176,8 @@ export class VoicePipeline {
    * session in `start()`, not per utterance.
    */
   private matcher: CueMatcher | null = null
+  /** The armed sheet itself, so its prepared points can inform a generated answer. */
+  private armedSheet: CueSheet | null = null
   /** Which card (if any) is latched onto the current question. */
   private latch = newLatchState()
 
@@ -564,6 +567,7 @@ export class VoicePipeline {
       armedSheet = null
       this.matcher = null
     }
+    this.armedSheet = armedSheet
     try {
       this.callbacks.onCueSheet?.(armedSheet)
     } catch {
@@ -693,7 +697,7 @@ export class VoicePipeline {
     this.specFinished = false
     void window.hue.llm.start(streamId, {
       messages: [...this.messages, { role: 'user', content: text }],
-      system: buildSystemPrompt(this.settings),
+      system: buildSystemPrompt(this.settings, this.armedSheet),
       maxTokens: 500
     })
   }
@@ -806,7 +810,7 @@ export class VoicePipeline {
     this.currentStreamId = streamId
     void window.hue.llm.start(streamId, {
       messages: this.messages,
-      system: buildSystemPrompt(this.settings),
+      system: buildSystemPrompt(this.settings, this.armedSheet),
       maxTokens: opts.maxTokens
     })
   }
@@ -1034,8 +1038,12 @@ function candidateBackground(s: HueSettings): string | null {
   return s.resumeSummary || null
 }
 
-function buildSystemPrompt(s: HueSettings): string {
-  return s.hueMode === 'interviewer' ? buildInterviewerPrompt(s) : buildCompanionPrompt(s)
+function buildSystemPrompt(s: HueSettings, cueSheet: CueSheet | null = null): string {
+  // Prepared answers go only to the companion prompt. In interviewer mode Hue
+  // is asking the questions, and handing it the user's own answers would let it
+  // ask precisely what they have already rehearsed — which makes the practice
+  // worthless.
+  return s.hueMode === 'interviewer' ? buildInterviewerPrompt(s) : buildCompanionPrompt(s, cueSheet)
 }
 
 /** Hue plays the interviewer, asking the user questions one at a time (spoken). */
@@ -1062,7 +1070,7 @@ function buildInterviewerPrompt(s: HueSettings): string {
 }
 
 /** Hue assists the user: incoming text is the interviewer's question; Hue drafts the answer. */
-function buildCompanionPrompt(s: HueSettings): string {
+function buildCompanionPrompt(s: HueSettings, cueSheet: CueSheet | null = null): string {
   const parts: string[] = [
     'You are Hue, a real-time interview companion helping the user during a live interview. ' +
       "The user message you receive is the INTERVIEWER'S question (transcribed from the call). " +
@@ -1139,6 +1147,17 @@ function buildCompanionPrompt(s: HueSettings): string {
     // scan, so it keeps the older, weaker guarantee.
     parts.push(`The user's background (draw on this): ${s.resumeSummary}`)
   }
+  // The prepared answers, as material rather than as a replacement.
+  //
+  // An exact match never reaches here — the pipeline latches the card and
+  // aborts generation, so the user's verbatim answer is shown untouched. This
+  // covers the case that used to fall through the gap: a question close to
+  // something they prepared, but not close enough to latch, which would
+  // otherwise be answered from the résumé alone while their own better wording
+  // sat unused on screen beside it.
+  const cueBlock = cueSheet ? cueSheetPromptBlock(cueSheet) : ''
+  if (cueBlock) parts.push(cueBlock)
+
   switch (s.interviewMode) {
     case 'star':
       parts.push('Structure the answer using the STAR method (Situation, Task, Action, Result).')
