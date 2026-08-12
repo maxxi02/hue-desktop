@@ -16,6 +16,7 @@ import {
   type StoredSession
 } from './lib/sessionHistory'
 import { Settings } from './components/Settings'
+import { CueSheetPanel } from './components/CueSheetPanel'
 
 // ── Icons ──
 
@@ -581,6 +582,28 @@ function SessionReviewPanel({
   )
 }
 
+// ── The transcript / cue sheet split ──
+
+/**
+ * How narrow either side of the split may get, as a percentage of the row.
+ *
+ * Clamped rather than free because both panes are prose read under time
+ * pressure: a transcript squeezed to a column of two-word lines is unreadable,
+ * and a cue sheet squeezed the same way is worse, because the user reaches for
+ * it precisely when they have no attention to spare on re-wrapping text. The
+ * bounds are the same on both sides — neither pane is the "real" one.
+ */
+const SPLIT_MIN_PCT = 34
+const SPLIT_MAX_PCT = 70
+/** Slightly transcript-heavy at rest: the sheet is scanned, the transcript is read. */
+const SPLIT_DEFAULT_PCT = 56
+/** Keyboard resize step, in percent, for the divider's arrow keys. */
+const SPLIT_KEY_STEP = 4
+
+function clampSplit(pct: number): number {
+  return Math.min(SPLIT_MAX_PCT, Math.max(SPLIT_MIN_PCT, pct))
+}
+
 // ── App ──
 
 export default function App(): React.JSX.Element {
@@ -602,6 +625,15 @@ export default function App(): React.JSX.Element {
   const assistantLabel = companion ? 'Suggested answer' : 'Hue'
   const [messages, setMessages] = useState<Message[]>([])
   const transcriptRef = useRef<HTMLDivElement>(null)
+  /**
+   * Where the transcript ends and the cue sheet begins, as a percentage of the
+   * split row. Transient state like `glance`, and for the same reason: it is a
+   * posture for the call you are on, not a preference worth restoring into a
+   * session that may not even have a sheet armed.
+   */
+  const [splitPct, setSplitPct] = useState(SPLIT_DEFAULT_PCT)
+  const [dividerDragging, setDividerDragging] = useState(false)
+  const splitRef = useRef<HTMLDivElement>(null)
   const glanceRef = useRef<HTMLDivElement>(null)
   // The answer glance mode last painted, used to tell a growing answer from a
   // new one. See the scroll effect below.
@@ -835,6 +867,33 @@ export default function App(): React.JSX.Element {
     if (!continuation) el.scrollTop = 0
   }, [latestAnswer?.text, glance, voice.cueCard])
 
+  /**
+   * The divider drag.
+   *
+   * The listeners live on `window` rather than on the handle so the pointer can
+   * outrun the 10px target — it always does — and so releasing the button
+   * anywhere, including outside the window, ends the drag. Mounted only while a
+   * drag is in progress, so the app is not carrying a mousemove listener for
+   * the 99.9% of a session where nobody is resizing anything.
+   */
+  useEffect(() => {
+    if (!dividerDragging) return
+    const onMove = (e: MouseEvent): void => {
+      const el = splitRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      if (rect.width === 0) return
+      setSplitPct(clampSplit(((e.clientX - rect.left) / rect.width) * 100))
+    }
+    const onUp = (): void => setDividerDragging(false)
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [dividerDragging])
+
   // Escape leaves glance mode. Getting back to the full transcript has to be a
   // reflex, not a hunt for the toggle — and Escape is already free here, since
   // the settings drawer owns its own close affordance.
@@ -1004,59 +1063,113 @@ export default function App(): React.JSX.Element {
             </div>
           </div>
 
-          <div className="transcript" ref={transcriptRef}>
-            {voice.greetingText && (
-              <div className="bubble bubble--assistant">
-                <div className="bubble-label">Hue</div>
-                <div className="bubble-text">{voice.greetingText}</div>
-              </div>
-            )}
-            {messages.length === 0 && !voice.greetingText ? (
-              <div className="transcript-empty">
-                <span>
-                  {voice.connecting
-                    ? 'Starting up…'
-                    : voice.active
-                      ? companion
-                        ? 'Listening for the interviewer’s question…'
-                        : 'Hue is starting the interview…'
-                      : 'Press Start — or hit Ctrl+Shift+Space to summon Hue, and use your start-session shortcut anytime during a live call'}
-                </span>
-              </div>
-            ) : (
-              messages.map((msg, i) => (
-                <div key={i} className={`bubble bubble--${msg.role}`}>
-                  <div className="bubble-label">
-                    {msg.role === 'user' ? userLabel : assistantLabel}
+          {/*
+           * Transcript and cue sheet, side by side.
+           *
+           * The row is here even with no sheet armed — one pane, flexed to the
+           * full width — so that arming one does not restructure the layout the
+           * transcript lives in. The transcript's own scroll position survives
+           * as a result, which matters because a sheet can be armed between
+           * questions of a live session.
+           */}
+          <div className="cuesheet-split" ref={splitRef}>
+            <div
+              className="cuesheet-split-pane"
+              style={voice.cueSheet ? { flex: `0 0 ${splitPct}%` } : { flex: '1 1 auto' }}
+            >
+              <div className="transcript" ref={transcriptRef}>
+                {voice.greetingText && (
+                  <div className="bubble bubble--assistant">
+                    <div className="bubble-label">Hue</div>
+                    <div className="bubble-text">{voice.greetingText}</div>
                   </div>
-                  {msg.image ? (
-                    <img
-                      className="bubble-capture"
-                      src={`data:${msg.image.mediaType};base64,${msg.image.dataBase64}`}
-                      alt="Captured screen sent to Hue"
-                    />
-                  ) : (
-                    <div className="bubble-text">{msg.text}</div>
-                  )}
-                  {msg.grounding && <Receipt grounding={msg.grounding} />}
-                  {msg.role === 'user' && msg.tier && (
-                    <div className="bubble-meta">
-                      {msg.tier} · {msg.latencyMs}ms
+                )}
+                {messages.length === 0 && !voice.greetingText ? (
+                  <div className="transcript-empty">
+                    <span>
+                      {voice.connecting
+                        ? 'Starting up…'
+                        : voice.active
+                          ? companion
+                            ? 'Listening for the interviewer’s question…'
+                            : 'Hue is starting the interview…'
+                          : 'Press Start — or hit Ctrl+Shift+Space to summon Hue, and use your start-session shortcut anytime during a live call'}
+                    </span>
+                  </div>
+                ) : (
+                  messages.map((msg, i) => (
+                    <div key={i} className={`bubble bubble--${msg.role}`}>
+                      <div className="bubble-label">
+                        {msg.role === 'user' ? userLabel : assistantLabel}
+                      </div>
+                      {msg.image ? (
+                        <img
+                          className="bubble-capture"
+                          src={`data:${msg.image.mediaType};base64,${msg.image.dataBase64}`}
+                          alt="Captured screen sent to Hue"
+                        />
+                      ) : (
+                        <div className="bubble-text">{msg.text}</div>
+                      )}
+                      {msg.grounding && <Receipt grounding={msg.grounding} />}
+                      {msg.role === 'user' && msg.tier && (
+                        <div className="bubble-meta">
+                          {msg.tier} · {msg.latencyMs}ms
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              ))
-            )}
-            {/* The prepared answer for the question just asked. There is never
+                  ))
+                )}
+                {/* The prepared answer for the question just asked. There is never
                 a generated bubble to sit beside — the pipeline aborts
                 generation the moment a card latches — so this simply appears
                 where that bubble would otherwise have gone. */}
-            {voice.cueCard && (
-              <div className="bubble bubble--assistant">
-                <CueCardBody key={voice.cueCard.id} card={voice.cueCard} textClass="bubble-text" />
+                {voice.cueCard && (
+                  <div className="bubble bubble--assistant">
+                    <CueCardBody
+                      key={voice.cueCard.id}
+                      card={voice.cueCard}
+                      textClass="bubble-text"
+                    />
+                  </div>
+                )}
+                {voice.error && <div className="error-msg">{voice.error}</div>}
               </div>
+            </div>
+            {voice.cueSheet && (
+              <>
+                <div
+                  className={
+                    dividerDragging
+                      ? 'cuesheet-divider cuesheet-divider--dragging'
+                      : 'cuesheet-divider'
+                  }
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Resize the cue sheet panel"
+                  aria-valuenow={Math.round(splitPct)}
+                  aria-valuemin={SPLIT_MIN_PCT}
+                  aria-valuemax={SPLIT_MAX_PCT}
+                  tabIndex={0}
+                  onMouseDown={(e) => {
+                    // Or the drag selects the transcript text it passes over.
+                    e.preventDefault()
+                    setDividerDragging(true)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowLeft') setSplitPct((v) => clampSplit(v - SPLIT_KEY_STEP))
+                    else if (e.key === 'ArrowRight')
+                      setSplitPct((v) => clampSplit(v + SPLIT_KEY_STEP))
+                    else return
+                    e.preventDefault()
+                  }}
+                  title="Drag to resize"
+                />
+                <div className="cuesheet-split-pane" style={{ flex: '1 1 0' }}>
+                  <CueSheetPanel sheet={voice.cueSheet} activeCardId={voice.cueCard?.id ?? null} />
+                </div>
+              </>
             )}
-            {voice.error && <div className="error-msg">{voice.error}</div>}
           </div>
         </main>
       )}

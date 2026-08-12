@@ -1,0 +1,257 @@
+/*
+ * The cue sheet document panel.
+ *
+ * Kept in its own file rather than appended to main.css because it is one
+ * self-contained surface, and because main.css is where the app shell lives —
+ * a document view that grows over time should not keep widening that file.
+ *
+ * Everything here reads from the tokens in base.css. No literal colours: the
+ * panel has to survive a palette change without being revisited.
+ */
+
+/* ── The split: transcript on the left, sheet on the right ──
+ *
+ * A row rather than a tab or an overlay. Both halves are live at once during a
+ * call — the transcript says what was just asked, the sheet says what was
+ * prepared for it — and any layout that shows one at a time makes the user
+ * choose between them at the exact moment they can least afford to.
+ */
+.cuesheet-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  /* Both panes scroll independently, so the row itself never does. */
+  overflow: hidden;
+}
+
+/* `min-width: 0` is load-bearing: without it a flex child refuses to shrink
+   below its content's intrinsic width and the divider stops halfway. */
+.cuesheet-split-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/*
+ * The drag handle. Sized as a wide invisible target around a hairline: the
+ * hairline is what the layout wants and 10px is what a hand under stress can
+ * actually hit.
+ */
+.cuesheet-divider {
+  flex: 0 0 10px;
+  position: relative;
+  cursor: col-resize;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  /* The header is the window's drag region; this must not inherit that or a
+     resize drag would move the whole window instead. */
+  -webkit-app-region: no-drag;
+}
+.cuesheet-divider::before {
+  content: '';
+  position: absolute;
+  inset: 8px 4px;
+  border-radius: 1px;
+  background: var(--border);
+  transition: background 160ms var(--ease-out);
+}
+.cuesheet-divider:hover::before,
+.cuesheet-divider--dragging::before {
+  background: var(--border-strong);
+}
+.cuesheet-divider:focus-visible {
+  outline: none;
+}
+.cuesheet-divider:focus-visible::before {
+  background: var(--accent);
+}
+
+/* ── The document ── */
+
+.cuedoc {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card-s);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+  /* A document is read, so it is selectable — the app body turns selection off
+     globally for the chrome, and this is not chrome. */
+  user-select: text;
+}
+.cuedoc::-webkit-scrollbar {
+  width: 3px;
+}
+.cuedoc::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 2px;
+}
+
+/*
+ * The page inside the scroller. The generous bottom padding is deliberate: the
+ * pan centres a section in the viewport, and without room to scroll past the
+ * end the LAST question can never reach the centre — it would stick to the
+ * bottom edge, which is the one position the eye is not expecting it in.
+ */
+.cuedoc-page {
+  padding: 26px 26px 60vh;
+  max-width: 62ch;
+}
+
+.cuedoc-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/*
+ * Serif for the display type, against Inter everywhere else in the app.
+ *
+ * Not decoration: it is the signal that this pane is a document the user wrote
+ * rather than another piece of Hue's interface. The stack is system fonts only
+ * — the app runs offline and ships exactly one font binary (see base.css).
+ */
+.cuedoc-title {
+  font-family: 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  font-size: 25px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  color: var(--text);
+}
+
+.cuedoc-subtitle {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.cuedoc-subtitle-sep {
+  margin: 0 6px;
+}
+
+.cuedoc-rule {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 18px 0 4px;
+}
+
+/* ── A question ── */
+
+.cuedoc-section {
+  /* The vertical rhythm is the whole readability argument for a document view:
+     sections have to be separable at a glance, from arm's length, without
+     boxes around them. */
+  padding: 22px 16px 22px 14px;
+  margin: 0 -16px 0 -14px;
+  border-radius: var(--r-card-s);
+  /* Both animated so the highlight can arrive while the pan is still moving. */
+  transition:
+    background 320ms var(--ease-out),
+    box-shadow 320ms var(--ease-out);
+}
+
+/*
+ * The pan target, held — not flashed.
+ *
+ * A flash tells you where the answer went; a sustained highlight tells you
+ * where the answer IS, which is what someone mid-sentence in front of an
+ * interviewer needs. It stays until another question takes it.
+ *
+ * The inset left bar is the anchor the eye reacquires after looking away at
+ * the interviewer, so it is drawn in the accent rather than in a wash the
+ * background tint could swallow.
+ */
+.cuedoc-section--active {
+  background: var(--bg-elevated);
+  box-shadow: inset 3px 0 0 0 var(--accent);
+}
+
+.cuedoc-ordinal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.cuedoc-ordinal-num {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cuedoc-live {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  padding: 1px 8px;
+  animation: fade-in-up 240ms var(--ease-out);
+}
+
+.cuedoc-q {
+  font-family: 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  font-size: 16.5px;
+  font-weight: 700;
+  line-height: 1.45;
+  letter-spacing: -0.005em;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+/* The marker is part of the heading, so it is set in the heading's own weight
+   and merely dimmed — a coloured "Q:" would read as a link. */
+.cuedoc-q-mark {
+  color: var(--text-muted);
+  margin-right: 8px;
+}
+
+.cuedoc-cues {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 12px;
+}
+
+/* The bold lines are the answer as delivered, so they are set at body size and
+   full ink — they are not a summary of the quote below, they outrank it. */
+.cuedoc-cue {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+/*
+ * The prepared script, quoted.
+ *
+ * Indented behind a left border and set slightly quieter than the cues above
+ * it, which is the standard treatment for quoted material and also the correct
+ * hierarchy here: this is the source the cues were compressed from, available
+ * for a glance, never the thing to be read aloud.
+ */
+.cuedoc-script {
+  border-left: 2px solid var(--border-strong);
+  padding-left: 16px;
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+
+.cuedoc-empty {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  padding: 18px 0;
+}

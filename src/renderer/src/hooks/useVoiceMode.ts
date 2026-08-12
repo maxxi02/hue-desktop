@@ -5,7 +5,7 @@ import { preloadTtsModel } from '../lib/streamingTTS'
 import { isLlmConfigured, playGreeting } from '../lib/greeting'
 import type { AudioSource, HueMode, ResolvedTier, ScreenCapture } from '@shared/types'
 import type { Grounding } from '@shared/grounding'
-import type { CueCard } from '@shared/cuesheet'
+import type { CueCard, CueSheet } from '@shared/cuesheet'
 
 export interface VoiceTurn {
   text: string
@@ -51,6 +51,14 @@ export interface UseVoiceMode {
    * question, a barge-in, or the session tearing down).
    */
   cueCard: CueCard | null
+  /**
+   * The whole armed cue sheet for the running session, or null when none is
+   * armed. Set once at session start and held for the session, so the document
+   * panel can be read between questions rather than only at the moment a card
+   * latches — `cueCard` says *where you are* in this sheet, this says *what the
+   * sheet is*.
+   */
+  cueSheet: CueSheet | null
   /** LLM-generated launch greeting from Hue (streamed). Empty until Hue has greeted. */
   greetingText: string
   error: string | null
@@ -74,6 +82,7 @@ export function useVoiceMode(): UseVoiceMode {
   const [assistantText, setAssistantText] = useState('')
   const [assistantResult, setAssistantResult] = useState<AssistantResult | null>(null)
   const [cueCard, setCueCard] = useState<CueCard | null>(null)
+  const [cueSheet, setCueSheet] = useState<CueSheet | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<HueMode>('companion')
   const [audioSource, setAudioSource] = useState<AudioSource>('microphone')
@@ -165,7 +174,8 @@ export function useVoiceMode(): UseVoiceMode {
         window.hue.phone.event({ type: 'answer', text })
       },
       onError: setError,
-      onCueCard: setCueCard
+      onCueCard: setCueCard,
+      onCueSheet: setCueSheet
     })
     pipelineRef.current = pipeline
     try {
@@ -229,6 +239,7 @@ export function useVoiceMode(): UseVoiceMode {
     assistantText,
     assistantResult,
     cueCard,
+    cueSheet,
     greetingText,
     error,
     mode,

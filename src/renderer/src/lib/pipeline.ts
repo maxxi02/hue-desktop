@@ -60,6 +60,17 @@ export interface PipelineCallbacks {
    * keep compiling.
    */
   onCueCard?: (card: CueCard | null) => void
+  /**
+   * Fired once per session start with the armed cue sheet, or with null when no
+   * sheet is armed (or the armed one could not be loaded).
+   *
+   * Separate from `onCueCard` because the two answer different questions.
+   * `onCueCard` is "which question is being asked right now"; this is "what did
+   * the user prepare", which the document panel needs in full and up front —
+   * the panel exists to be read *before* and *between* questions, not only at
+   * the moment one matches.
+   */
+  onCueSheet?: (sheet: CueSheet | null) => void
 }
 
 /** The VAD (and Whisper) sample rate; every buffer below is mono Float32 at this rate. */
@@ -224,15 +235,28 @@ export class VoicePipeline {
     // propagate out of `start()` and the interview would never begin. A cue
     // sheet is an optional aid; it must never be able to stop a session.
     this.matcher = null
+    let armedSheet: CueSheet | null = null
     const selectedId = this.settings.selectedCueSheetId
     if (selectedId) {
       try {
         const sheets = await window.hue.cueSheet.list()
         const sheet = sheets.find((s: CueSheet) => s.id === selectedId)
+        armedSheet = sheet ?? null
         this.matcher = sheet ? new CueMatcher(sheet) : null
       } catch {
+        armedSheet = null
         this.matcher = null
       }
+    }
+    // Handing the whole sheet to the renderer is subject to the same rule as
+    // loading it: a subscriber that throws (a bad render, a stale ref) must not
+    // be able to take the session down with it, so the emit is guarded on its
+    // own rather than folded into the load's catch — which would otherwise
+    // discard a perfectly good matcher over a UI failure.
+    try {
+      this.callbacks.onCueSheet?.(armedSheet)
+    } catch {
+      // The panel is an aid; the interview is not.
     }
     this.latch = newLatchState()
 
