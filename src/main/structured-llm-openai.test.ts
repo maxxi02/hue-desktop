@@ -230,3 +230,25 @@ test('a fenced JSON body is recovered, since a fence is formatting rather than r
     { name: 'Jordan Reyes' }
   )
 })
+
+test('the timeout budgets the whole call, not each attempt', async () => {
+  // Two 429s in a row, each asking for a long wait. With a per-attempt timeout
+  // this would retry happily; with an overall deadline it must give up inside
+  // the budget rather than multiplying it by the retry count.
+  const provider = await fakeProvider([
+    { status: 429, body: '{"error":"slow down"}', headers: { 'retry-after': '5' } },
+    { status: 429, body: '{"error":"slow down"}', headers: { 'retry-after': '5' } },
+    { status: 429, body: '{"error":"slow down"}', headers: { 'retry-after': '5' } }
+  ])
+  const started = Date.now()
+  await assert.rejects(() =>
+    client(provider.baseUrl, { timeoutMs: 600, retryBaseMs: 1 }).structured({
+      label: 'budget',
+      system: 's',
+      user: 'u',
+      schema: { type: 'object', additionalProperties: false, properties: {} }
+    })
+  )
+  const elapsed = Date.now() - started
+  assert.ok(elapsed < 3000, `gave up after ${elapsed}ms, which is past the whole-call budget`)
+})

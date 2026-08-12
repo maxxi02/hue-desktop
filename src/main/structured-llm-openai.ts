@@ -229,7 +229,25 @@ export function openAiCompatClient(opts: OpenAiCompatOptions = {}): LlmClient {
   async function post(body: unknown): Promise<ChatCompletion> {
     let lastError: unknown = null
 
+    /**
+     * One deadline for the whole call, not one per attempt.
+     *
+     * `timeoutMs` used to bound a single fetch, and a fresh signal was minted
+     * inside every retry — so with four retries and a provider sending
+     * `retry-after`, a "2 minute timeout" was really closer to ten. That is not
+     * a timeout anyone can reason about, and on a desktop where a user is
+     * watching a progress bar it is the difference between a slow upload and an
+     * apparently dead one.
+     *
+     * Now the budget covers retries and backoff together: whatever is left is
+     * what the next attempt gets, and when it runs out the call gives up rather
+     * than starting another round.
+     */
+    const deadline = Date.now() + timeoutMs
+    const remaining = (): number => deadline - Date.now()
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (remaining() <= 0) break
       try {
         const res = await doFetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
@@ -238,7 +256,7 @@ export function openAiCompatClient(opts: OpenAiCompatOptions = {}): LlmClient {
             Authorization: `Bearer ${apiKey}`
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(timeoutMs)
+          signal: AbortSignal.timeout(remaining())
         })
 
         if (res.ok) return (await res.json()) as ChatCompletion
@@ -248,9 +266,12 @@ export function openAiCompatClient(opts: OpenAiCompatOptions = {}): LlmClient {
         if (!isRetryable(err)) throw err
         lastError = err
         if (attempt === maxRetries) break
-        await sleep(
+        const wait =
           retryAfterMs(text, res.headers.get('retry-after')) ?? retryBaseMs * Math.pow(2, attempt)
-        )
+        // Sleeping past the deadline would burn the remaining budget doing
+        // nothing and still leave no time to retry in.
+        if (wait >= remaining()) break
+        await sleep(wait)
         continue
       } catch (err) {
         // A ProviderError we already decided not to retry must escape the loop
@@ -258,7 +279,9 @@ export function openAiCompatClient(opts: OpenAiCompatOptions = {}): LlmClient {
         if (err instanceof ProviderError && !isRetryable(err)) throw err
         lastError = err
         if (attempt === maxRetries) break
-        await sleep(retryBaseMs * Math.pow(2, attempt))
+        const wait = retryBaseMs * Math.pow(2, attempt)
+        if (wait >= remaining()) break
+        await sleep(wait)
       }
     }
 
