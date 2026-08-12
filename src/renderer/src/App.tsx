@@ -4,7 +4,7 @@ import type { PipelineState } from './lib/pipeline'
 import type { VoiceTurn, CaptureTurn } from './hooks/useVoiceMode'
 import type { ScreenCapture } from '@shared/types'
 import { describeStory, type Grounding } from '@shared/grounding'
-import type { CueCard } from '@shared/cuesheet'
+import type { CueCard, CueSheet } from '@shared/cuesheet'
 import { parseProfileBundle, type ProfileBundle } from '@shared/profile'
 import { describeReview, reviewSession, type SessionReview } from '@shared/session-review'
 import {
@@ -656,6 +656,32 @@ export default function App(): React.JSX.Element {
    */
   const [bundle, setBundle] = useState<ProfileBundle | null>(null)
 
+  /**
+   * The armed cue sheet, read from settings rather than from the pipeline.
+   *
+   * The pipeline also reports it, but only from `start()` — which meant the
+   * document appeared solely once a session was running. That is backwards for
+   * what this panel is: prepared answers are read *before* the call, while you
+   * are still deciding whether the sheet is any good, and between questions.
+   * Uploading a sheet and finding nothing on screen is the bug that behaviour
+   * produced.
+   *
+   * Loaded here and re-loaded when the drawer closes, so arming or replacing a
+   * sheet in Settings shows up immediately. During a session the pipeline's
+   * copy wins, since that is the one the matcher is actually scoring against.
+   */
+  const [armedSheet, setArmedSheet] = useState<CueSheet | null>(null)
+
+  /**
+   * The sheet the panel actually shows.
+   *
+   * The pipeline's copy wins during a session because that is the one the
+   * matcher is scoring against, so the document on screen and the card that
+   * latches can never come from different sheets. Outside a session there is no
+   * pipeline, and the armed sheet read from settings is the answer.
+   */
+  const visibleSheet = voice.cueSheet ?? armedSheet
+
   // Reads the settings that affect what App renders: the card's translucency
   // (from windowOpacity) and the profile bundle. Re-run when the settings drawer
   // closes so both take effect live rather than at next launch.
@@ -667,6 +693,20 @@ export default function App(): React.JSX.Element {
     void window.hue.settings.get().then((s) => {
       document.documentElement.style.setProperty('--bg-alpha', String(s.windowOpacity))
       setBundle(parseProfileBundle(s.profileBundleJson))
+
+      // Same guard the pipeline applies: an id that no longer resolves (sheet
+      // deleted, settings stale) means no sheet, never an error. A cue sheet is
+      // an aid, and nothing about it may break the screen it sits on.
+      if (!s.selectedCueSheetId) {
+        setArmedSheet(null)
+        return
+      }
+      void window.hue.cueSheet
+        .list()
+        .then((sheets) => {
+          setArmedSheet(sheets.find((sheet) => sheet.id === s.selectedCueSheetId) ?? null)
+        })
+        .catch(() => setArmedSheet(null))
     })
   }, [])
 
@@ -1075,7 +1115,7 @@ export default function App(): React.JSX.Element {
           <div className="cuesheet-split" ref={splitRef}>
             <div
               className="cuesheet-split-pane"
-              style={voice.cueSheet ? { flex: `0 0 ${splitPct}%` } : { flex: '1 1 auto' }}
+              style={visibleSheet ? { flex: `0 0 ${splitPct}%` } : { flex: '1 1 auto' }}
             >
               <div className="transcript" ref={transcriptRef}>
                 {voice.greetingText && (
@@ -1136,7 +1176,7 @@ export default function App(): React.JSX.Element {
                 {voice.error && <div className="error-msg">{voice.error}</div>}
               </div>
             </div>
-            {voice.cueSheet && (
+            {visibleSheet && (
               <>
                 <div
                   className={
@@ -1166,7 +1206,7 @@ export default function App(): React.JSX.Element {
                   title="Drag to resize"
                 />
                 <div className="cuesheet-split-pane" style={{ flex: '1 1 0' }}>
-                  <CueSheetPanel sheet={voice.cueSheet} activeCardId={voice.cueCard?.id ?? null} />
+                  <CueSheetPanel sheet={visibleSheet} activeCardId={voice.cueCard?.id ?? null} />
                 </div>
               </>
             )}

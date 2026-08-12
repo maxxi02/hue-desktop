@@ -804,12 +804,20 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
       const buf = await file.arrayBuffer()
       const sheet = await window.hue.cueSheet.ingest(buf, file.name, label)
       if (!mountedRef.current) return
+
+      // Arm it. Uploading a cue sheet minutes before an interview means "use
+      // this one" — leaving it inert behind a second, separate radio click is
+      // how a user ends up with prepared answers loaded and nothing on screen,
+      // which is exactly the failure this replaces. An empty sheet is not armed:
+      // arming it would silently disarm a working one in favour of nothing.
+      if (sheet.cards.length > 0) await onSelectCueSheet(sheet.id)
+
       setCueSheetStatus(
         sheet.cards.length === 0
           ? `"${sheet.label}" uploaded, but no usable cue cards were found in it. Try a ` +
               'document with clearer question-and-answer sections.'
-          : `"${sheet.label}" ready — ${sheet.cards.length} cue card` +
-              `${sheet.cards.length === 1 ? '' : 's'}.`
+          : `"${sheet.label}" is armed and ready — ${sheet.cards.length} cue card` +
+              `${sheet.cards.length === 1 ? '' : 's'}. Close Settings to read it.`
       )
       await loadCueSheets()
     } catch (err) {
