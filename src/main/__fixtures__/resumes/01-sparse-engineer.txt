@@ -1,0 +1,17 @@
+PRIYA NARAYANAN
+Backend Engineer · Bengaluru · priya.n@example.com
+
+EXPERIENCE
+
+Tessellate Systems
+Backend Engineer
+2022 - present
+Work on the billing service. Python, Postgres.
+
+Kavi Labs
+Junior Developer
+2020 - 2022
+Internal tools.
+
+EDUCATION
+BE Information Science, RV College of Engineering

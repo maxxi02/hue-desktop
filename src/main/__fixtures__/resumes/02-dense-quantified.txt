@@ -1,0 +1,32 @@
+MARCUS OKONKWO
+Staff Software Engineer | Lagos, Nigeria | marcus.okonkwo@example.com
+github.com/example-marcus · linkedin.com/in/example-marcus
+
+SUMMARY
+Ten years building payment infrastructure at scale.
+
+EXPERIENCE
+
+Paystack Rails Ltd — Staff Software Engineer
+March 2021 – Present
+· Rebuilt the settlement ledger, cutting reconciliation time from 6 hours to 22 minutes.
+· Led a team of 5 through the migration from a monolith to 14 services (Go, gRPC, Kafka).
+· Reduced payment failure rate from 3.1% to 0.7% by adding an issuer-aware retry policy.
+· Ran the incident review after the March 2023 outage that affected 40,000 merchants.
+
+Orinoco Commerce — Senior Backend Engineer
+July 2018 – February 2021
+· Owned the checkout API serving 12M requests per day (Java, Spring, MySQL).
+· Introduced contract testing across 9 teams; integration failures fell 60%.
+· Mentored 4 engineers, 2 of whom were promoted to senior.
+
+Ubuntu Digital — Software Engineer
+January 2016 – June 2018
+· Built an SMS gateway integration handling 500K messages monthly (Python, Twilio).
+· Argued against a proposed NoSQL migration and produced a benchmark that kept us on Postgres.
+
+EDUCATION
+BSc Computer Engineering, University of Lagos, 2015
+
+SKILLS
+Go, Java, Python, Kafka, gRPC, Postgres, MySQL, Kubernetes, Terraform
