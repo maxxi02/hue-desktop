@@ -749,7 +749,10 @@ export class VoicePipeline {
 
   /** Interviewer mode: seed the conversation so Hue asks the opening question. */
   private kickoffInterview(): void {
-    this.messages.push({ role: 'user', content: 'Please begin the interview with your first question.' })
+    this.messages.push({
+      role: 'user',
+      content: 'Please begin the interview with your first question.'
+    })
     this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
   }
 
@@ -852,7 +855,9 @@ export class VoicePipeline {
     // the full PNG isn't re-sent to the provider on every subsequent turn. The
     // paired text instruction is kept so the turn still reads coherently.
     if (this.pendingCaptureIndex !== null) {
-      this.messages[this.pendingCaptureIndex] = stripCaptureImage(this.messages[this.pendingCaptureIndex])
+      this.messages[this.pendingCaptureIndex] = stripCaptureImage(
+        this.messages[this.pendingCaptureIndex]
+      )
       this.pendingCaptureIndex = null
     }
     this.setState('listening')
@@ -988,9 +993,7 @@ function candidateBackground(s: HueSettings): string | null {
 }
 
 function buildSystemPrompt(s: HueSettings): string {
-  return s.hueMode === 'interviewer'
-    ? buildInterviewerPrompt(s)
-    : buildCompanionPrompt(s)
+  return s.hueMode === 'interviewer' ? buildInterviewerPrompt(s) : buildCompanionPrompt(s)
 }
 
 /** Hue plays the interviewer, asking the user questions one at a time (spoken). */
@@ -1009,7 +1012,9 @@ function buildInterviewerPrompt(s: HueSettings): string {
   const background = candidateBackground(s)
   if (background) parts.push(`The candidate's background:\n\n${background}`)
   if (s.interviewMode === 'star') {
-    parts.push('Favor behavioral questions that invite STAR-style (Situation, Task, Action, Result) answers.')
+    parts.push(
+      'Favor behavioral questions that invite STAR-style (Situation, Task, Action, Result) answers.'
+    )
   }
   return `${parts.join(' ')}\n\n${HUMAN_VOICE_GUIDANCE}`
 }
@@ -1024,7 +1029,7 @@ function buildCompanionPrompt(s: HueSettings): string {
       'answer a few full sentences (roughly three to five) — enough to sound substantial and ' +
       'give the interviewer something real to work with — while still sounding natural to say out loud.',
     'Lead with the answer. Make your very first sentence a complete, standalone response to the ' +
-      "question, so the user can start speaking the moment it appears and the rest just builds on it. " +
+      'question, so the user can start speaking the moment it appears and the rest just builds on it. ' +
       'Never open with a wind-up, a restatement of the question, or a throat-clearing phrase.',
     'The question is transcribed by speech recognition and may be imperfect — misheard words, missing ' +
       "punctuation, or the user's own voice mixed in. Infer the interviewer's actual intent and answer that. " +
@@ -1053,7 +1058,7 @@ function buildCompanionPrompt(s: HueSettings): string {
       '"I give 110%"). If a trait matters, prove it with a specific moment instead of claiming the label.',
     'When the question targets something the user may not know, do not bluff fake fluency. Give what they ' +
       'genuinely do know, then bridge honestly to the nearest real experience ("I haven\'t shipped with X, ' +
-      'but I\'ve used Y for the same kind of problem, and here\'s how I\'d approach it"). Honest and ' +
+      "but I've used Y for the same kind of problem, and here's how I'd approach it\"). Honest and " +
       'adaptable beats confidently wrong.',
     'Never invent specific facts the user has not given you: no fabricated names, employers, ' +
       'numbers, or backstories (for example, do not claim "a friend recommended this role" or cite ' +
@@ -1097,7 +1102,9 @@ function buildCompanionPrompt(s: HueSettings): string {
       parts.push('Structure the answer using the STAR method (Situation, Task, Action, Result).')
       break
     case 'live':
-      parts.push('Give a tight, direct answer the user can say immediately. Brevity over completeness.')
+      parts.push(
+        'Give a tight, direct answer the user can say immediately. Brevity over completeness.'
+      )
       break
     default:
       parts.push('Give a strong, complete answer the user can adapt in their own words.')

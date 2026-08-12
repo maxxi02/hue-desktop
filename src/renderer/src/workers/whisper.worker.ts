@@ -121,9 +121,7 @@ function getTranscriber(
   if (transcriberPromise && loadedPreferWasm !== preferWasm) {
     const old = transcriberPromise
     transcriberPromise = null
-    void old
-      .then((t) => (t as { dispose?: () => Promise<void> }).dispose?.())
-      .catch(() => {})
+    void old.then((t) => (t as { dispose?: () => Promise<void> }).dispose?.()).catch(() => {})
   }
   if (!transcriberPromise) {
     loadedPreferWasm = preferWasm

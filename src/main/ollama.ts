@@ -16,7 +16,9 @@ function toOllamaMessage(m: LlmMessage): { role: string; content: string; images
   const images = m.content
     .filter((b): b is Extract<typeof b, { type: 'image' }> => b.type === 'image')
     .map((b) => b.dataBase64)
-  return images.length > 0 ? { role: m.role, content: text, images } : { role: m.role, content: text }
+  return images.length > 0
+    ? { role: m.role, content: text, images }
+    : { role: m.role, content: text }
 }
 
 interface ActiveStream {
@@ -129,7 +131,8 @@ export function startOllamaStream(
           } catch {
             continue
           }
-          if (event.message?.content) send('hue:llm:delta', { streamId, text: event.message.content })
+          if (event.message?.content)
+            send('hue:llm:delta', { streamId, text: event.message.content })
           if (event.done) {
             finishDone(false)
             return

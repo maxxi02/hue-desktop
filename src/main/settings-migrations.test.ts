@@ -1,44 +1,37 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { migrateSettings, RETIRED_INGEST_HOSTS } from './settings-migrations.ts'
+import { migrateSettings, RETIRED_SETTING_KEYS } from './settings-migrations.ts'
 import { DEFAULT_SETTINGS } from '../shared/types.ts'
 
-const withIngestUrl = (ingestBaseUrl: string): typeof DEFAULT_SETTINGS => ({
-  ...DEFAULT_SETTINGS,
-  ingestBaseUrl
+test('the retired ingest service keys are deleted from a settings file read off disk', () => {
+  const stale = {
+    ...DEFAULT_SETTINGS,
+    ingestBaseUrl: 'http://localhost:8788',
+    ingestAccountId: 'acct_123',
+    ingestAccountToken: 'secret'
+  } as unknown as typeof DEFAULT_SETTINGS
+  const migrated = migrateSettings(stale) as unknown as Record<string, unknown>
+  for (const key of RETIRED_SETTING_KEYS) {
+    assert.equal(key in migrated, false, `${key} survived the migration`)
+  }
 })
 
-test('a retired host is replaced, since a saved copy outlives the corrected default', () => {
-  const migrated = migrateSettings(withIngestUrl('https://ingest.hue.app'))
-  assert.equal(migrated.ingestBaseUrl, DEFAULT_SETTINGS.ingestBaseUrl)
+test('the account token in particular does not linger — it is a live credential', () => {
+  const stale = {
+    ...DEFAULT_SETTINGS,
+    ingestAccountToken: 'secret'
+  } as unknown as typeof DEFAULT_SETTINGS
+  const migrated = migrateSettings(stale) as unknown as Record<string, unknown>
+  assert.equal(migrated.ingestAccountToken, undefined)
 })
 
-test('a retired host is recognised through a trailing slash and stray whitespace', () => {
-  const migrated = migrateSettings(withIngestUrl('  https://ingest.hue.app/  '))
-  assert.equal(migrated.ingestBaseUrl, DEFAULT_SETTINGS.ingestBaseUrl)
+test('an existing profile bundle is untouched — the whole point is no re-upload', () => {
+  const bundleJson = '{"version":1,"hash":"abc","createdAt":"2026-01-01T00:00:00.000Z"}'
+  const migrated = migrateSettings({ ...DEFAULT_SETTINGS, profileBundleJson: bundleJson })
+  assert.equal(migrated.profileBundleJson, bundleJson)
 })
 
-test('the default itself is never rewritten, or every launch would churn the file', () => {
-  const settings = withIngestUrl(DEFAULT_SETTINGS.ingestBaseUrl)
-  assert.equal(migrateSettings(settings), settings)
-})
-
-test("a URL the user chose is left alone even when it is unreachable, since it's theirs to fix", () => {
-  const chosen = 'https://ingest.mycompany.example'
-  assert.equal(migrateSettings(withIngestUrl(chosen)).ingestBaseUrl, chosen)
-})
-
-test('no other setting is disturbed while healing the URL', () => {
-  const before = { ...withIngestUrl('https://ingest.hue.app'), jobTitle: 'Staff Engineer' }
-  const after = migrateSettings(before)
-  assert.equal(after.jobTitle, 'Staff Engineer')
-  assert.deepEqual(
-    { ...after, ingestBaseUrl: '' },
-    { ...before, ingestBaseUrl: '' },
-    'migration must touch ingestBaseUrl and nothing else'
-  )
-})
-
-test('the retired list does not contain the current default, which would erase it on read', () => {
-  assert.ok(!RETIRED_INGEST_HOSTS.includes(DEFAULT_SETTINGS.ingestBaseUrl))
+test('settings with nothing retired are returned unchanged, or every launch churns the file', () => {
+  const clean = { ...DEFAULT_SETTINGS }
+  assert.equal(migrateSettings(clean), clean)
 })

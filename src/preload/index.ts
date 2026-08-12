@@ -13,7 +13,12 @@ import type {
   ScreenCapture,
   StealthStatus
 } from '../shared/types'
-import type { IngestOutcome, IngestProgress } from '../shared/profile'
+import type {
+  GapAnswerOutcome,
+  IngestOutcome,
+  IngestProgress,
+  ProfileBundle
+} from '../shared/profile'
 import type { CueSheet } from '../shared/cuesheet'
 
 function sub<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -56,12 +61,17 @@ const hue = {
      */
     ingest: (bytes: ArrayBuffer): Promise<IngestOutcome> =>
       ipcRenderer.invoke('hue:profile:ingest', bytes),
-    onProgress: (cb: (p: IngestProgress) => void): (() => void) =>
-      sub('hue:profile:progress', cb),
-    /** Re-fetch the bundle — e.g. after answering gap questions on the phone. */
+    onProgress: (cb: (p: IngestProgress) => void): (() => void) => sub('hue:profile:progress', cb),
+    /** Re-read the bundle from disk. There is no server copy any more. */
     refresh: (): Promise<IngestOutcome> => ipcRenderer.invoke('hue:profile:refresh'),
-    /** Deletes the profile here and on the server. */
-    delete: (): Promise<void> => ipcRenderer.invoke('hue:profile:delete')
+    /** Deletes the profile. */
+    delete: (): Promise<void> => ipcRenderer.invoke('hue:profile:delete'),
+    /** Fold a typed answer for one gap question back into the story bank. */
+    answerGap: (gapId: string, text: string): Promise<GapAnswerOutcome> =>
+      ipcRenderer.invoke('hue:profile:answer-gap', gapId, text),
+    /** Record that the user has no story for this gap. Costs no model call. */
+    skipGap: (gapId: string): Promise<ProfileBundle> =>
+      ipcRenderer.invoke('hue:profile:skip-gap', gapId)
   },
   cueSheet: {
     /**

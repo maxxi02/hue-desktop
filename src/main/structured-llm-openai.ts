@@ -208,7 +208,10 @@ export function openAiCompatClient(opts: OpenAiCompatOptions = {}): LlmClient {
     process.env.GROQ_API_KEY ??
     process.env.OPENAI_API_KEY ??
     ''
-  const baseUrl = (opts.baseUrl ?? process.env.HUE_INGEST_BASE_URL ?? GROQ_BASE_URL).replace(/\/+$/, '')
+  const baseUrl = (opts.baseUrl ?? process.env.HUE_INGEST_BASE_URL ?? GROQ_BASE_URL).replace(
+    /\/+$/,
+    ''
+  )
   const model = opts.model ?? process.env.HUE_INGEST_MODEL ?? DEFAULT_OPENAI_COMPAT_MODEL
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS

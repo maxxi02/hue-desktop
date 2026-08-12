@@ -93,9 +93,7 @@ export function startLlmStream(sender: WebContents, streamId: string, req: LlmSt
         // the first turn it's read from cache instead of re-processed at full
         // price. A second breakpoint rides on the last message block (see
         // toAnthropicMessages) to cache the growing conversation incrementally.
-        system: [
-          { type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }
-        ],
+        system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }],
         messages: toAnthropicMessages(req.messages)
       },
       { signal: aborter.signal }

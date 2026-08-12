@@ -33,13 +33,71 @@ import type { Command } from './speculation.ts'
  * costs more than it saves.
  */
 const STOPWORDS = new Set([
-  'a', 'about', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'been', 'but',
-  'by', 'can', 'could', 'did', 'do', 'does', 'for', 'from', 'had', 'has',
-  'have', 'how', 'i', 'if', 'in', 'is', 'it', 'its', 'just', 'like', 'me',
-  'my', 'of', 'on', 'or', 'so', 'some', 'tell', 'that', 'the', 'their',
-  'them', 'then', 'there', 'these', 'they', 'this', 'time', 'to', 'us', 'was', 'we',
-  'were', 'what', 'when', 'where', 'which', 'who', 'why', 'will', 'with',
-  'would', 'you', 'your'
+  'a',
+  'about',
+  'an',
+  'and',
+  'any',
+  'are',
+  'as',
+  'at',
+  'be',
+  'been',
+  'but',
+  'by',
+  'can',
+  'could',
+  'did',
+  'do',
+  'does',
+  'for',
+  'from',
+  'had',
+  'has',
+  'have',
+  'how',
+  'i',
+  'if',
+  'in',
+  'is',
+  'it',
+  'its',
+  'just',
+  'like',
+  'me',
+  'my',
+  'of',
+  'on',
+  'or',
+  'so',
+  'some',
+  'tell',
+  'that',
+  'the',
+  'their',
+  'them',
+  'then',
+  'there',
+  'these',
+  'they',
+  'this',
+  'time',
+  'to',
+  'us',
+  'was',
+  'we',
+  'were',
+  'what',
+  'when',
+  'where',
+  'which',
+  'who',
+  'why',
+  'will',
+  'with',
+  'would',
+  'you',
+  'your'
 ])
 
 /**
@@ -284,10 +342,7 @@ export class CueMatcher {
   private readonly scriptCount: number
   private readonly sheet: CueSheet
 
-  constructor(
-    sheet: CueSheet,
-    config: Partial<MatchConfig> = {}
-  ) {
+  constructor(sheet: CueSheet, config: Partial<MatchConfig> = {}) {
     this.sheet = sheet
     this.config = { ...DEFAULT_MATCH_CONFIG, ...config }
     const triggers = sheet.cards.flatMap((c) => c.triggers)
@@ -537,9 +592,26 @@ export function gateCommands(
  * make it invisible to the parity check.
  */
 const NEGATIONS = new Set([
-  'not', 'never', 'no', 'nor', 'none', 'cannot', 'nothing', 'without',
-  "didn't", "doesn't", "wasn't", "wouldn't", "couldn't", "shouldn't",
-  "isn't", "aren't", "won't", "hadn't", "hasn't", "haven't"
+  'not',
+  'never',
+  'no',
+  'nor',
+  'none',
+  'cannot',
+  'nothing',
+  'without',
+  "didn't",
+  "doesn't",
+  "wasn't",
+  "wouldn't",
+  "couldn't",
+  "shouldn't",
+  "isn't",
+  "aren't",
+  "won't",
+  "hadn't",
+  "hasn't",
+  "haven't"
 ])
 
 function normalise(text: string): string {
@@ -621,7 +693,14 @@ const UNMATCHED_TOKENS_PER = 4
  * through only where the covered span already contains a contrast of its own.
  */
 const CONTRAST_MARKERS = new Set([
-  'rather', 'instead', 'than', 'versus', 'vs', 'but', 'except', 'unless',
+  'rather',
+  'instead',
+  'than',
+  'versus',
+  'vs',
+  'but',
+  'except',
+  'unless',
   ...NEGATIONS
 ])
 

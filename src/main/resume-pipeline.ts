@@ -311,7 +311,7 @@ export function normaliseProfile(raw: unknown): Profile {
 
 export function normaliseStories(raw: unknown, source: Story['source'] = 'resume'): Story[] {
   const list = Array.isArray((raw as { stories?: unknown })?.stories)
-    ? ((raw as { stories: unknown[] }).stories)
+    ? (raw as { stories: unknown[] }).stories
     : []
   const taken = new Set<string>()
 
@@ -379,7 +379,7 @@ export function findGaps(stories: Story[]): Competency[] {
 
 function buildGaps(questions: unknown, missing: Competency[]): Gap[] {
   const raw = Array.isArray((questions as { questions?: unknown })?.questions)
-    ? ((questions as { questions: unknown[] }).questions)
+    ? (questions as { questions: unknown[] }).questions
     : []
   const wanted = new Set<Competency>(missing)
   const taken = new Set<string>()
@@ -613,12 +613,15 @@ export async function jobDescriptionBrief(
     maxTokens: STEP_TOKENS.jobDescription,
     system: JD_SYSTEM,
     schema: JD_SCHEMA,
-    user:
-      `Story bank:\n${JSON.stringify(
-        bundle.stories.map((s) => ({ id: s.id, competencies: s.competencies, situation: s.situation })),
-        null,
-        2
-      )}\n\nJob description:\n\n${jobDescription}`
+    user: `Story bank:\n${JSON.stringify(
+      bundle.stories.map((s) => ({
+        id: s.id,
+        competencies: s.competencies,
+        situation: s.situation
+      })),
+      null,
+      2
+    )}\n\nJob description:\n\n${jobDescription}`
   })
 
   const known = new Set(bundle.stories.map((s) => s.id))

@@ -1,27 +1,30 @@
-import { DEFAULT_SETTINGS, type HueSettings } from '../shared/types.ts'
+import type { HueSettings } from '../shared/types.ts'
 
 /**
- * Hosts an earlier build shipped as the `ingestBaseUrl` default and which never
- * existed. hue-ingest is a service the user runs, not one we host.
+ * Settings belonging to the `hue-ingest` service, which no longer exists.
  *
- * Correcting the default is not enough on its own. A saved file wins over
- * `DEFAULT_SETTINGS` on merge, and `updateSettings` writes every key back, so a
- * dead value is re-saved on the next settings change and survives the upgrade
- * that was supposed to remove it.
+ * Deleting the fields from `HueSettings` is not enough on its own. A saved file
+ * wins over `DEFAULT_SETTINGS` on merge, and `updateSettings` writes every key
+ * back, so a dead value is re-saved on the next settings change and survives the
+ * upgrade that was supposed to remove it.
+ *
+ * `ingestAccountToken` is the one that makes this urgent rather than tidy: it is
+ * a live credential for a service the user no longer runs, and leaving it on
+ * disk after its reason to exist is gone is nobody's job to clean up later.
  */
-export const RETIRED_INGEST_HOSTS = ['https://ingest.hue.app']
+export const RETIRED_SETTING_KEYS = [
+  'ingestBaseUrl',
+  'ingestAccountId',
+  'ingestAccountToken'
+] as const
 
-const canonical = (raw: string): string => raw.trim().replace(/\/+$/, '')
-
-/**
- * Heal settings read from disk. Only ever replaces a value the user cannot have
- * chosen deliberately — a URL we shipped and then retired. A URL the user typed
- * is left alone even when it is unreachable, because a wrong address they own is
- * theirs to fix and silently rewriting it would hide the mistake.
- */
+/** Heal settings read from disk, dropping keys no build can use any more. */
 export function migrateSettings(settings: HueSettings): HueSettings {
-  if (RETIRED_INGEST_HOSTS.includes(canonical(settings.ingestBaseUrl))) {
-    return { ...settings, ingestBaseUrl: DEFAULT_SETTINGS.ingestBaseUrl }
-  }
-  return settings
+  const record = settings as unknown as Record<string, unknown>
+  const stale = RETIRED_SETTING_KEYS.filter((key) => key in record)
+  if (stale.length === 0) return settings
+
+  const next = { ...record }
+  for (const key of stale) delete next[key]
+  return next as unknown as HueSettings
 }

@@ -161,46 +161,133 @@ const supportSheet: CueSheet = {
 
 const supportCases: { transcript: string; expect: string | null }[] = [
   // ts-prioritize
-  { transcript: 'So, uh, how do you go about prioritizing your support tickets?', expect: 'ts-prioritize' },
-  { transcript: "Let's say you've got twenty tickets sitting there — how do you figure out what to tackle first?", expect: 'ts-prioritize' },
+  {
+    transcript: 'So, uh, how do you go about prioritizing your support tickets?',
+    expect: 'ts-prioritize'
+  },
+  {
+    transcript:
+      "Let's say you've got twenty tickets sitting there — how do you figure out what to tackle first?",
+    expect: 'ts-prioritize'
+  },
   { transcript: 'Walk me through your triage process.', expect: 'ts-prioritize' },
-  { transcript: 'If a VIP customer and a five-alarm outage land at the same time, which one wins?', expect: 'ts-prioritize' },
-  { transcript: "So how do you know, uh, what to work on when everything feels urgent?", expect: 'ts-prioritize' },
-  { transcript: 'How do you order your queue when three things all look important at once?', expect: 'ts-prioritize' },
+  {
+    transcript: 'If a VIP customer and a five-alarm outage land at the same time, which one wins?',
+    expect: 'ts-prioritize'
+  },
+  {
+    transcript: 'So how do you know, uh, what to work on when everything feels urgent?',
+    expect: 'ts-prioritize'
+  },
+  {
+    transcript: 'How do you order your queue when three things all look important at once?',
+    expect: 'ts-prioritize'
+  },
   // ts-difficult-customer
-  { transcript: 'Tell me about a time a customer was really upset with you, how did you handle it?', expect: 'ts-difficult-customer' },
-  { transcript: "So, uh, what do you do when someone's just screaming at you on the phone?", expect: 'ts-difficult-customer' },
-  { transcript: 'Can you walk me through de-escalating a tense support call?', expect: 'ts-difficult-customer' },
-  { transcript: 'Describe the angriest customer you have ever had and how it ended.', expect: 'ts-difficult-customer' },
-  { transcript: 'How do you keep your composure when a client is being hostile?', expect: 'ts-difficult-customer' },
-  { transcript: "What's your approach when somebody's really not happy and taking it out on you?", expect: 'ts-difficult-customer' },
+  {
+    transcript: 'Tell me about a time a customer was really upset with you, how did you handle it?',
+    expect: 'ts-difficult-customer'
+  },
+  {
+    transcript: "So, uh, what do you do when someone's just screaming at you on the phone?",
+    expect: 'ts-difficult-customer'
+  },
+  {
+    transcript: 'Can you walk me through de-escalating a tense support call?',
+    expect: 'ts-difficult-customer'
+  },
+  {
+    transcript: 'Describe the angriest customer you have ever had and how it ended.',
+    expect: 'ts-difficult-customer'
+  },
+  {
+    transcript: 'How do you keep your composure when a client is being hostile?',
+    expect: 'ts-difficult-customer'
+  },
+  {
+    transcript: "What's your approach when somebody's really not happy and taking it out on you?",
+    expect: 'ts-difficult-customer'
+  },
   // ts-escalation
-  { transcript: 'So when do you actually decide to kick something over to engineering?', expect: 'ts-escalation' },
-  { transcript: "How do you know you're in over your head and need to loop someone else in?", expect: 'ts-escalation' },
-  { transcript: 'Walk me through a time you had to escalate a really hard ticket.', expect: 'ts-escalation' },
-  { transcript: "What's the line for you between fixing it yourself and needing a developer?", expect: 'ts-escalation' },
-  { transcript: 'Tell me about handing a problem off because you could not solve it yourself.', expect: 'ts-escalation' },
-  { transcript: 'Uh, how do you decide when a ticket is above your pay grade?', expect: 'ts-escalation' },
+  {
+    transcript: 'So when do you actually decide to kick something over to engineering?',
+    expect: 'ts-escalation'
+  },
+  {
+    transcript: "How do you know you're in over your head and need to loop someone else in?",
+    expect: 'ts-escalation'
+  },
+  {
+    transcript: 'Walk me through a time you had to escalate a really hard ticket.',
+    expect: 'ts-escalation'
+  },
+  {
+    transcript: "What's the line for you between fixing it yourself and needing a developer?",
+    expect: 'ts-escalation'
+  },
+  {
+    transcript: 'Tell me about handing a problem off because you could not solve it yourself.',
+    expect: 'ts-escalation'
+  },
+  {
+    transcript: 'Uh, how do you decide when a ticket is above your pay grade?',
+    expect: 'ts-escalation'
+  },
   // ts-repro
-  { transcript: "So what's your process when you literally can't get the bug to happen on your end?", expect: 'ts-repro' },
-  { transcript: "Tell me about a time the customer's story and the logs just didn't line up.", expect: 'ts-repro' },
-  { transcript: 'How do you dig into something that only seems to happen for one person?', expect: 'ts-repro' },
+  {
+    transcript:
+      "So what's your process when you literally can't get the bug to happen on your end?",
+    expect: 'ts-repro'
+  },
+  {
+    transcript: "Tell me about a time the customer's story and the logs just didn't line up.",
+    expect: 'ts-repro'
+  },
+  {
+    transcript: 'How do you dig into something that only seems to happen for one person?',
+    expect: 'ts-repro'
+  },
   { transcript: 'Walk me through chasing down a really elusive issue.', expect: 'ts-repro' },
-  { transcript: "What do you do when the steps they gave you don't actually reproduce anything?", expect: 'ts-repro' },
-  { transcript: "Uh, how do you even start on a bug that's basically a ghost?", expect: 'ts-repro' },
+  {
+    transcript: "What do you do when the steps they gave you don't actually reproduce anything?",
+    expect: 'ts-repro'
+  },
+  {
+    transcript: "Uh, how do you even start on a bug that's basically a ghost?",
+    expect: 'ts-repro'
+  },
   // ts-docs
-  { transcript: 'How do you make sure what you learn does not just stay in your head?', expect: 'ts-docs' },
-  { transcript: 'Tell me about a time you updated the runbook after fixing something.', expect: 'ts-docs' },
-  { transcript: "So, uh, what's your relationship with the internal docs, do you actually use them?", expect: 'ts-docs' },
-  { transcript: 'How do you avoid the team solving the same problem over and over?', expect: 'ts-docs' },
+  {
+    transcript: 'How do you make sure what you learn does not just stay in your head?',
+    expect: 'ts-docs'
+  },
+  {
+    transcript: 'Tell me about a time you updated the runbook after fixing something.',
+    expect: 'ts-docs'
+  },
+  {
+    transcript:
+      "So, uh, what's your relationship with the internal docs, do you actually use them?",
+    expect: 'ts-docs'
+  },
+  {
+    transcript: 'How do you avoid the team solving the same problem over and over?',
+    expect: 'ts-docs'
+  },
   { transcript: 'Walk me through documenting a fix once you have found it.', expect: 'ts-docs' },
-  { transcript: "What do you do with knowledge that's just floating around in people's heads?", expect: 'ts-docs' },
+  {
+    transcript: "What do you do with knowledge that's just floating around in people's heads?",
+    expect: 'ts-docs'
+  },
   // negatives: logistics, small talk, and adjacent-but-different
   { transcript: "What's your notice period?", expect: null },
   { transcript: 'What are your salary expectations for this role?', expect: null },
   { transcript: 'Are you open to relocating for this position?', expect: null },
   { transcript: 'So how was your commute here today?', expect: null },
-  { transcript: 'What tools have you used for ticketing — Zendesk, Jira, something else?', expect: null },
+  {
+    transcript: 'What tools have you used for ticketing — Zendesk, Jira, something else?',
+    expect: null
+  },
   { transcript: 'How many tickets do you typically close in a day?', expect: null },
   { transcript: 'What do you like to do outside of work?', expect: null }
 ]
@@ -245,7 +332,7 @@ const backendSheet: CueSheet = {
       id: 'be-incident',
       heading: 'Debugging a production incident',
       script:
-        "The first thing I do is stop the bleeding — roll back or feature-flag off if I can, before I even know the root cause, because restoring service matters more than being clever. Once things are stable I go through logs and metrics methodically rather than guessing, and I write the postmortem the same day while details are fresh. Blameless postmortems only work if you actually write them promptly.",
+        'The first thing I do is stop the bleeding — roll back or feature-flag off if I can, before I even know the root cause, because restoring service matters more than being clever. Once things are stable I go through logs and metrics methodically rather than guessing, and I write the postmortem the same day while details are fresh. Blameless postmortems only work if you actually write them promptly.',
       cues: [
         'Stop the bleeding before root-causing',
         'Rollback or flag off first',
@@ -350,40 +437,129 @@ const backendSheet: CueSheet = {
 
 const backendCases: { transcript: string; expect: string | null }[] = [
   // be-scaling
-  { transcript: 'Tell me about a time your system almost fell over from too much traffic, what did you do?', expect: 'be-scaling' },
+  {
+    transcript:
+      'Tell me about a time your system almost fell over from too much traffic, what did you do?',
+    expect: 'be-scaling'
+  },
   { transcript: 'Walk me through handling a huge spike in demand.', expect: 'be-scaling' },
-  { transcript: "So, uh, how did you keep things running when load way exceeded what you'd planned for?", expect: 'be-scaling' },
-  { transcript: 'Describe a launch where you were genuinely worried about capacity.', expect: 'be-scaling' },
-  { transcript: 'How do you scale a database once it becomes the bottleneck?', expect: 'be-scaling' },
-  { transcript: 'What is a time you had to make something handle ten times more traffic?', expect: 'be-scaling' },
+  {
+    transcript:
+      "So, uh, how did you keep things running when load way exceeded what you'd planned for?",
+    expect: 'be-scaling'
+  },
+  {
+    transcript: 'Describe a launch where you were genuinely worried about capacity.',
+    expect: 'be-scaling'
+  },
+  {
+    transcript: 'How do you scale a database once it becomes the bottleneck?',
+    expect: 'be-scaling'
+  },
+  {
+    transcript: 'What is a time you had to make something handle ten times more traffic?',
+    expect: 'be-scaling'
+  },
   // be-incident
-  { transcript: 'So walk me through what you actually do when you get paged at 3am.', expect: 'be-incident' },
-  { transcript: "Tell me about the worst outage you've ever had to deal with.", expect: 'be-incident' },
+  {
+    transcript: 'So walk me through what you actually do when you get paged at 3am.',
+    expect: 'be-incident'
+  },
+  {
+    transcript: "Tell me about the worst outage you've ever had to deal with.",
+    expect: 'be-incident'
+  },
   { transcript: 'How do you stay level-headed when production is on fire?', expect: 'be-incident' },
-  { transcript: "Describe your process the moment you realize something's seriously broken.", expect: 'be-incident' },
-  { transcript: 'Walk me through writing up a postmortem after an incident.', expect: 'be-incident' },
-  { transcript: "Uh, what's the first thing you do when you find out something's down?", expect: 'be-incident' },
+  {
+    transcript: "Describe your process the moment you realize something's seriously broken.",
+    expect: 'be-incident'
+  },
+  {
+    transcript: 'Walk me through writing up a postmortem after an incident.',
+    expect: 'be-incident'
+  },
+  {
+    transcript: "Uh, what's the first thing you do when you find out something's down?",
+    expect: 'be-incident'
+  },
   // be-codereview
-  { transcript: "So what's your actual philosophy when you're reviewing somebody else's PR?", expect: 'be-codereview' },
-  { transcript: 'Tell me about a time you had to push back pretty hard on a pull request.', expect: 'be-codereview' },
-  { transcript: "How do you make sure your feedback on someone's code doesn't come off as harsh?", expect: 'be-codereview' },
-  { transcript: 'What do you look for first when you open up a diff to review?', expect: 'be-codereview' },
-  { transcript: 'Walk me through how you mentor junior engineers through review.', expect: 'be-codereview' },
-  { transcript: "Uh, how do you balance being thorough with just, you know, not slowing everyone down?", expect: 'be-codereview' },
+  {
+    transcript: "So what's your actual philosophy when you're reviewing somebody else's PR?",
+    expect: 'be-codereview'
+  },
+  {
+    transcript: 'Tell me about a time you had to push back pretty hard on a pull request.',
+    expect: 'be-codereview'
+  },
+  {
+    transcript: "How do you make sure your feedback on someone's code doesn't come off as harsh?",
+    expect: 'be-codereview'
+  },
+  {
+    transcript: 'What do you look for first when you open up a diff to review?',
+    expect: 'be-codereview'
+  },
+  {
+    transcript: 'Walk me through how you mentor junior engineers through review.',
+    expect: 'be-codereview'
+  },
+  {
+    transcript:
+      'Uh, how do you balance being thorough with just, you know, not slowing everyone down?',
+    expect: 'be-codereview'
+  },
   // be-migration
-  { transcript: "Tell me about a time you had to change a schema without taking anything down.", expect: 'be-migration' },
-  { transcript: "Walk me through a migration where losing data would've been really bad.", expect: 'be-migration' },
-  { transcript: 'How do you approach moving a huge table to a new structure safely?', expect: 'be-migration' },
-  { transcript: 'So, uh, how do you migrate a live database without everyone noticing?', expect: 'be-migration' },
-  { transcript: "Describe backfilling data on a system that can't go down.", expect: 'be-migration' },
-  { transcript: "What's your process for a migration you can't easily undo?", expect: 'be-migration' },
+  {
+    transcript: 'Tell me about a time you had to change a schema without taking anything down.',
+    expect: 'be-migration'
+  },
+  {
+    transcript: "Walk me through a migration where losing data would've been really bad.",
+    expect: 'be-migration'
+  },
+  {
+    transcript: 'How do you approach moving a huge table to a new structure safely?',
+    expect: 'be-migration'
+  },
+  {
+    transcript: 'So, uh, how do you migrate a live database without everyone noticing?',
+    expect: 'be-migration'
+  },
+  {
+    transcript: "Describe backfilling data on a system that can't go down.",
+    expect: 'be-migration'
+  },
+  {
+    transcript: "What's your process for a migration you can't easily undo?",
+    expect: 'be-migration'
+  },
   // be-tradeoffs
-  { transcript: 'Tell me about a really hard technical call you had to make where there was no obviously right answer.', expect: 'be-tradeoffs' },
-  { transcript: 'How do you decide between two approaches that are both kind of valid?', expect: 'be-tradeoffs' },
-  { transcript: 'Walk me through a decision you documented so the next person would understand it.', expect: 'be-tradeoffs' },
-  { transcript: 'So, uh, how do you know when you are over-engineering something versus actually needing it?', expect: 'be-tradeoffs' },
-  { transcript: 'Tell me about picking a technology for a brand new system.', expect: 'be-tradeoffs' },
-  { transcript: 'Describe a time you chose the simpler option over the fancier one.', expect: 'be-tradeoffs' },
+  {
+    transcript:
+      'Tell me about a really hard technical call you had to make where there was no obviously right answer.',
+    expect: 'be-tradeoffs'
+  },
+  {
+    transcript: 'How do you decide between two approaches that are both kind of valid?',
+    expect: 'be-tradeoffs'
+  },
+  {
+    transcript: 'Walk me through a decision you documented so the next person would understand it.',
+    expect: 'be-tradeoffs'
+  },
+  {
+    transcript:
+      'So, uh, how do you know when you are over-engineering something versus actually needing it?',
+    expect: 'be-tradeoffs'
+  },
+  {
+    transcript: 'Tell me about picking a technology for a brand new system.',
+    expect: 'be-tradeoffs'
+  },
+  {
+    transcript: 'Describe a time you chose the simpler option over the fancier one.',
+    expect: 'be-tradeoffs'
+  },
   // negatives: logistics, small talk, and adjacent-but-different
   { transcript: "What's your notice period?", expect: null },
   { transcript: 'Are you authorized to work in this country?', expect: null },
@@ -459,7 +635,7 @@ const pmSheet: CueSheet = {
       id: 'pm-stakeholder',
       heading: 'Managing stakeholder expectations',
       script:
-        "I over-communicate early rather than showing up with bad news late — if I know a date is at risk in week two, stakeholders hear it in week two, not week six. I also translate status into what it means for them specifically, not a generic percent-complete number, because a VP and an engineer need different information from the same fact. People forgive a changed date far more than they forgive being surprised by one.",
+        'I over-communicate early rather than showing up with bad news late — if I know a date is at risk in week two, stakeholders hear it in week two, not week six. I also translate status into what it means for them specifically, not a generic percent-complete number, because a VP and an engineer need different information from the same fact. People forgive a changed date far more than they forgive being surprised by one.',
       cues: [
         'Over-communicate risk early, not late',
         'Translate status into what it means for them',
@@ -476,7 +652,7 @@ const pmSheet: CueSheet = {
         'describe managing up during a risky project',
         "tell me about a status update that didn't go well",
         'how do you avoid surprising leadership with bad news',
-        "walk me through building trust with a skeptical stakeholder",
+        'walk me through building trust with a skeptical stakeholder',
         'tell me about translating technical status for executives',
         'how do you handle conflicting stakeholder priorities'
       ]
@@ -536,52 +712,137 @@ const pmSheet: CueSheet = {
 
 const pmCases: { transcript: string; expect: string | null }[] = [
   // pm-conflict
-  { transcript: "Tell me about a time you had to step in between two people who just weren't getting along.", expect: 'pm-conflict' },
-  { transcript: 'Walk me through mediating a disagreement between two strong-willed people.', expect: 'pm-conflict' },
-  { transcript: "So, uh, how do you handle it when two people on your team are butting heads?", expect: 'pm-conflict' },
-  { transcript: "Describe a moment you had to referee something that was getting heated.", expect: 'pm-conflict' },
-  { transcript: 'How do you keep personal friction from tanking a project?', expect: 'pm-conflict' },
+  {
+    transcript:
+      "Tell me about a time you had to step in between two people who just weren't getting along.",
+    expect: 'pm-conflict'
+  },
+  {
+    transcript: 'Walk me through mediating a disagreement between two strong-willed people.',
+    expect: 'pm-conflict'
+  },
+  {
+    transcript: 'So, uh, how do you handle it when two people on your team are butting heads?',
+    expect: 'pm-conflict'
+  },
+  {
+    transcript: 'Describe a moment you had to referee something that was getting heated.',
+    expect: 'pm-conflict'
+  },
+  {
+    transcript: 'How do you keep personal friction from tanking a project?',
+    expect: 'pm-conflict'
+  },
   { transcript: 'Tell me about navigating a dispute between stakeholders.', expect: 'pm-conflict' },
   // pm-deadline
-  { transcript: "Tell me about a project that just didn't ship on time — what happened?", expect: 'pm-deadline' },
-  { transcript: 'Walk me through a time you had to tell stakeholders you were going to be late.', expect: 'pm-deadline' },
-  { transcript: 'So, uh, describe a commitment you made that you ended up not being able to keep.', expect: 'pm-deadline' },
-  { transcript: 'How do you bounce back after a project goes sideways on the schedule?', expect: 'pm-deadline' },
-  { transcript: 'Tell me about owning a mistake that pushed a launch date.', expect: 'pm-deadline' },
-  { transcript: 'Describe a plan that fell apart and what you did about it.', expect: 'pm-deadline' },
+  {
+    transcript: "Tell me about a project that just didn't ship on time — what happened?",
+    expect: 'pm-deadline'
+  },
+  {
+    transcript: 'Walk me through a time you had to tell stakeholders you were going to be late.',
+    expect: 'pm-deadline'
+  },
+  {
+    transcript: 'So, uh, describe a commitment you made that you ended up not being able to keep.',
+    expect: 'pm-deadline'
+  },
+  {
+    transcript: 'How do you bounce back after a project goes sideways on the schedule?',
+    expect: 'pm-deadline'
+  },
+  {
+    transcript: 'Tell me about owning a mistake that pushed a launch date.',
+    expect: 'pm-deadline'
+  },
+  {
+    transcript: 'Describe a plan that fell apart and what you did about it.',
+    expect: 'pm-deadline'
+  },
   // pm-stakeholder
-  { transcript: 'Tell me about a time you had to deliver bad news to leadership.', expect: 'pm-stakeholder' },
-  { transcript: 'How do you keep a demanding VP happy when things are not going great?', expect: 'pm-stakeholder' },
-  { transcript: "Walk me through building trust with someone who didn't believe in the project.", expect: 'pm-stakeholder' },
-  { transcript: "So, uh, how do you make sure the people above you aren't blindsided by a change?", expect: 'pm-stakeholder' },
-  { transcript: 'Tell me about saying no to a stakeholder who wanted something unreasonable.', expect: 'pm-stakeholder' },
-  { transcript: 'Describe translating a messy technical status into something an exec actually cares about.', expect: 'pm-stakeholder' },
+  {
+    transcript: 'Tell me about a time you had to deliver bad news to leadership.',
+    expect: 'pm-stakeholder'
+  },
+  {
+    transcript: 'How do you keep a demanding VP happy when things are not going great?',
+    expect: 'pm-stakeholder'
+  },
+  {
+    transcript: "Walk me through building trust with someone who didn't believe in the project.",
+    expect: 'pm-stakeholder'
+  },
+  {
+    transcript: "So, uh, how do you make sure the people above you aren't blindsided by a change?",
+    expect: 'pm-stakeholder'
+  },
+  {
+    transcript: 'Tell me about saying no to a stakeholder who wanted something unreasonable.',
+    expect: 'pm-stakeholder'
+  },
+  {
+    transcript:
+      'Describe translating a messy technical status into something an exec actually cares about.',
+    expect: 'pm-stakeholder'
+  },
   // pm-prioritize
-  { transcript: 'Walk me through how you decide what your team works on when everything feels important.', expect: 'pm-prioritize' },
-  { transcript: 'Tell me about a time you had to say no to a project other people really wanted.', expect: 'pm-prioritize' },
-  { transcript: "So, uh, how do you keep from just prioritizing whoever's the loudest?", expect: 'pm-prioritize' },
-  { transcript: 'How do you divide limited resources across two things that both matter?', expect: 'pm-prioritize' },
-  { transcript: 'Describe a prioritization call you made that was not popular.', expect: 'pm-prioritize' },
+  {
+    transcript:
+      'Walk me through how you decide what your team works on when everything feels important.',
+    expect: 'pm-prioritize'
+  },
+  {
+    transcript: 'Tell me about a time you had to say no to a project other people really wanted.',
+    expect: 'pm-prioritize'
+  },
+  {
+    transcript: "So, uh, how do you keep from just prioritizing whoever's the loudest?",
+    expect: 'pm-prioritize'
+  },
+  {
+    transcript: 'How do you divide limited resources across two things that both matter?',
+    expect: 'pm-prioritize'
+  },
+  {
+    transcript: 'Describe a prioritization call you made that was not popular.',
+    expect: 'pm-prioritize'
+  },
   { transcript: 'Tell me about your framework for ranking a backlog.', expect: 'pm-prioritize' },
   // pm-time — deliberately includes the literal STOPWORDS-affected phrasing
-  { transcript: 'So, how do you manage your time when there is just so much going on?', expect: 'pm-time' },
+  {
+    transcript: 'So, how do you manage your time when there is just so much going on?',
+    expect: 'pm-time'
+  },
   { transcript: 'How do you keep your calendar from running your entire life?', expect: 'pm-time' },
   { transcript: 'Walk me through how you actually plan out your day.', expect: 'pm-time' },
-  { transcript: 'Tell me about protecting focus time when meetings want to eat everything.', expect: 'pm-time' },
-  { transcript: 'How do you make sure nothing falls through the cracks with so much on your plate?', expect: 'pm-time' },
-  { transcript: 'What does a typical week look like for you, organizationally?', expect: 'pm-time' },
+  {
+    transcript: 'Tell me about protecting focus time when meetings want to eat everything.',
+    expect: 'pm-time'
+  },
+  {
+    transcript: 'How do you make sure nothing falls through the cracks with so much on your plate?',
+    expect: 'pm-time'
+  },
+  {
+    transcript: 'What does a typical week look like for you, organizationally?',
+    expect: 'pm-time'
+  },
   // negatives: logistics, small talk, and adjacent-but-different
   { transcript: "What's your notice period?", expect: null },
   { transcript: 'What salary range are you looking for?', expect: null },
   { transcript: 'Are you interviewing with other companies right now?', expect: null },
   { transcript: 'So, what do you like to do for fun outside of work?', expect: null },
-  { transcript: 'What project management tools have you used — Jira, Asana, Monday?', expect: null },
+  {
+    transcript: 'What project management tools have you used — Jira, Asana, Monday?',
+    expect: null
+  },
   { transcript: 'How big was the team you managed?', expect: null },
   { transcript: 'What is your availability to start?', expect: null }
 ]
 
-export const CORPUS: { sheet: CueSheet; cases: { transcript: string; expect: string | null }[] }[] = [
-  { sheet: supportSheet, cases: supportCases },
-  { sheet: backendSheet, cases: backendCases },
-  { sheet: pmSheet, cases: pmCases }
-]
+export const CORPUS: { sheet: CueSheet; cases: { transcript: string; expect: string | null }[] }[] =
+  [
+    { sheet: supportSheet, cases: supportCases },
+    { sheet: backendSheet, cases: backendCases },
+    { sheet: pmSheet, cases: pmCases }
+  ]

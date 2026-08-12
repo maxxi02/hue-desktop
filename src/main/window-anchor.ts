@@ -86,7 +86,13 @@ const AXES: Record<GridAnchor, { h: Axis; v: Axis }> = {
  * coordinates itself, and rounding here keeps what we compute equal to what we
  * later read back out of the window.
  */
-function place(axis: Axis, origin: number, available: number, extent: number, margin: number): number {
+function place(
+  axis: Axis,
+  origin: number,
+  available: number,
+  extent: number,
+  margin: number
+): number {
   if (axis === 'start') return origin + margin
   if (axis === 'end') return origin + available - extent - margin
   return origin + Math.round((available - extent) / 2)

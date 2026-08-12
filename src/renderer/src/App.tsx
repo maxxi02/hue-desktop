@@ -1026,7 +1026,9 @@ export default function App(): React.JSX.Element {
             ) : (
               messages.map((msg, i) => (
                 <div key={i} className={`bubble bubble--${msg.role}`}>
-                  <div className="bubble-label">{msg.role === 'user' ? userLabel : assistantLabel}</div>
+                  <div className="bubble-label">
+                    {msg.role === 'user' ? userLabel : assistantLabel}
+                  </div>
                   {msg.image ? (
                     <img
                       className="bubble-capture"

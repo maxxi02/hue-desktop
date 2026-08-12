@@ -1,7 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { LlmClient, StructuredRequest } from './structured-llm.ts'
-import { COMPETENCIES, profilePromptBlock as promptBlock, storyIds, type ProfileBundle } from '../shared/profile.ts'
+import {
+  COMPETENCIES,
+  profilePromptBlock as promptBlock,
+  storyIds,
+  type ProfileBundle
+} from '../shared/profile.ts'
 import { contentHash } from './resume-profile.ts'
 import {
   answerGap,
@@ -90,7 +95,12 @@ const EXTRACTED = {
   ]
 }
 
-function story(id: string, roleId: string | null, tags: string[], extra: Record<string, unknown> = {}) {
+function story(
+  id: string,
+  roleId: string | null,
+  tags: string[],
+  extra: Record<string, unknown> = {}
+): Record<string, unknown> {
   return {
     id,
     roleId,
@@ -116,15 +126,21 @@ const MINED = {
 
 const GAP_QUESTIONS = {
   questions: [
-    { competency: 'failure', question: "Tell me about a project that didn't ship — what happened?" },
-    { competency: 'ambiguity', question: 'When did you have to start work with the goal still unclear?' },
+    {
+      competency: 'failure',
+      question: "Tell me about a project that didn't ship — what happened?"
+    },
+    {
+      competency: 'ambiguity',
+      question: 'When did you have to start work with the goal still unclear?'
+    },
     { competency: 'deadline-pressure', question: 'When did a date force a hard call?' },
     // Covered already — must be discarded rather than take a slot.
     { competency: 'conflict', question: 'Tell me about a disagreement.' }
   ]
 }
 
-function scripted(overrides: Record<string, unknown> = {}) {
+function scripted(overrides: Record<string, unknown> = {}): LlmClient & { calls: StructuredRequest[] } {
   return fakeLlm({
     'profile extraction': EXTRACTED,
     'story mining': MINED,
@@ -133,7 +149,7 @@ function scripted(overrides: Record<string, unknown> = {}) {
   })
 }
 
-const FIXED_NOW = () => new Date('2026-08-09T12:00:00.000Z')
+const FIXED_NOW = (): Date => new Date('2026-08-09T12:00:00.000Z')
 
 test('a resume produces a sealed, grounded bundle', async () => {
   const { bundle, report } = await runIngest(RESUME, scripted(), { now: FIXED_NOW })
@@ -141,9 +157,15 @@ test('a resume produces a sealed, grounded bundle', async () => {
   assert.equal(bundle.version, 1)
   assert.equal(bundle.hash.length, 64)
   assert.equal(bundle.createdAt, '2026-08-09T12:00:00.000Z')
-  assert.deepEqual(bundle.profile.roles.map((r) => r.company), ['Acme Robotics', 'Northwind Data'])
+  assert.deepEqual(
+    bundle.profile.roles.map((r) => r.company),
+    ['Acme Robotics', 'Northwind Data']
+  )
   assert.equal(bundle.stories.length, 3)
-  assert.deepEqual(report.issues.filter((i) => i.severity === 'error'), [])
+  assert.deepEqual(
+    report.issues.filter((i) => i.severity === 'error'),
+    []
+  )
 })
 
 test('the hash is content-only, so a re-run of the same resume is the same bundle', async () => {
@@ -195,10 +217,16 @@ test('a hallucinated employer never reaches the bundle', async () => {
     { now: FIXED_NOW }
   )
 
-  assert.deepEqual(bundle.profile.roles.map((r) => r.company), ['Acme Robotics', 'Northwind Data'])
+  assert.deepEqual(
+    bundle.profile.roles.map((r) => r.company),
+    ['Acme Robotics', 'Northwind Data']
+  )
   assert.ok(report.dropped.some((d) => d.value === 'Globex Corporation'))
   // And the bundle that survives is itself clean.
-  assert.deepEqual(report.issues.filter((i) => i.severity === 'error'), [])
+  assert.deepEqual(
+    report.issues.filter((i) => i.severity === 'error'),
+    []
+  )
 })
 
 test('an invented metric on a real role is dropped', async () => {
@@ -215,7 +243,10 @@ test('an invented metric on a real role is dropped', async () => {
     }),
     { now: FIXED_NOW }
   )
-  assert.deepEqual(bundle.profile.metrics.map((m) => m.value), ['40%', '2.4M events per day'])
+  assert.deepEqual(
+    bundle.profile.metrics.map((m) => m.value),
+    ['40%', '2.4M events per day']
+  )
 })
 
 test('gaps are the set difference, with the invention-prone competencies first', () => {
@@ -232,18 +263,32 @@ test('gaps are the set difference, with the invention-prone competencies first',
 test('gap questions are capped and never ask about a covered competency', async () => {
   const { bundle } = await runIngest(RESUME, scripted(), { now: FIXED_NOW })
   assert.ok(bundle.gaps.length <= MAX_GAP_QUESTIONS)
-  assert.deepEqual(bundle.gaps.map((g) => g.competency), ['failure', 'ambiguity', 'deadline-pressure'])
+  assert.deepEqual(
+    bundle.gaps.map((g) => g.competency),
+    ['failure', 'ambiguity', 'deadline-pressure']
+  )
   assert.ok(bundle.gaps.every((g) => g.status === 'open'))
 })
 
 test('the gap scan is skipped entirely when the bank covers everything', async () => {
   const llm = scripted({
     'story mining': {
-      stories: [story('everything', 'acme-robotics', [
-        'conflict', 'failure', 'leadership', 'ambiguity', 'scaling', 'deadline-pressure',
-        'influence-without-authority', 'technical-tradeoff', 'mentorship', 'customer-focus',
-        'data-driven-decision', 'ownership'
-      ])]
+      stories: [
+        story('everything', 'acme-robotics', [
+          'conflict',
+          'failure',
+          'leadership',
+          'ambiguity',
+          'scaling',
+          'deadline-pressure',
+          'influence-without-authority',
+          'technical-tradeoff',
+          'mentorship',
+          'customer-focus',
+          'data-driven-decision',
+          'ownership'
+        ])
+      ]
     }
   })
   const { bundle } = await runIngest(RESUME, llm, { now: FIXED_NOW })
@@ -337,11 +382,16 @@ test('normalisation makes story ids unique within one mining pass', () => {
   const stories = normaliseStories({
     stories: [story('same-id', null, ['conflict']), story('same-id', null, ['failure'])]
   })
-  assert.deepEqual(stories.map((s) => s.id), ['same-id', 'same-id-2'])
+  assert.deepEqual(
+    stories.map((s) => s.id),
+    ['same-id', 'same-id-2']
+  )
 })
 
 test('normalisation drops unknown competency tags rather than storing them', () => {
-  const [only] = normaliseStories({ stories: [story('x', null, ['conflict', 'vibes', 'conflict'])] })
+  const [only] = normaliseStories({
+    stories: [story('x', null, ['conflict', 'vibes', 'conflict'])]
+  })
   assert.deepEqual(only.competencies, ['conflict'])
 })
 
@@ -352,7 +402,10 @@ test('a role missing a company or title is discarded', () => {
       { id: 'b', company: 'Northwind', title: 'Engineer', current: false, stack: [], summary: null }
     ]
   })
-  assert.deepEqual(profile.roles.map((r) => r.company), ['Northwind'])
+  assert.deepEqual(
+    profile.roles.map((r) => r.company),
+    ['Northwind']
+  )
 })
 
 test('a metric pointing at a discarded role is detached, not deleted', () => {
@@ -398,11 +451,21 @@ test('a job description maps questions to stories and flags what nothing covers'
     fakeLlm({
       'job description pass': {
         likelyQuestions: [
-          { question: 'Tell me about a disagreement.', storyId: 'conflict-manager-roadmap', competency: 'conflict' },
+          {
+            question: 'Tell me about a disagreement.',
+            storyId: 'conflict-manager-roadmap',
+            competency: 'conflict'
+          },
           // A story id that is not in the bank must read as "no story".
-          { question: 'Walk me through an outage.', storyId: 'incident-response', competency: 'ownership' }
+          {
+            question: 'Walk me through an outage.',
+            storyId: 'incident-response',
+            competency: 'ownership'
+          }
         ],
-        uncoveredRequirements: [{ requirement: 'led incident response', note: 'No story covers this.' }]
+        uncoveredRequirements: [
+          { requirement: 'led incident response', note: 'No story covers this.' }
+        ]
       }
     })
   )

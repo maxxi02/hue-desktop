@@ -149,24 +149,13 @@ export function canonicalJson(value: unknown): string {
 }
 
 /**
- * Aliases for the names the ingest pipeline used before it moved in here.
+ * Steps of a local ingest.
  *
- * The shapes were always identical; only the names differed, because
- * `hue-ingest` and the desktop grew apart while the bundle contract stayed
- * frozen by its hash. Aliasing rather than renaming keeps the ported pipeline
- * diffable against its origin, which matters while the grounding eval is the
- * thing proving the port changed no behaviour.
+ * `uploading` is gone: nothing is uploaded any more. Each remaining phase maps
+ * to exactly one model call, so the label describes work that is genuinely
+ * happening rather than captioning a spinner.
  */
-export type Identity = ProfileIdentity
-export type Role = ProfileRole
-export type Education = ProfileEducation
-export type Metric = ProfileMetric
-export type Story = ProfileStory
-export type Gap = ProfileGap
-export type StorySource = ProfileStory['source']
-export type GapStatus = ProfileGap['status']
-
-export type IngestPhase = 'uploading' | 'extracting' | 'working'
+export type IngestPhase = 'extracting' | 'mining-profile' | 'mining-stories' | 'gap-scan'
 
 /** Progress for the Settings label while an ingest runs. */
 export interface IngestProgress {
@@ -184,6 +173,18 @@ export interface IngestProgress {
 export type IngestOutcome =
   | { ok: true; bundle: ProfileBundle }
   | { ok: false; message: string; retryable: boolean }
+
+/**
+ * The result of answering one gap question.
+ *
+ * `accepted: false` is not an error — it is the pipeline reporting that the
+ * answer was on topic but contained no story it could use. That is a different
+ * thing from a failure, and the user needs to be able to tell them apart: one
+ * means "edit what you wrote", the other means "something broke".
+ */
+export type GapAnswerOutcome =
+  | { ok: true; bundle: ProfileBundle; accepted: boolean; reason: string | null }
+  | { ok: false; message: string }
 
 /**
  * Shape-checks a bundle parsed from disk or from the network.

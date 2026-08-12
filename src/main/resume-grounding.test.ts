@@ -1,6 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkProfile, checkStories, containsClaim, normalise, pruneUngrounded } from './resume-grounding.ts'
+import {
+  checkProfile,
+  checkStories,
+  containsClaim,
+  normalise,
+  pruneUngrounded
+} from './resume-grounding.ts'
 import { emptyProfile, type Profile, type Story } from './resume-types.ts'
 
 const RESUME = `
@@ -61,7 +67,9 @@ test('containsClaim rejects the empty needle', () => {
 test('a grounded profile produces no errors', () => {
   const profile = profileWith({
     roles: [role(), role({ id: 'r2', company: 'Northwind Data', title: 'Backend Engineer' })],
-    education: [{ institution: 'ETH Zurich', credential: 'BSc', field: 'Computer Science', end: '2018' }],
+    education: [
+      { institution: 'ETH Zurich', credential: 'BSc', field: 'Computer Science', end: '2018' }
+    ],
     metrics: [{ roleId: 'r1', value: '40%', claim: 'p99 checkout latency reduction' }]
   })
   const issues = checkProfile(profile, RESUME).filter((i) => i.severity === 'error')
@@ -78,7 +86,9 @@ test('a hallucinated employer is an error', () => {
 
 test('a corporate suffix absent from the body text is not a hallucination', () => {
   // "Northwind Data LLC" against a resume that writes "Northwind Data".
-  const profile = profileWith({ roles: [role({ company: 'Northwind Data LLC', title: 'Backend Engineer' })] })
+  const profile = profileWith({
+    roles: [role({ company: 'Northwind Data LLC', title: 'Backend Engineer' })]
+  })
   const issues = checkProfile(profile, RESUME).filter((i) => i.severity === 'error')
   assert.deepEqual(issues, [])
 })
@@ -94,13 +104,23 @@ test('an invented metric is an error; a reworded real one is not', () => {
   const invented = profileWith({ metrics: [{ roleId: 'r1', value: '73%', claim: 'cost saving' }] })
   assert.equal(checkProfile(invented, RESUME).filter((i) => i.severity === 'error').length, 1)
 
-  const reworded = profileWith({ metrics: [{ roleId: 'r1', value: '40% faster p99', claim: 'checkout' }] })
-  assert.deepEqual(checkProfile(reworded, RESUME).filter((i) => i.severity === 'error'), [])
+  const reworded = profileWith({
+    metrics: [{ roleId: 'r1', value: '40% faster p99', claim: 'checkout' }]
+  })
+  assert.deepEqual(
+    checkProfile(reworded, RESUME).filter((i) => i.severity === 'error'),
+    []
+  )
 })
 
 test('a metric written with a thousands separator still matches', () => {
-  const profile = profileWith({ metrics: [{ roleId: 'r2', value: '2.4M events/day', claim: 'ingestion' }] })
-  assert.deepEqual(checkProfile(profile, RESUME).filter((i) => i.severity === 'error'), [])
+  const profile = profileWith({
+    metrics: [{ roleId: 'r2', value: '2.4M events/day', claim: 'ingestion' }]
+  })
+  assert.deepEqual(
+    checkProfile(profile, RESUME).filter((i) => i.severity === 'error'),
+    []
+  )
 })
 
 test('an unstated skill is a warning, not an error', () => {
@@ -162,8 +182,14 @@ test('pruning drops the fabricated role and keeps the real one', () => {
 
   const pruned = pruneUngrounded(profile, stories, RESUME)
 
-  assert.deepEqual(pruned.profile.roles.map((r) => r.id), ['r1'])
-  assert.deepEqual(pruned.profile.metrics.map((m) => m.value), ['40%'])
+  assert.deepEqual(
+    pruned.profile.roles.map((r) => r.id),
+    ['r1']
+  )
+  assert.deepEqual(
+    pruned.profile.metrics.map((m) => m.value),
+    ['40%']
+  )
   assert.ok(pruned.dropped.length > 0)
   // The story survives, detached — the narrative is still the user's own.
   assert.equal(pruned.stories.length, 2)

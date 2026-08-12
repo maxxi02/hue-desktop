@@ -156,7 +156,10 @@ export function anthropicClient(opts: AnthropicOptions = {}): LlmClient {
     try {
       return JSON.parse(text) as T
     } catch {
-      throw new LlmRefusal(`The ${request.label} step returned output that was not JSON.`, request.label)
+      throw new LlmRefusal(
+        `The ${request.label} step returned output that was not JSON.`,
+        request.label
+      )
     }
   }
 

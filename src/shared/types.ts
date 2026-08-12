@@ -140,18 +140,13 @@ export interface HueSettings {
    */
   resumeSummary: string
   /**
-   * The structured `ProfileBundle` from hue-ingest, stored as JSON.
+   * The structured `ProfileBundle` produced by ingest, stored as JSON.
    *
    * Serialised rather than nested because settings are a flat, user-editable
    * document and a malformed bundle must be recoverable by clearing one field
    * rather than by hand-repairing a nested object.
    */
   profileBundleJson: string
-  /** hue-ingest account credentials. Never leaves the main process. */
-  ingestAccountId: string
-  ingestAccountToken: string
-  /** Overridable so a self-hosted ingest deployment is a setting, not a fork. */
-  ingestBaseUrl: string
   jobTitle: string
   interviewMode: InterviewMode
   /** Whether Hue acts as the interviewer or as a companion answering the interviewer. */
@@ -247,9 +242,6 @@ export const DEFAULT_SETTINGS: HueSettings = {
   windowFreeBounds: null,
   resumeSummary: '',
   profileBundleJson: '',
-  ingestAccountId: '',
-  ingestAccountToken: '',
-  ingestBaseUrl: 'http://localhost:8788',
   jobTitle: '',
   interviewMode: 'practice',
   hueMode: 'companion',
@@ -267,9 +259,6 @@ export const DEFAULT_SETTINGS: HueSettings = {
 
 /** Keys that are sensitive and stored encrypted at rest via Electron safeStorage. */
 export const SECRET_SETTING_KEYS = [
-  // Reads the user's entire career history from hue-ingest, so it is a secret
-  // in exactly the sense the others are.
-  'ingestAccountToken',
   'anthropicApiKey',
   'deepgramApiKey',
   'assemblyAiApiKey',

@@ -36,7 +36,12 @@ function workAreas(): Rect[] {
 
 function setBoundsIfChanged(win: BrowserWindow, next: Rect): void {
   const now = win.getBounds()
-  if (now.x === next.x && now.y === next.y && now.width === next.width && now.height === next.height)
+  if (
+    now.x === next.x &&
+    now.y === next.y &&
+    now.width === next.width &&
+    now.height === next.height
+  )
     return
   win.setBounds(next)
 }

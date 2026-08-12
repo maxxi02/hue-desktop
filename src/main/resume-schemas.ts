@@ -95,7 +95,16 @@ export const STORIES_SCHEMA: Record<string, unknown> = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['id', 'roleId', 'competencies', 'situation', 'task', 'action', 'result', 'metrics'],
+        required: [
+          'id',
+          'roleId',
+          'competencies',
+          'situation',
+          'task',
+          'action',
+          'result',
+          'metrics'
+        ],
         properties: {
           // Slug-like and human-meaningful: this id is the grounding receipt
           // the live UI shows, so "conflict-manager-roadmap" beats "s7".
@@ -146,7 +155,16 @@ export const GAP_ANSWER_SCHEMA: Record<string, unknown> = {
     story: {
       type: ['object', 'null'],
       additionalProperties: false,
-      required: ['id', 'roleId', 'competencies', 'situation', 'task', 'action', 'result', 'metrics'],
+      required: [
+        'id',
+        'roleId',
+        'competencies',
+        'situation',
+        'task',
+        'action',
+        'result',
+        'metrics'
+      ],
       properties: {
         id: { type: 'string' },
         roleId: nullableString,

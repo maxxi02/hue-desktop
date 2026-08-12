@@ -83,7 +83,9 @@ test('wrong-card render rate stays at or below 0.078', () => {
       const r = m.match(c.transcript)
       if (m.renders(r) && r.cardId !== c.expect) {
         wrong++
-        offenders.push(`"${c.transcript}" -> ${r.cardId} (wanted ${c.expect}) @ ${r.score.toFixed(3)}`)
+        offenders.push(
+          `"${c.transcript}" -> ${r.cardId} (wanted ${c.expect}) @ ${r.score.toFixed(3)}`
+        )
       }
     }
   }
@@ -121,7 +123,10 @@ test('the three positive-case outcomes partition the corpus', () => {
   const total = hit + wrong + none
   assert.equal(total, 90, 'every positive case must land in exactly one bucket')
   assert.ok(hit / total >= 70 / 90, `hit rate ${hit}/${total} fell below the measured bar of 70/90`)
-  assert.ok(wrong / total <= 7 / 90, `wrong-card rate ${wrong}/${total} rose above the measured bar of 7/90`)
+  assert.ok(
+    wrong / total <= 7 / 90,
+    `wrong-card rate ${wrong}/${total} rose above the measured bar of 7/90`
+  )
 })
 
 /**
@@ -183,7 +188,10 @@ test('verifyCard keeps at least half the corpus cues, and leaves at most one car
       if (v.cues.length === 0) empty++
     }
   }
-  assert.ok(kept / total >= 0.5, `verifyCard keep rate ${(kept / total).toFixed(3)} below the 0.500 bar`)
+  assert.ok(
+    kept / total >= 0.5,
+    `verifyCard keep rate ${(kept / total).toFixed(3)} below the 0.500 bar`
+  )
   assert.ok(empty <= 1, `${empty} cards left with no cues; at most 1 expected`)
 })
 

@@ -249,9 +249,7 @@ function HotkeyRecorder({
         }
       }}
     >
-      {recording
-        ? 'Press a key or mouse button… (Esc to cancel)'
-        : formatAccelerator(value)}
+      {recording ? 'Press a key or mouse button… (Esc to cancel)' : formatAccelerator(value)}
     </button>
   )
 }
@@ -313,6 +311,10 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   const [llmModels, setLlmModels] = useState<string[]>([])
   const [llmStatus, setLlmStatus] = useState<'idle' | 'detecting' | 'ok' | 'unreachable'>('idle')
   const [resumeStatus, setResumeStatus] = useState<string | null>(null)
+  // Gap answering, previously possible only in the phone app.
+  const [gapDrafts, setGapDrafts] = useState<Record<string, string>>({})
+  const [gapBusy, setGapBusy] = useState<string | null>(null)
+  const [gapNotes, setGapNotes] = useState<Record<string, string>>({})
   const [cueSheets, setCueSheets] = useState<CueSheet[]>([])
   const [cueSheetStatus, setCueSheetStatus] = useState<string | null>(null)
   // Set once a file is picked; cleared once its ingest is confirmed or
@@ -332,6 +334,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   // prompt builder out of step.
   // `s` is null until settings load; the pane renders a loading state then.
   const profileBundle = s ? parseProfileBundle(s.profileBundleJson) : null
+  const openGaps = profileBundle ? profileBundle.gaps.filter((g) => g.status === 'open') : []
   const fileInputRef = useRef<HTMLInputElement>(null)
   const detectSeq = useRef(0)
   const llmDetectSeq = useRef(0)
@@ -568,16 +571,18 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
     e.target.value = '' // allow re-selecting the same file
     if (!file) return
 
-    setResumeStatus(`Uploading ${file.name}…`)
+    setResumeStatus(`Reading ${file.name}…`)
     // Subscribed before the call, not after: ingest takes about a minute, and
     // the first progress event fires immediately.
     const stopProgress = window.hue.profile.onProgress((p) => {
       setResumeStatus(
-        p.phase === 'uploading'
-          ? `Uploading ${file.name}…`
-          : p.phase === 'extracting'
-            ? 'Reading your resume…'
-            : `Building your story bank… ${p.elapsedSeconds}s`
+        p.phase === 'extracting'
+          ? `Reading ${file.name}…`
+          : p.phase === 'mining-profile'
+            ? 'Pulling out your roles and dates…'
+            : p.phase === 'mining-stories'
+              ? `Building your story bank… ${p.elapsedSeconds}s`
+              : `Looking for gaps… ${p.elapsedSeconds}s`
       )
     })
 
@@ -605,13 +610,50 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   }
 
   const onRefreshProfile = async (): Promise<void> => {
-    setResumeStatus('Checking for updates…')
+    setResumeStatus('Reloading…')
     const outcome = await window.hue.profile.refresh()
     if (outcome.ok) {
       set('profileBundleJson', JSON.stringify(outcome.bundle))
-      setResumeStatus(`Up to date — ${describeBundle(outcome.bundle)}.`)
+      setResumeStatus(`Reloaded — ${describeBundle(outcome.bundle)}.`)
     } else {
       setResumeStatus(outcome.message)
+    }
+  }
+
+  const onAnswerGap = async (gapId: string): Promise<void> => {
+    const text = (gapDrafts[gapId] ?? '').trim()
+    if (!text) return
+    setGapBusy(gapId)
+    try {
+      const outcome = await window.hue.profile.answerGap(gapId, text)
+      if (!outcome.ok) {
+        setGapNotes((n) => ({ ...n, [gapId]: outcome.message }))
+        return
+      }
+      set('profileBundleJson', JSON.stringify(outcome.bundle))
+      if (outcome.accepted) {
+        setGapDrafts((d) => ({ ...d, [gapId]: '' }))
+        setGapNotes((n) => ({ ...n, [gapId]: '' }))
+      } else {
+        // On topic, but no story in it. Saying so is the difference between a
+        // user who edits their answer and one who assumes the feature is broken.
+        setGapNotes((n) => ({
+          ...n,
+          [gapId]: outcome.reason ?? 'That answer did not contain a story we could use.'
+        }))
+      }
+    } finally {
+      setGapBusy(null)
+    }
+  }
+
+  const onSkipGap = async (gapId: string): Promise<void> => {
+    setGapBusy(gapId)
+    try {
+      const bundle = await window.hue.profile.skipGap(gapId)
+      set('profileBundleJson', JSON.stringify(bundle))
+    } finally {
+      setGapBusy(null)
     }
   }
 
@@ -674,9 +716,9 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
       setCueSheetStatus(
         sheet.cards.length === 0
           ? `"${sheet.label}" uploaded, but no usable cue cards were found in it. Try a ` +
-            'document with clearer question-and-answer sections.'
+              'document with clearer question-and-answer sections.'
           : `"${sheet.label}" ready — ${sheet.cards.length} cue card` +
-            `${sheet.cards.length === 1 ? '' : 's'}.`
+              `${sheet.cards.length === 1 ? '' : 's'}.`
       )
       await loadCueSheets()
     } catch (err) {
@@ -955,11 +997,20 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
               <button
                 type="button"
                 className="icon-btn"
-                style={{ alignSelf: 'flex-start', width: 'auto', padding: '6px 12px', fontSize: 13 }}
+                style={{
+                  alignSelf: 'flex-start',
+                  width: 'auto',
+                  padding: '6px 12px',
+                  fontSize: 13
+                }}
                 onClick={() => void togglePhone()}
                 disabled={phoneBusy || !phone}
               >
-                {phoneBusy ? 'Working…' : phone?.running ? 'Disable phone mirror' : 'Enable phone mirror'}
+                {phoneBusy
+                  ? 'Working…'
+                  : phone?.running
+                    ? 'Disable phone mirror'
+                    : 'Enable phone mirror'}
               </button>
               <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
                 Streams the interviewer’s question and Hue’s suggested answer to your phone’s
@@ -992,9 +1043,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                   </span>
                   <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
                     Scan with your phone’s <strong>browser</strong> (same Wi-Fi as this PC) and keep
-                    the page open. Not for the Hue app — that’s the “Phone app” code below. The
-                    link changes each time Hue restarts, so re-scan if the phone says
-                    “reconnecting”.
+                    the page open. Not for the Hue app — that’s the “Phone app” code below. The link
+                    changes each time Hue restarts, so re-scan if the phone says “reconnecting”.
                   </span>
                 </>
               )}
@@ -1013,8 +1063,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                 onChange={(e) => set('relayBaseUrl', e.target.value)}
               />
               <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Where the Hue relay is running. Changing this takes effect the next time you
-                connect the phone app below.
+                Where the Hue relay is running. Changing this takes effect the next time you connect
+                the phone app below.
               </span>
             </div>
             <div className="settings-field">
@@ -1022,7 +1072,12 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
               <button
                 type="button"
                 className="icon-btn"
-                style={{ alignSelf: 'flex-start', width: 'auto', padding: '6px 12px', fontSize: 13 }}
+                style={{
+                  alignSelf: 'flex-start',
+                  width: 'auto',
+                  padding: '6px 12px',
+                  fontSize: 13
+                }}
                 onClick={() => void toggleRelay()}
                 disabled={relayBusy || !relay}
               >
@@ -1033,9 +1088,9 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                     : 'Connect phone app'}
               </button>
               <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Streams the interviewer’s question and Hue’s suggested answer to the Hue app on
-                your phone. Unlike the phone mirror above this works on mobile data — the
-                transcript passes through the relay you configured.
+                Streams the interviewer’s question and Hue’s suggested answer to the Hue app on your
+                phone. Unlike the phone mirror above this works on mobile data — the transcript
+                passes through the relay you configured.
               </span>
               {relay?.error && (
                 <span style={{ color: 'var(--red)', fontSize: 12, marginTop: 6 }}>
@@ -1058,8 +1113,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                     />
                   )}
                   <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                    Scan with the Hue app. The pairing changes every time Hue restarts — re-scan
-                    if the phone says “disconnected”.
+                    Scan with the Hue app. The pairing changes every time Hue restarts — re-scan if
+                    the phone says “disconnected”.
                   </span>
                 </>
               )}
@@ -1083,8 +1138,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                 onChange={(v) => set('startSessionHotkey', v)}
               />
               <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Works globally — even during a call — to start or stop a session. Click, then press a
-                key combo, a single key, or a mouse button (Back/Forward, etc.).
+                Works globally — even during a call — to start or stop a session. Click, then press
+                a key combo, a single key, or a mouse button (Back/Forward, etc.).
               </span>
             </div>
             <div className="settings-field">
@@ -1152,41 +1207,104 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                 </span>
               )}
               {/*
-                The endpoint had no control until now, so a user whose résumé
-                service is their own `hue-ingest` on localhost had no way to say
-                so — uploads went to the shipped default and failed with nothing
-                they could act on. Placed under the button rather than in a
-                separate pane because this is the setting an upload failure
-                sends you looking for.
+                Ingest sends a whole résumé in one request, which is an order of
+                magnitude larger than a live draft, so the provider that is right
+                for drafting is not always able to do it at all. Named here
+                rather than in a separate pane because this is the setting an
+                upload failure sends you looking for.
               */}
               <label className="settings-label" style={{ marginTop: 10 }}>
-                Résumé service URL
+                Ingest provider
               </label>
-              <input
+              <select
                 className="settings-input"
-                type="text"
-                value={s.ingestBaseUrl}
-                placeholder="http://localhost:8788"
-                onChange={(e) => set('ingestBaseUrl', e.target.value)}
-              />
+                value={s.ingestProvider}
+                onChange={(e) =>
+                  set('ingestProvider', e.target.value as HueSettings['ingestProvider'])
+                }
+              >
+                <option value="">Same as drafting</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="ollama">Ollama (local)</option>
+                <option value="google">Google</option>
+                <option value="groq">Groq</option>
+                <option value="mistral">Mistral</option>
+                <option value="cohere">Cohere</option>
+              </select>
               <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Where hue-ingest is running. Run it yourself with{' '}
-                <code>npm start</code> in <code>hue-ingest</code> and point this at{' '}
-                <code>http://localhost:8788</code>.
+                Reading a whole résumé takes far more tokens at once than drafting an answer does.
+                Groq’s free tier caps a single request at 8,000 tokens and cannot finish one — if
+                you draft on Groq, pick Google or Ollama here. Otherwise leave it on “Same as
+                drafting”.
               </span>
               {profileBundle ? (
                 <div style={{ marginTop: 8, fontSize: 13 }}>
                   <div>{describeBundle(profileBundle)}</div>
-                  <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                    {profileBundle.gaps.some((g) => g.status === 'open')
-                      ? 'Answer the remaining questions in the Hue phone app — they cover the ' +
-                        'things your resume can’t show, which are exactly the ones an AI would ' +
-                        'otherwise make up.'
-                      : 'Gap scan complete.'}
-                  </div>
+                  {openGaps.length > 0 ? (
+                    <div
+                      style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 14 }}
+                    >
+                      <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                        These cover the things your résumé can’t show — which are exactly the ones
+                        an AI would otherwise make up. “I don’t have one” is a real answer, and Hue
+                        records it as one rather than inventing a story.
+                      </div>
+                      {openGaps.map((gap) => (
+                        <div
+                          key={gap.id}
+                          style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+                        >
+                          <div style={{ fontSize: 13 }}>{gap.question}</div>
+                          <textarea
+                            className="settings-input"
+                            rows={3}
+                            value={gapDrafts[gap.id] ?? ''}
+                            disabled={gapBusy === gap.id}
+                            onChange={(e) =>
+                              setGapDrafts((d) => ({ ...d, [gap.id]: e.target.value }))
+                            }
+                            placeholder="Tell it the way you’d tell it out loud…"
+                          />
+                          {gapNotes[gap.id] && (
+                            <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                              {gapNotes[gap.id]}
+                            </span>
+                          )}
+                          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              disabled={gapBusy === gap.id || !(gapDrafts[gap.id] ?? '').trim()}
+                              style={{
+                                alignSelf: 'flex-start',
+                                width: 'auto',
+                                padding: '4px 10px',
+                                fontSize: 12
+                              }}
+                              onClick={() => void onAnswerGap(gap.id)}
+                            >
+                              {gapBusy === gap.id ? 'Saving…' : 'Save answer'}
+                            </button>
+                            <button
+                              type="button"
+                              className="link-btn"
+                              disabled={gapBusy === gap.id}
+                              onClick={() => void onSkipGap(gap.id)}
+                            >
+                              I don’t have one
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                      Gap scan complete.
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
                     <button type="button" className="link-btn" onClick={onRefreshProfile}>
-                      Check for updates
+                      Reload profile
                     </button>
                     <button type="button" className="link-btn" onClick={onDeleteProfile}>
                       Delete my profile
@@ -1281,8 +1399,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
               {cueSheets.length === 0 ? (
                 <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 8 }}>
                   Upload the notes you prepared for this interview. Hue will show your own answer
-                  when it hears a question you prepared for, and fall back to generating one when
-                  it doesn&apos;t.
+                  when it hears a question you prepared for, and fall back to generating one when it
+                  doesn&apos;t.
                 </span>
               ) : (
                 <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1462,16 +1580,20 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
               <button
                 type="button"
                 className="icon-btn"
-                style={{ alignSelf: 'flex-start', width: 'auto', padding: '6px 12px', fontSize: 13 }}
+                style={{
+                  alignSelf: 'flex-start',
+                  width: 'auto',
+                  padding: '6px 12px',
+                  fontSize: 13
+                }}
                 onClick={() => void toggleStealth()}
                 disabled={stealthBusy || !stealth || !stealth.supported}
               >
                 {stealthBusy ? 'Working…' : stealth?.enabled ? 'Disable stealth' : 'Enable stealth'}
               </button>
               <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Asks the OS to leave this window out of screen shares and screen-capture APIs, so
-                it stays visible to you but not to the people you share with. Takes effect
-                immediately.
+                Asks the OS to leave this window out of screen shares and screen-capture APIs, so it
+                stays visible to you but not to the people you share with. Takes effect immediately.
               </span>
               <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
                 It hides the window and nothing else: the Hue process, its tray icon and the audio
@@ -1535,9 +1657,9 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                 {s.windowAnchor === 'free' ? 'Free — drag it anywhere' : 'Unpin'}
               </button>
               <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Parks Hue in a fixed corner of whichever screen it is on, clear of the taskbar,
-                and puts it back there if your displays change. Dragging the window releases the
-                anchor — your position is remembered either way, including across restarts.
+                Parks Hue in a fixed corner of whichever screen it is on, clear of the taskbar, and
+                puts it back there if your displays change. Dragging the window releases the anchor
+                — your position is remembered either way, including across restarts.
               </span>
             </div>
             <div className="settings-field">

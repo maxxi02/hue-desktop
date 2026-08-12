@@ -68,7 +68,13 @@ function bundle(overrides: Partial<ProfileBundle> = {}): ProfileBundle {
     ],
     gaps: [
       { id: 'gap-failure', competency: 'failure', question: 'Q?', status: 'open', storyId: null },
-      { id: 'gap-ambiguity', competency: 'ambiguity', question: 'Q?', status: 'answered', storyId: 'x' }
+      {
+        id: 'gap-ambiguity',
+        competency: 'ambiguity',
+        question: 'Q?',
+        status: 'answered',
+        storyId: 'x'
+      }
     ],
     ...overrides
   }
@@ -129,10 +135,7 @@ test('a valid bundle round-trips through JSON', () => {
 
 test('the summary counts open gaps, since that is the only actionable half', () => {
   assert.equal(describeBundle(bundle()), '1 story across 2 roles · 1 gap left to fill')
-  assert.equal(
-    describeBundle(bundle({ gaps: [] })),
-    '1 story across 2 roles'
-  )
+  assert.equal(describeBundle(bundle({ gaps: [] })), '1 story across 2 roles')
 })
 
 // --- Ingest contract additions (ported from hue-ingest/src/profile.ts) ---

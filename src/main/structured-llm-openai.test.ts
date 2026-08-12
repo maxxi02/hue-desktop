@@ -43,7 +43,9 @@ afterEach(() => {
   open = null
 })
 
-async function fakeProvider(replies: Reply[]) {
+async function fakeProvider(
+  replies: Reply[]
+): Promise<{ calls: Recorded[]; baseUrl: string; path: (i: number) => unknown }> {
   const calls: Recorded[] = []
   let next = 0
 
@@ -79,7 +81,7 @@ function completion(content: string, finishReason = 'stop'): unknown {
   return { choices: [{ finish_reason: finishReason, message: { role: 'assistant', content } }] }
 }
 
-function client(baseUrl: string, overrides: Record<string, unknown> = {}) {
+function client(baseUrl: string, overrides: Record<string, unknown> = {}): LlmClient {
   return openAiCompatClient({
     apiKey: 'test-key',
     baseUrl,
@@ -92,7 +94,9 @@ function client(baseUrl: string, overrides: Record<string, unknown> = {}) {
 }
 
 test('a valid structured response comes back parsed, with the schema sent strictly', async () => {
-  const provider = await fakeProvider([{ status: 200, json: completion('{"name":"Jordan Reyes"}') }])
+  const provider = await fakeProvider([
+    { status: 200, json: completion('{"name":"Jordan Reyes"}') }
+  ])
 
   const result = await client(provider.baseUrl).structured<{ name: string }>(REQUEST)
   assert.deepEqual(result, { name: 'Jordan Reyes' })
@@ -100,7 +104,10 @@ test('a valid structured response comes back parsed, with the schema sent strict
   const sent = provider.path(0) as {
     model: string
     messages: { role: string; content: string }[]
-    response_format: { type: string; json_schema: { name: string; schema: unknown; strict: boolean } }
+    response_format: {
+      type: string
+      json_schema: { name: string; schema: unknown; strict: boolean }
+    }
   }
   assert.equal(sent.model, 'test-model')
   assert.equal(sent.response_format.type, 'json_schema')
@@ -173,7 +180,10 @@ test('a refusal from the model surfaces as LlmRefusal, not as a parse failure', 
       status: 200,
       json: {
         choices: [
-          { finish_reason: 'stop', message: { role: 'assistant', content: null, refusal: 'I cannot help with that.' } }
+          {
+            finish_reason: 'stop',
+            message: { role: 'assistant', content: null, refusal: 'I cannot help with that.' }
+          }
         ]
       }
     }
@@ -187,7 +197,11 @@ test('a refusal from the model surfaces as LlmRefusal, not as a parse failure', 
 
 test('a 429 is retried rather than failing the ingest', async () => {
   const provider = await fakeProvider([
-    { status: 429, body: '{"error":{"message":"rate limit reached"}}', headers: { 'retry-after': '0' } },
+    {
+      status: 429,
+      body: '{"error":{"message":"rate limit reached"}}',
+      headers: { 'retry-after': '0' }
+    },
     { status: 200, json: completion('{"name":"Jordan Reyes"}') }
   ])
 
@@ -198,7 +212,9 @@ test('a 429 is retried rather than failing the ingest', async () => {
 })
 
 test('a 401 is not retried — the key will not fix itself', async () => {
-  const provider = await fakeProvider([{ status: 401, body: '{"error":{"message":"invalid api key"}}' }])
+  const provider = await fakeProvider([
+    { status: 401, body: '{"error":{"message":"invalid api key"}}' }
+  ])
 
   await assert.rejects(() => client(provider.baseUrl).structured(REQUEST), /401/)
   assert.equal(provider.calls.length, 1)

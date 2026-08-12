@@ -16,7 +16,9 @@ import { canonicalJson, profilePromptBlock, type ProfileBundle } from '../shared
  */
 export function contentHash(bundle: Omit<ProfileBundle, 'hash' | 'createdAt'>): string {
   const { version, profile, stories, gaps } = bundle
-  return createHash('sha256').update(canonicalJson({ version, profile, stories, gaps })).digest('hex')
+  return createHash('sha256')
+    .update(canonicalJson({ version, profile, stories, gaps }))
+    .digest('hex')
 }
 
 /**

@@ -121,7 +121,12 @@ test('a monitor to the left of the primary anchors within its own negative coord
     height: 670
   })
   const bottomRight = computeAnchoredBounds('bottom-right', SIZE, secondary, 16)
-  assert.deepEqual(bottomRight, { x: -1920 + 1920 - 900 - 16, y: -120 + 1080 - 670 - 16, width: 900, height: 670 })
+  assert.deepEqual(bottomRight, {
+    x: -1920 + 1920 - 900 - 16,
+    y: -120 + 1080 - 670 - 16,
+    width: 900,
+    height: 670
+  })
   assert.ok(bottomRight.x < 0)
 })
 

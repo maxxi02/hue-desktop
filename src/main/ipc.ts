@@ -18,7 +18,13 @@ import {
   broadcastPhoneEvent
 } from './phone-mirror'
 import { startRelay, stopRelay, getRelayStatus, publishRelayEvent } from './relay-client'
-import { deleteProfile, ingestResume, refreshBundle } from './ingest'
+import {
+  answerProfileGap,
+  deleteProfile,
+  ingestResume,
+  refreshBundle,
+  skipProfileGap
+} from './ingest'
 import { ingestCueSheet } from './cuesheet-ingest'
 import { listSheets, deleteSheet, sheetsDir, isValidSheetId } from './cuesheet-store'
 import { applyStealth, isStealthSupported } from './stealth'
@@ -133,9 +139,10 @@ export function registerIpc(): void {
     publishRelayEvent({ type: ev.type, text })
   })
 
-  // Resume ingest. The bytes come from the renderer's file picker, but the
-  // account token stays here — the renderer never sees the credential that
-  // reads the user's career history.
+  // Resume ingest. The bytes come from the renderer's file picker and the whole
+  // pipeline runs here — no service, no account, no upload. The resume reaches
+  // the configured model provider and nowhere else, and with Ollama selected it
+  // does not leave the machine.
   ipcMain.handle('hue:profile:ingest', async (event, bytes: ArrayBuffer) => {
     return ingestResume(new Uint8Array(bytes), (progress) => {
       // Progress on a side channel rather than as the return value: the call
@@ -147,6 +154,21 @@ export function registerIpc(): void {
 
   ipcMain.handle('hue:profile:refresh', () => refreshBundle())
   ipcMain.handle('hue:profile:delete', () => deleteProfile())
+
+  // Gap answers. These used to be answerable only in the phone app, which left
+  // a desktop-only user with a permanently incomplete bundle — and the gaps are
+  // precisely the questions a model would otherwise invent an answer to.
+  ipcMain.handle('hue:profile:answer-gap', async (_e, gapId: string, text: string) => {
+    if (typeof gapId !== 'string' || !gapId) throw new Error('A gap id is required.')
+    // Bounded because the payload crosses a process boundary and the answer is
+    // pasted straight into a prompt.
+    return answerProfileGap(gapId, String(text ?? '').slice(0, 10_000))
+  })
+
+  ipcMain.handle('hue:profile:skip-gap', async (_e, gapId: string) => {
+    if (typeof gapId !== 'string' || !gapId) throw new Error('A gap id is required.')
+    return skipProfileGap(gapId)
+  })
 
   // Cue sheets. Same progress-on-a-side-channel shape as profile ingest: the
   // call takes long enough that a pane showing nothing is indistinguishable

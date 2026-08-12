@@ -49,7 +49,11 @@ export function segment(text: string): { heading: string; body: string }[] {
   const headingMatch = /^#{1,6}\s+(.+)$/gm
   const qMatch = /^\s*Q:\s*(.+)$/gm
 
-  const pattern = headingMatch.test(text) ? /^#{1,6}\s+(.+)$/gm : qMatch.test(text) ? /^\s*Q:\s*(.+)$/gm : null
+  const pattern = headingMatch.test(text)
+    ? /^#{1,6}\s+(.+)$/gm
+    : qMatch.test(text)
+      ? /^\s*Q:\s*(.+)$/gm
+      : null
   if (pattern === null) return [{ heading: '', body: text }]
 
   const out: { heading: string; body: string }[] = []

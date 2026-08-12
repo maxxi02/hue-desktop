@@ -48,20 +48,22 @@ export interface GroundingReport {
  * check that cries wolf gets switched off.
  */
 export function normalise(text: string): string {
-  return text
-    .normalize('NFKD')
-    // Strip combining marks so "Zürich" matches "Zurich".
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    // Every dash variant, including the minus sign and the non-breaking hyphen.
-    .replace(/[‐-―−­]/g, '-')
-    .replace(/[‘’‛′]/g, "'")
-    .replace(/[“”″]/g, '"')
-    .replace(/ /g, ' ')
-    // Punctuation carries no identity: "Inc." and "Inc" are the same employer.
-    .replace(/[.,;:!?()[\]{}'"`|/\\]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+  return (
+    text
+      .normalize('NFKD')
+      // Strip combining marks so "Zürich" matches "Zurich".
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      // Every dash variant, including the minus sign and the non-breaking hyphen.
+      .replace(/[‐-―−\u00ad]/g, '-')
+      .replace(/[‘’‛′]/g, "'")
+      .replace(/[“”″]/g, '"')
+      .replace(/\u00a0/g, ' ')
+      // Punctuation carries no identity: "Inc." and "Inc" are the same employer.
+      .replace(/[.,;:!?()[\]{}'"`|/\\]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  )
 }
 
 /** Corporate suffixes that appear on a letterhead and not in the body text. */
@@ -108,12 +110,14 @@ function companyPresent(haystack: string, company: string): boolean {
  * invented — and an invented figure stated in an interview is unrecoverable.
  */
 function digitsOf(text: string): string[] {
-  return (text.match(/\d[\d.,]*/g) ?? [])
-    // Trailing separators belong to the sentence, not the number.
-    .map((d) => d.replace(/[.,]+$/, ''))
-    // Drop the separators themselves so "2.4M" and "2,400" compare on digits
-    // alone — the resume's formatting is not part of the fact being checked.
-    .map((d) => d.replace(/[.,]/g, ''))
+  return (
+    (text.match(/\d[\d.,]*/g) ?? [])
+      // Trailing separators belong to the sentence, not the number.
+      .map((d) => d.replace(/[.,]+$/, ''))
+      // Drop the separators themselves so "2.4M" and "2,400" compare on digits
+      // alone — the resume's formatting is not part of the fact being checked.
+      .map((d) => d.replace(/[.,]/g, ''))
+  )
 }
 
 function metricPresent(haystack: string, value: string): boolean {
@@ -220,7 +224,11 @@ export function checkProfile(profile: Profile, sourceText: string): GroundingIss
  * supplied a figure the resume never contained, which is the entire purpose of
  * the gap scan.
  */
-export function checkStories(stories: Story[], profile: Profile, sourceText: string): GroundingIssue[] {
+export function checkStories(
+  stories: Story[],
+  profile: Profile,
+  sourceText: string
+): GroundingIssue[] {
   const issues: GroundingIssue[] = []
   const roleIds = new Set(profile.roles.map((r) => r.id))
   const verified = new Set(profile.metrics.map((m) => normalise(m.value)))
@@ -277,13 +285,17 @@ export function pruneUngrounded(
   const dropped: GroundingIssue[] = []
 
   const keptRoles = profile.roles.filter((role, i) => {
-    const bad = checkProfile({ ...profile, roles: [role], education: [], metrics: [], skills: [] }, sourceText)
-      .filter((issue) => issue.severity === 'error')
+    const bad = checkProfile(
+      { ...profile, roles: [role], education: [], metrics: [], skills: [] },
+      sourceText
+    ).filter((issue) => issue.severity === 'error')
     if (bad.length) dropped.push(...bad.map((b) => ({ ...b, path: `profile.roles[${i}]` })))
     return bad.length === 0
   })
 
-  const keptEducation = profile.education.filter((edu) => containsClaim(sourceText, edu.institution))
+  const keptEducation = profile.education.filter((edu) =>
+    containsClaim(sourceText, edu.institution)
+  )
   const keptMetrics = profile.metrics.filter((m) => metricPresent(sourceText, m.value))
 
   const prunedProfile: Profile = {

@@ -7,7 +7,10 @@ import { saveSheet, listSheets, deleteSheet, isValidSheetId } from './cuesheet-s
 import type { CueSheet } from '../shared/cuesheet.ts'
 
 const sheet: CueSheet = {
-  id: 'abc', label: 'Apollo', sourceHash: 'h', createdAt: '2026-08-11T00:00:00.000Z',
+  id: 'abc',
+  label: 'Apollo',
+  sourceHash: 'h',
+  createdAt: '2026-08-11T00:00:00.000Z',
   cards: [{ id: 'c', heading: 'h', cues: ['x'], script: 's', triggers: ['t'] }]
 }
 
@@ -42,7 +45,10 @@ test('delete removes only the named sheet', () => {
     saveSheet(dir, sheet)
     saveSheet(dir, { ...sheet, id: 'def' })
     deleteSheet(dir, 'abc')
-    assert.deepEqual(listSheets(dir).map((s) => s.id), ['def'])
+    assert.deepEqual(
+      listSheets(dir).map((s) => s.id),
+      ['def']
+    )
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -51,14 +57,8 @@ test('delete removes only the named sheet', () => {
 test('id containing a path separator throws', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cue-'))
   try {
-    assert.throws(
-      () => saveSheet(dir, { ...sheet, id: 'a/b' }),
-      /Invalid cue sheet id/
-    )
-    assert.throws(
-      () => saveSheet(dir, { ...sheet, id: '../escape' }),
-      /Invalid cue sheet id/
-    )
+    assert.throws(() => saveSheet(dir, { ...sheet, id: 'a/b' }), /Invalid cue sheet id/)
+    assert.throws(() => saveSheet(dir, { ...sheet, id: '../escape' }), /Invalid cue sheet id/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -67,10 +67,7 @@ test('id containing a path separator throws', () => {
 test('empty id throws', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cue-'))
   try {
-    assert.throws(
-      () => saveSheet(dir, { ...sheet, id: '' }),
-      /Invalid cue sheet id/
-    )
+    assert.throws(() => saveSheet(dir, { ...sheet, id: '' }), /Invalid cue sheet id/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -80,10 +77,7 @@ test('two distinct ids that would previously collide no longer both resolve', ()
   const dir = mkdtempSync(join(tmpdir(), 'cue-'))
   try {
     // First id with a slash would previously collide with second id
-    assert.throws(
-      () => saveSheet(dir, { ...sheet, id: 'a/b' }),
-      /Invalid cue sheet id/
-    )
+    assert.throws(() => saveSheet(dir, { ...sheet, id: 'a/b' }), /Invalid cue sheet id/)
     // The second id that would have collided should still work
     saveSheet(dir, { ...sheet, id: 'ab' })
     const sheets = listSheets(dir)
@@ -139,7 +133,11 @@ test('a sheet with a truncated card is dropped rather than handed to CueMatcher'
       JSON.stringify({ id: 'truncated', cards: [{ id: 'c', heading: 'h', script: 's', cues: [] }] })
     )
     const sheets = listSheets(dir)
-    assert.deepEqual(sheets.map((s) => s.id), ['abc'], 'the truncated sheet must not be returned')
+    assert.deepEqual(
+      sheets.map((s) => s.id),
+      ['abc'],
+      'the truncated sheet must not be returned'
+    )
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

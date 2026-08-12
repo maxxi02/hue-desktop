@@ -74,7 +74,9 @@ function extractSystemPrompt(): string {
   const source = readFileSync(new URL('./cuesheet-ingest.ts', import.meta.url), 'utf-8')
   const match = source.match(/const SYSTEM = `([\s\S]*?)`/)
   if (!match) {
-    throw new Error('Could not find the SYSTEM prompt in cuesheet-ingest.ts — has its shape changed?')
+    throw new Error(
+      'Could not find the SYSTEM prompt in cuesheet-ingest.ts — has its shape changed?'
+    )
   }
   return match[1]
 }
@@ -102,15 +104,27 @@ I used to say yes to almost every meeting invite because I didn't want to seem u
  * the fixture document. None of this text was given to the model.
  */
 const HELD_OUT: { phrasing: string; sectionIndex: number }[] = [
-  { phrasing: 'Give me an example of when you and a colleague butted heads over an approach.', sectionIndex: 0 },
-  { phrasing: 'How do you handle it when a teammate pushes back hard on your idea?', sectionIndex: 0 },
+  {
+    phrasing: 'Give me an example of when you and a colleague butted heads over an approach.',
+    sectionIndex: 0
+  },
+  {
+    phrasing: 'How do you handle it when a teammate pushes back hard on your idea?',
+    sectionIndex: 0
+  },
   { phrasing: 'Walk me through a disagreement at work that got a little tense.', sectionIndex: 0 },
   { phrasing: 'What draws you to this particular company?', sectionIndex: 1 },
   { phrasing: 'Why us instead of one of our competitors?', sectionIndex: 1 },
   { phrasing: 'What made you decide to apply for this role specifically?', sectionIndex: 1 },
-  { phrasing: "Walk me through something you built that you're really happy with.", sectionIndex: 2 },
+  {
+    phrasing: "Walk me through something you built that you're really happy with.",
+    sectionIndex: 2
+  },
   { phrasing: "Tell me about a piece of work you'd put on a highlight reel.", sectionIndex: 2 },
-  { phrasing: "What's an accomplishment from a past role you'd want us to know about?", sectionIndex: 2 },
+  {
+    phrasing: "What's an accomplishment from a past role you'd want us to know about?",
+    sectionIndex: 2
+  },
   { phrasing: 'Where do you still need to grow professionally?', sectionIndex: 3 },
   { phrasing: "What's an area you're actively working to improve?", sectionIndex: 3 },
   { phrasing: 'If your old manager had one critique of you, what would it be?', sectionIndex: 3 }

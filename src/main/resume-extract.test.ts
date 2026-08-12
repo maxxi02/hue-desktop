@@ -1,12 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  extractResume,
-  looksLikeProse,
-  isPdf,
-  isZip,
-  MAX_UPLOAD_BYTES
-} from './resume-extract.ts'
+import { extractResume, looksLikeProse, isPdf, isZip, MAX_UPLOAD_BYTES } from './resume-extract.ts'
 
 const PROSE =
   'Ada Lovelace is a staff engineer in London who led the analytical engine ' +
