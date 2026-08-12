@@ -116,6 +116,17 @@ export const HIGH_RISK_COMPETENCIES: readonly Competency[] = [
   'influence-without-authority'
 ]
 
+/** A profile with every field explicitly empty — never a guess, never absent. */
+export function emptyProfile(): Profile {
+  return {
+    identity: { name: null, headline: null, location: null, email: null, links: [] },
+    roles: [],
+    education: [],
+    skills: [],
+    metrics: []
+  }
+}
+
 /**
  * Deterministic JSON, for hashing.
  *
