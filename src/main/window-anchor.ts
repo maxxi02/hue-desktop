@@ -124,7 +124,13 @@ export function computeAnchoredBounds(
   workArea: Rect,
   margin: number = DEFAULT_ANCHOR_MARGIN
 ): Rect {
-  const { h, v } = AXES[anchor]
+  // The anchor is typed, but its value comes off disk: `{ ...DEFAULT_SETTINGS,
+  // ...raw }` lets the stored string win, and the IPC that persists it takes any
+  // partial. An unrecognised value destructured `undefined` and threw — during
+  // createWindow, before anything is shown, so the app started to no window at
+  // all and there was no in-app way to correct the setting that caused it.
+  const axes = AXES[anchor] ?? AXES.center
+  const { h, v } = axes
   // A margin larger than the slack would push the window past the opposite edge,
   // so it can never exceed half the leftover space. Negative margins are a
   // corrupted settings file, not a request to overhang the edge.

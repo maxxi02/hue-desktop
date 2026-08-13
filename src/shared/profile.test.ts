@@ -157,3 +157,63 @@ test('canonicalJson sorts keys, so hash input does not depend on insertion order
 test('canonicalJson preserves array order, which is meaningful', () => {
   assert.notEqual(canonicalJson([1, 2]), canonicalJson([2, 1]))
 })
+
+// ── Bundles that used to pass validation and throw later ───────────────────
+//
+// Each of these satisfied the original check — version, hash, roles, stories —
+// and then threw the first time something read the field it was missing. The
+// point of validating at all is that a malformed bundle is rejected at load, so
+// the failure is "no profile" in Settings rather than an exception mid-session.
+
+test('a bundle with no gaps list is rejected, not left to throw inside a render', () => {
+  const b: Record<string, unknown> = { ...bundle() }
+  delete b.gaps
+  assert.equal(isProfileBundle(b), false)
+})
+
+test('a bundle with no identity is rejected, since the prompt builder reads it at session start', () => {
+  const b = bundle()
+  const profile: Record<string, unknown> = { ...b.profile }
+  delete profile.identity
+  assert.equal(isProfileBundle({ ...b, profile }), false)
+})
+
+test('a bundle missing education, skills or metrics is rejected rather than half-usable', () => {
+  for (const key of ['education', 'skills', 'metrics'] as const) {
+    const b = bundle()
+    const profile = { ...b.profile }
+    delete (profile as Record<string, unknown>)[key]
+    assert.equal(isProfileBundle({ ...b, profile }), false, `${key} was not checked`)
+  }
+})
+
+test('one malformed role is enough to reject the bundle, because one is enough to throw', () => {
+  const b = bundle()
+  const roles = [b.profile.roles[0], { ...b.profile.roles[1], stack: undefined }]
+  assert.equal(isProfileBundle({ ...b, profile: { ...b.profile, roles } }), false)
+})
+
+test('a story without its metrics list is rejected, not discovered on the turn that cites it', () => {
+  const b = bundle()
+  const stories = [{ ...b.stories[0], metrics: undefined }]
+  assert.equal(isProfileBundle({ ...b, stories }), false)
+})
+
+test('a story without competencies is rejected, since selection joins that list', () => {
+  const b = bundle()
+  const stories = [{ ...b.stories[0], competencies: 'conflict' }]
+  assert.equal(isProfileBundle({ ...b, stories }), false)
+})
+
+test('an otherwise-empty but well-formed bundle is still accepted, since a thin resume is not a broken one', () => {
+  const b = bundle()
+  assert.equal(
+    isProfileBundle({
+      ...b,
+      profile: { ...b.profile, roles: [], education: [], skills: [], metrics: [] },
+      stories: [],
+      gaps: []
+    }),
+    true
+  )
+})

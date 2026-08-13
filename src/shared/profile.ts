@@ -197,15 +197,59 @@ export type GapAnswerOutcome =
 export function isProfileBundle(value: unknown): value is ProfileBundle {
   if (typeof value !== 'object' || value === null) return false
   const bundle = value as Partial<ProfileBundle>
-  return (
-    typeof bundle.version === 'number' &&
-    typeof bundle.hash === 'string' &&
-    bundle.hash.length > 0 &&
-    typeof bundle.profile === 'object' &&
-    bundle.profile !== null &&
-    Array.isArray(bundle.profile.roles) &&
-    Array.isArray(bundle.stories)
-  )
+  if (
+    typeof bundle.version !== 'number' ||
+    typeof bundle.hash !== 'string' ||
+    bundle.hash.length === 0 ||
+    typeof bundle.profile !== 'object' ||
+    bundle.profile === null ||
+    !Array.isArray(bundle.stories) ||
+    // `gaps` is dereferenced unguarded by describeBundle — which runs inside a
+    // React render — and by the gap-skip path in main. Its absence was a white
+    // screen on opening Settings.
+    !Array.isArray(bundle.gaps)
+  ) {
+    return false
+  }
+
+  // Every collection below is read with `.length`, `.map`, or `.join` by the
+  // prompt builder, which runs at session start. A bundle that satisfied the old
+  // check but lacked, say, `identity` or `metrics` passed validation and threw
+  // there instead — mid-session, which is the one moment this app cannot afford
+  // an exception. Checking here means a bad bundle is simply "no bundle".
+  const p = bundle.profile as Partial<ProfileBundle['profile']>
+  if (
+    typeof p.identity !== 'object' ||
+    p.identity === null ||
+    !Array.isArray(p.roles) ||
+    !Array.isArray(p.education) ||
+    !Array.isArray(p.skills) ||
+    !Array.isArray(p.metrics)
+  ) {
+    return false
+  }
+
+  // Element shape matters as much as the container's: one role without a `stack`
+  // or one story without `metrics` is the same crash, one turn later.
+  const isArrayOfStrings = (v: unknown): boolean =>
+    Array.isArray(v) && v.every((s) => typeof s === 'string')
+
+  if (!p.roles.every((r) => typeof r === 'object' && r !== null && isArrayOfStrings(r.stack))) {
+    return false
+  }
+  if (
+    !bundle.stories.every(
+      (s) =>
+        typeof s === 'object' &&
+        s !== null &&
+        isArrayOfStrings(s.competencies) &&
+        isArrayOfStrings(s.metrics)
+    )
+  ) {
+    return false
+  }
+
+  return bundle.gaps.every((g) => typeof g === 'object' && g !== null)
 }
 
 export function parseProfileBundle(raw: string): ProfileBundle | null {

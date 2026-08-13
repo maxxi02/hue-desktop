@@ -5,6 +5,7 @@ import {
   clampIntoWorkArea,
   clampIntoWorkAreas,
   GRID_ANCHORS,
+  type GridAnchor,
   type Rect
 } from './window-anchor.ts'
 
@@ -218,4 +219,17 @@ test('clamping preserves the window size, because docking must never resize the 
   const clamped = clampIntoWorkArea({ x: 5000, y: 5000, width: 900, height: 670 }, PRIMARY)
   assert.equal(clamped.width, 900)
   assert.equal(clamped.height, 670)
+})
+
+test('an unrecognised anchor falls back to centre instead of throwing before a window exists', () => {
+  const area = { x: 0, y: 0, width: 1920, height: 1040 }
+  // The anchor is typed, but the value comes from a settings file that can be
+  // hand-edited or written by an older build. This used to destructure
+  // undefined during createWindow — the app started to no window at all.
+  const bounds = computeAnchoredBounds(
+    'bottom-middle' as unknown as GridAnchor,
+    { width: 900, height: 670 },
+    area
+  )
+  assert.deepEqual(bounds, computeAnchoredBounds('center', { width: 900, height: 670 }, area))
 })

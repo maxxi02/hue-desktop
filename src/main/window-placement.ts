@@ -75,12 +75,18 @@ export function applyWindowAnchor(win: BrowserWindow | null): void {
   if (settings.windowAnchor === 'free') {
     const saved = settings.windowFreeBounds
     if (!saved) return
+    // Every field is checked, not just the sizes. A saved bounds missing x/y (or
+    // holding a string) made `target.x` undefined, which the clamp cannot
+    // rescue: its comparisons all read false, the overlap arithmetic yields NaN,
+    // and `setBounds({ x: NaN })` throws inside createWindow — no window, at
+    // startup. Falling back to the window's current position is always safe.
+    const usable = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n)
     const target: Rect = {
-      x: saved.x,
-      y: saved.y,
+      x: usable(saved.x) ? saved.x : current.x,
+      y: usable(saved.y) ? saved.y : current.y,
       // A saved size of 0 would be a corrupted file; keep what the window has.
-      width: saved.width > 0 ? saved.width : current.width,
-      height: saved.height > 0 ? saved.height : current.height
+      width: usable(saved.width) && saved.width > 0 ? saved.width : current.width,
+      height: usable(saved.height) && saved.height > 0 ? saved.height : current.height
     }
     setBoundsIfChanged(win, clampIntoWorkAreas(target, areas))
     return
