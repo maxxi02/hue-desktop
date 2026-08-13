@@ -1,4 +1,4 @@
-import { app, ipcMain, BrowserWindow } from 'electron'
+import { app, ipcMain, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { getSettings, updateSettings } from './settings'
 import { captureScreen } from './capture'
 import { startLlmStream, abortLlmStream } from './anthropic'
@@ -34,6 +34,7 @@ import type {
   LlmStreamRequest,
   OpenAiCompatProvider,
   PhoneMirrorEvent,
+  ScreenCapture,
   StealthStatus
 } from '../shared/types'
 
@@ -135,13 +136,21 @@ export function registerIpc(): void {
   // Session events from the renderer, fanned out to connected phones. The shape
   // is validated here — the payload crosses a process boundary — and text is
   // bounded so a runaway transcript can't balloon the SSE stream.
+  // Unlike `handle`, a throw in an `on` listener has no promise to land in — it
+  // is an uncaught main-process exception. This fires on every LLM delta, so it
+  // is the highest-frequency listener in the app: whatever the mirror does, it
+  // must not be able to take the session down with it.
   ipcMain.on('hue:phone:event', (_e, ev: PhoneMirrorEvent) => {
-    if (!ev || typeof ev !== 'object' || !PHONE_EVENT_TYPES.has(ev.type)) return
-    const text = typeof ev.text === 'string' ? ev.text.slice(0, 20_000) : undefined
-    broadcastPhoneEvent({ type: ev.type, text })
-    // Both transports get every event: the LAN mirror for offline use, the relay
-    // for the phone app on mobile data. Neither blocks the voice pipeline.
-    publishRelayEvent({ type: ev.type, text })
+    try {
+      if (!ev || typeof ev !== 'object' || !PHONE_EVENT_TYPES.has(ev.type)) return
+      const text = typeof ev.text === 'string' ? ev.text.slice(0, 20_000) : undefined
+      broadcastPhoneEvent({ type: ev.type, text })
+      // Both transports get every event: the LAN mirror for offline use, the relay
+      // for the phone app on mobile data. Neither blocks the voice pipeline.
+      publishRelayEvent({ type: ev.type, text })
+    } catch (e) {
+      console.error('phone event fan-out failed:', e)
+    }
   })
 
   // Resume ingest. The bytes come from the renderer's file picker and the whole
@@ -212,7 +221,25 @@ export function registerIpc(): void {
   // Grab the primary screen for the vision feature. Hue floats on top of every
   // app (alwaysOnTop), so it would photobomb its own screenshot — hide it for the
   // duration of the grab, then restore it exactly as it was.
+  // Serialised: the trigger is a global hotkey, so it is mashable. Two
+  // overlapping grabs meant the first one's restore ran while the second was
+  // still capturing — Hue photobombing the screenshot it just hid for — and on a
+  // multi-monitor 4K rig the window could be invisible for seconds with no
+  // failure path back.
+  let captureInFlight: Promise<ScreenCapture> | null = null
+
   ipcMain.handle('hue:capture:screen', async (event) => {
+    if (captureInFlight) return captureInFlight
+    const run = doCaptureScreen(event)
+    captureInFlight = run
+    try {
+      return await run
+    } finally {
+      captureInFlight = null
+    }
+  })
+
+  async function doCaptureScreen(event: IpcMainInvokeEvent): Promise<ScreenCapture> {
     const win = BrowserWindow.fromWebContents(event.sender)
     // With stealth in force the window is already excluded from desktopCapturer,
     // so hiding it would buy nothing and cost a visible flicker on every capture
@@ -230,5 +257,5 @@ export function registerIpc(): void {
     } finally {
       if (win && wasVisible && !win.isDestroyed()) win.showInactive()
     }
-  })
+  }
 }

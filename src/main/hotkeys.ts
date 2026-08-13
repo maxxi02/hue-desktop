@@ -14,8 +14,18 @@ const keyboardAccelerators = new Set<string>()
 // Keyed by our internal button name ("Back", "Forward", "Middle", …).
 const mouseHandlers = new Map<string, () => void>()
 
-function bringToFront(): BrowserWindow | null {
+// `mainWindow` stays a live reference until the 'closed' event, but the native
+// window is gone the moment it is destroyed — and quit preventDefaults 'close',
+// so there is a window where the ref is stale. Every hotkey action goes through
+// here, because touching a destroyed window throws out of a native uIOhook
+// callback, which is an uncaught main-process exception.
+function liveWindow(): BrowserWindow | null {
   const win = resolveWindow()
+  return win && !win.isDestroyed() ? win : null
+}
+
+function bringToFront(): BrowserWindow | null {
+  const win = liveWindow()
   if (!win) return null
   if (win.isMinimized()) win.restore()
   win.show()
@@ -46,7 +56,7 @@ export function toggleVisibility(): void {
 /** Show Hue and tell the renderer to start or stop the voice session. */
 export function toggleSession(): void {
   const win = bringToFront()
-  win?.webContents.send('hue:hotkey:toggle-session')
+  if (win && !win.webContents.isDestroyed()) win.webContents.send('hue:hotkey:toggle-session')
 }
 
 /**
@@ -55,7 +65,8 @@ export function toggleSession(): void {
  * the grab anyway, and surfacing it would only flash the overlay mid-call.
  */
 export function triggerCaptureScreen(): void {
-  resolveWindow()?.webContents.send('hue:hotkey:capture-screen')
+  const win = liveWindow()
+  if (win && !win.webContents.isDestroyed()) win.webContents.send('hue:hotkey:capture-screen')
 }
 
 // Map a uIOhook mouse button number to our internal name. On Windows libuiohook
@@ -82,15 +93,29 @@ function uiohookButtonName(button: number): string {
 // app is focused (Electron's globalShortcut can't see mouse buttons). We never
 // consume the event, so the button still does its normal thing in the focused
 // app — we just additionally fire Hue's handler.
+// uiohook-napi is a native module and its listener runs on a native callback, so
+// both the start and the handler are wrapped: a throw out of either is an
+// uncaught main-process exception, i.e. Hue dying mid-interview. A hook that
+// cannot start (missing/ABI-mismatched .node, denied low-level input hook on
+// Windows UIPI or macOS Accessibility) costs only the mouse triggers —
+// keyboard accelerators go through globalShortcut and still work.
 function startHook(): void {
   if (hookStarted) return
-  uIOhook.on('mousedown', (e) => {
-    // The typings declare `button` as unknown, but libuiohook reports a number.
-    const handler = mouseHandlers.get(uiohookButtonName(Number(e.button)))
-    if (handler) handler()
-  })
-  uIOhook.start()
-  hookStarted = true
+  try {
+    uIOhook.on('mousedown', (e) => {
+      try {
+        // The typings declare `button` as unknown, but libuiohook reports a number.
+        const handler = mouseHandlers.get(uiohookButtonName(Number(e.button)))
+        if (handler) handler()
+      } catch (err) {
+        console.error('mouse hotkey handler failed:', err)
+      }
+    })
+    uIOhook.start()
+    hookStarted = true
+  } catch (e) {
+    console.warn('Could not start the global input hook; mouse triggers are disabled:', e)
+  }
 }
 
 // Register one trigger string (keyboard accelerator or "Mouse:<Button>") to an
@@ -129,12 +154,23 @@ export function initHotkeys(windowGetter: () => BrowserWindow | null): void {
   applyHotkeys()
 }
 
+// Runs from 'will-quit'. A native throw here used to abort the rest of the
+// handler, leaving the phone-mirror server and relay socket open — which is what
+// stranded a hue.exe and produced EADDRINUSE on the next launch.
 export function unregisterAllHotkeys(): void {
-  globalShortcut.unregisterAll()
+  try {
+    globalShortcut.unregisterAll()
+  } catch (e) {
+    console.warn('globalShortcut.unregisterAll failed:', e)
+  }
   keyboardAccelerators.clear()
   mouseHandlers.clear()
   if (hookStarted) {
-    uIOhook.stop()
     hookStarted = false
+    try {
+      uIOhook.stop()
+    } catch (e) {
+      console.warn('uIOhook.stop failed:', e)
+    }
   }
 }

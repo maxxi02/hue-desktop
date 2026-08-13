@@ -11,6 +11,18 @@ import { isPermissionAllowed } from './permissions'
 import { applyStealth } from './stealth'
 import { applyWindowAnchor, trackWindowPlacement, watchDisplayChanges } from './window-placement'
 
+// Last-resort net. Node's default for an unhandled rejection is to terminate the
+// process, and in Electron that takes the whole app down — from a live interview
+// with no warning. Nothing below this line should rely on it: every known throw
+// site is guarded locally. This exists so an *unknown* one costs a log line
+// instead of the session.
+process.on('uncaughtException', (err) => {
+  console.error('uncaught exception in main:', err)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('unhandled rejection in main:', reason)
+})
+
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 // True once the user really wants to exit (tray "Quit" or app.quit), so the
@@ -121,9 +133,20 @@ function createWindow(): void {
   // NOTE: loopback audio is supported on Windows; macOS needs ScreenCaptureKit.
   ses.setDisplayMediaRequestHandler(
     (_request, callback) => {
-      desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
-        callback({ video: sources[0], audio: 'loopback' })
-      })
+      // The callback MUST be invoked on every path: getDisplayMedia in the
+      // renderer stays pending forever otherwise, so Companion mode would hang
+      // rather than fail. An empty source list is possible when screen recording
+      // is denied or the session is locked, and `video: undefined` is Chromium's
+      // documented "no video track" — audio-only is all Hue actually wants.
+      desktopCapturer
+        .getSources({ types: ['screen'] })
+        .then((sources) => {
+          callback({ video: sources[0], audio: 'loopback' })
+        })
+        .catch((e) => {
+          console.error('desktopCapturer.getSources failed:', e)
+          callback({ video: undefined, audio: 'loopback' })
+        })
     },
     { useSystemPicker: false }
   )
@@ -185,6 +208,19 @@ app.on('second-instance', () => summon())
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
+// Startup steps that are nice-to-have, not load-bearing. The tray, the hotkeys
+// and the display watcher can each fail on a given machine (a denied input hook,
+// a missing icon, an odd display driver) and none of them is a reason to leave
+// the user with no window at all — which is what an uncaught throw in here used
+// to do, since it surfaced as an unhandled rejection off `whenReady`.
+function safeStep(label: string, fn: () => void): void {
+  try {
+    fn()
+  } catch (e) {
+    console.error(`startup step "${label}" failed:`, e)
+  }
+}
+
 app.whenReady().then(() => {
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.hue.app')
@@ -196,34 +232,38 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  registerIpc()
+  safeStep('registerIpc', registerIpc)
 
-  createWindow()
-  createTray()
+  safeStep('createWindow', createWindow)
+  safeStep('createTray', createTray)
 
   // Global shortcuts: Ctrl/Cmd+Shift+Space toggles Hue's window (show / hide); the
   // configurable start-session shortcut starts/stops a session — both work from any app.
-  initHotkeys(() => mainWindow)
+  safeStep('initHotkeys', () => initHotkeys(() => mainWindow))
 
   // Re-anchor when the desktop geometry changes. This is the case that actually
   // strands the window: unplugging a dock, or a resolution change mid-call, can
   // leave an anchored card off-screen entirely on a monitor that no longer
   // exists — and a window you cannot see is a window you cannot drag back.
-  watchDisplayChanges(() => mainWindow)
+  safeStep('watchDisplayChanges', () => watchDisplayChanges(() => mainWindow))
 
   // Resume the phone mirror if the user left it enabled (the QR URL changes per
   // launch because the auth token is regenerated — re-scan from Settings).
-  if (getSettings().phoneMirrorEnabled) {
-    startPhoneMirror().catch((err) => console.error('phone mirror failed to start:', err))
-  }
+  safeStep('phoneMirror', () => {
+    if (getSettings().phoneMirrorEnabled) {
+      startPhoneMirror().catch((err) => console.error('phone mirror failed to start:', err))
+    }
+  })
 
   // Resume the relay if the user left it enabled. A fresh room means the phone
   // must re-scan after a desktop restart — same contract as the LAN mirror's URL.
-  if (getSettings().relayEnabled) {
-    startRelay(getSettings().relayBaseUrl).catch((err) =>
-      console.error('relay failed to start:', err)
-    )
-  }
+  safeStep('relay', () => {
+    if (getSettings().relayEnabled) {
+      startRelay(getSettings().relayBaseUrl).catch((err) =>
+        console.error('relay failed to start:', err)
+      )
+    }
+  })
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
@@ -243,10 +283,13 @@ app.on('before-quit', () => {
   isQuitting = true
 })
 
+// Each teardown is isolated: a throw in the first used to abort the handler and
+// leave the mirror's HTTP server and the relay socket open, which stranded a
+// hue.exe and produced EADDRINUSE on the next launch.
 app.on('will-quit', () => {
-  unregisterAllHotkeys()
-  stopPhoneMirror()
-  stopRelay()
+  safeStep('unregisterAllHotkeys', unregisterAllHotkeys)
+  safeStep('stopPhoneMirror', stopPhoneMirror)
+  safeStep('stopRelay', stopRelay)
 })
 
 // In this file you can include the rest of your app's specific main process
