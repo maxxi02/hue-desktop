@@ -1,5 +1,22 @@
 import { getSettings } from './settings'
+import { fetchWithRetry } from './stream-resilience'
 import type { CloudAsrResult } from '../shared/types'
+
+/**
+ * Every utterance in the interview goes through here, so a request with no
+ * deadline is not "slow" — it is a promise that never settles, an utterance that
+ * silently never becomes a transcript, and one more dead in-flight request
+ * stacked up behind the next one. A transcript that arrives after the candidate
+ * has already had to answer is worthless, so the budget is short by design:
+ * better to fail this utterance and let the next one through.
+ */
+const ASR_DEADLINE_MS = 20_000
+/**
+ * AssemblyAI is upload → create → poll, so it gets a longer budget than the
+ * single-shot providers — but nothing like the 60 s it used to take, which was
+ * long enough for the answer to arrive a full minute into the next question.
+ */
+const ASR_POLL_DEADLINE_MS = 30_000
 
 /**
  * Tier 3 cloud ASR proxy. Runs in the main process so provider API keys
@@ -16,6 +33,28 @@ export async function transcribeCloud(pcm16: ArrayBuffer): Promise<CloudAsrResul
       return assemblyai(pcm16, s.assemblyAiApiKey)
     default:
       throw new Error(`Cloud ASR provider "${s.cloudAsrProvider}" is not supported yet.`)
+  }
+}
+
+/**
+ * One bounded, retrying request. The deadline is the caller's whole budget, so a
+ * retry cannot extend it — three attempts inside 20 s, then the utterance is
+ * declared lost with a message the renderer can actually show.
+ */
+async function asrFetch(
+  url: string,
+  init: RequestInit,
+  label: string,
+  deadline: AbortSignal
+): Promise<Response> {
+  try {
+    return await fetchWithRetry(url, init, label, { signal: deadline })
+  } catch (err) {
+    const e = err as { name?: string }
+    if (e?.name === 'AbortError' || e?.name === 'TimeoutError' || deadline.aborted) {
+      throw new Error(`${label} did not answer in time; this utterance was dropped.`)
+    }
+    throw err
   }
 }
 
@@ -59,18 +98,19 @@ async function deepgram(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrRes
     smart_format: 'true'
   })
 
-  const res = await fetch(`https://api.deepgram.com/v1/listen?${params}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Token ${apiKey}`,
-      'Content-Type': 'application/octet-stream'
+  const res = await asrFetch(
+    `https://api.deepgram.com/v1/listen?${params}`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Token ${apiKey}`,
+        'Content-Type': 'application/octet-stream'
+      },
+      body: pcm16
     },
-    body: pcm16
-  })
-
-  if (!res.ok) {
-    throw new Error(`Deepgram error ${res.status}: ${await res.text()}`)
-  }
+    'Deepgram',
+    AbortSignal.timeout(ASR_DEADLINE_MS)
+  )
 
   const data = (await res.json()) as {
     results?: { channels?: { alternatives?: { transcript?: string }[] }[] }
@@ -88,15 +128,16 @@ async function groq(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrResult>
   form.append('model', 'whisper-large-v3-turbo')
   form.append('response_format', 'json')
 
-  const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form
-  })
-
-  if (!res.ok) {
-    throw new Error(`Groq error ${res.status}: ${await res.text()}`)
-  }
+  const res = await asrFetch(
+    'https://api.groq.com/openai/v1/audio/transcriptions',
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form
+    },
+    'Groq',
+    AbortSignal.timeout(ASR_DEADLINE_MS)
+  )
 
   const data = (await res.json()) as { text?: string }
   return { text: (data.text ?? '').trim(), provider: 'groq' }
@@ -105,35 +146,46 @@ async function groq(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrResult>
 async function assemblyai(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrResult> {
   if (!apiKey) throw new Error('No AssemblyAI API key configured. Add one in Settings.')
 
+  // One deadline for the whole upload → create → poll sequence, so a slow upload
+  // eats into the polling budget rather than adding to it.
+  const deadline = AbortSignal.timeout(ASR_POLL_DEADLINE_MS)
+
   const wav = pcm16ToWav(pcm16)
-  const upload = await fetch('https://api.assemblyai.com/v2/upload', {
-    method: 'POST',
-    headers: { authorization: apiKey, 'content-type': 'application/octet-stream' },
-    body: wav
-  })
-  if (!upload.ok) {
-    throw new Error(`AssemblyAI upload error ${upload.status}: ${await upload.text()}`)
-  }
+  const upload = await asrFetch(
+    'https://api.assemblyai.com/v2/upload',
+    {
+      method: 'POST',
+      headers: { authorization: apiKey, 'content-type': 'application/octet-stream' },
+      body: wav
+    },
+    'AssemblyAI upload',
+    deadline
+  )
   const { upload_url: audioUrl } = (await upload.json()) as { upload_url: string }
 
-  const create = await fetch('https://api.assemblyai.com/v2/transcript', {
-    method: 'POST',
-    headers: { authorization: apiKey, 'content-type': 'application/json' },
-    body: JSON.stringify({ audio_url: audioUrl })
-  })
-  if (!create.ok) {
-    throw new Error(`AssemblyAI transcript error ${create.status}: ${await create.text()}`)
-  }
+  const create = await asrFetch(
+    'https://api.assemblyai.com/v2/transcript',
+    {
+      method: 'POST',
+      headers: { authorization: apiKey, 'content-type': 'application/json' },
+      body: JSON.stringify({ audio_url: audioUrl })
+    },
+    'AssemblyAI transcript',
+    deadline
+  )
   const { id } = (await create.json()) as { id: string }
 
-  // Poll until the transcript completes (short clips usually finish in a few seconds).
-  for (let attempt = 0; attempt < 60; attempt++) {
-    const poll = await fetch(`https://api.assemblyai.com/v2/transcript/${id}`, {
-      headers: { authorization: apiKey }
-    })
-    if (!poll.ok) {
-      throw new Error(`AssemblyAI poll error ${poll.status}: ${await poll.text()}`)
-    }
+  // Poll until the transcript completes (short clips usually finish in a few
+  // seconds). Bounded by the same deadline: a job that is still queued when the
+  // budget runs out is a lost utterance, not something to keep waiting on while
+  // the interviewer moves to the next question.
+  while (!deadline.aborted) {
+    const poll = await asrFetch(
+      `https://api.assemblyai.com/v2/transcript/${id}`,
+      { headers: { authorization: apiKey } },
+      'AssemblyAI poll',
+      deadline
+    )
     const data = (await poll.json()) as { status: string; text?: string; error?: string }
     if (data.status === 'completed') {
       return { text: (data.text ?? '').trim(), provider: 'assemblyai' }
@@ -143,5 +195,5 @@ async function assemblyai(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrR
     }
     await new Promise((r) => setTimeout(r, 1000))
   }
-  throw new Error('AssemblyAI transcription timed out.')
+  throw new Error('AssemblyAI did not answer in time; this utterance was dropped.')
 }

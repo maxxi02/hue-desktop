@@ -1,5 +1,6 @@
 import type { WebContents } from 'electron'
 import { getSettings } from './settings'
+import { createStallGuard, fetchWithRetry } from './stream-resilience'
 import type {
   HueSettings,
   LlmMessage,
@@ -145,6 +146,11 @@ export function startOpenAiCompatStream(
   const aborter = new AbortController()
   active.set(streamId, { abort: () => aborter.abort() })
 
+  // A stall aborts through the same controller a user cancel does, so the catch
+  // below has to be able to tell them apart: a cancel is a clean `done`, a stall
+  // is an error the user needs to see.
+  let stalled = false
+
   void (async () => {
     try {
       const s = getSettings()
@@ -164,25 +170,30 @@ export function startOpenAiCompatStream(
         ...req.messages.map((m) => ({ role: m.role, content: toOpenAiContent(m.content) }))
       ]
 
-      const response = await fetch(`${PROVIDERS[provider].baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${key}`
+      const response = await fetchWithRetry(
+        `${PROVIDERS[provider].baseUrl}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${key}`
+          },
+          body: JSON.stringify({
+            model,
+            messages,
+            stream: true,
+            max_tokens: req.maxTokens ?? 300
+          })
         },
-        body: JSON.stringify({
-          model,
-          messages,
-          stream: true,
-          max_tokens: req.maxTokens ?? 300
-        }),
-        signal: aborter.signal
-      })
-
-      if (!response.ok) {
-        const detail = await response.text().catch(() => '')
-        throw new Error(`${provider} error ${response.status}: ${detail || response.statusText}`)
-      }
+        provider,
+        {
+          signal: aborter.signal,
+          onRetry: (attempt, code, delay) =>
+            console.warn(
+              `${provider} ${code || 'transport'} on attempt ${attempt}, retrying in ${delay}ms`
+            )
+        }
+      )
 
       const reader = response.body?.getReader()
       if (!reader) throw new Error(`No response body from ${provider}`)
@@ -190,35 +201,55 @@ export function startOpenAiCompatStream(
       const decoder = new TextDecoder()
       let buffer = ''
 
+      // Without this, a socket that goes quiet without closing leaves the read
+      // below pending forever: no delta, no done, no error, and an answer card
+      // that spins for the rest of the interview.
+      const guard = createStallGuard(() => {
+        stalled = true
+        aborter.abort()
+      })
+
       // OpenAI-compatible SSE: lines like `data: {json}`, terminated by `data: [DONE]`.
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-        for (const raw of lines) {
-          const line = raw.trim()
-          if (!line.startsWith('data:')) continue
-          const payload = line.slice(5).trim()
-          if (!payload) continue
-          if (payload === '[DONE]') {
-            finishDone(false)
-            return
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          guard.beat()
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() ?? ''
+          for (const raw of lines) {
+            const line = raw.trim()
+            if (!line.startsWith('data:')) continue
+            const payload = line.slice(5).trim()
+            if (!payload) continue
+            if (payload === '[DONE]') {
+              finishDone(false)
+              return
+            }
+            let event: { choices?: { delta?: { content?: string } }[] }
+            try {
+              event = JSON.parse(payload)
+            } catch {
+              continue
+            }
+            const text = event.choices?.[0]?.delta?.content
+            if (text) send('hue:llm:delta', { streamId, text })
           }
-          let event: { choices?: { delta?: { content?: string } }[] }
-          try {
-            event = JSON.parse(payload)
-          } catch {
-            continue
-          }
-          const text = event.choices?.[0]?.delta?.content
-          if (text) send('hue:llm:delta', { streamId, text })
         }
+      } finally {
+        guard.clear()
       }
       finishDone(false)
     } catch (err) {
       const e = err as { name?: string; message?: string }
+      // Order matters: a stall aborts the same controller a user cancel does,
+      // and reporting a dead socket as a clean cancel is how the spinning card
+      // stayed invisible in the first place.
+      if (stalled) {
+        finishError(`${getSettings().llmProvider} stopped responding mid-answer.`)
+        return
+      }
       if (e?.name === 'AbortError' || aborter.signal.aborted) {
         finishDone(true)
         return

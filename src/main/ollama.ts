@@ -1,5 +1,6 @@
 import type { WebContents } from 'electron'
 import { getSettings } from './settings'
+import { createStallGuard, fetchWithRetry } from './stream-resilience'
 import type { LlmMessage, LlmStreamRequest } from '../shared/types'
 
 /**
@@ -81,11 +82,21 @@ export function startOllamaStream(
   const aborter = new AbortController()
   active.set(streamId, { abort: () => aborter.abort() })
 
+  // See the same flag in openai-compat: a stall and a user cancel both come
+  // through this controller, and only one of them is an error.
+  let stalled = false
+
   void (async () => {
     try {
       const { ollamaBaseUrl, ollamaModel } = getSettings()
       const baseUrl = normalizeBaseUrl(ollamaBaseUrl)
       const model = await resolveModel(baseUrl, ollamaModel)
+      // A cancel landing during the /api/tags round trip used to abort nothing,
+      // so the stream below started anyway for a question already withdrawn.
+      if (aborter.signal.aborted) {
+        finishDone(true)
+        return
+      }
 
       // Ollama takes the system prompt as a leading system-role message.
       const messages = [
@@ -93,22 +104,27 @@ export function startOllamaStream(
         ...req.messages.map(toOllamaMessage)
       ]
 
-      const response = await fetch(`${baseUrl}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages,
-          stream: true,
-          options: { num_predict: req.maxTokens ?? 300 }
-        }),
-        signal: aborter.signal
-      })
-
-      if (!response.ok) {
-        const detail = await response.text().catch(() => '')
-        throw new Error(`Ollama error ${response.status}: ${detail || response.statusText}`)
-      }
+      const response = await fetchWithRetry(
+        `${baseUrl}/api/chat`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            messages,
+            stream: true,
+            options: { num_predict: req.maxTokens ?? 300 }
+          })
+        },
+        'Ollama',
+        {
+          signal: aborter.signal,
+          onRetry: (attempt, code, delay) =>
+            console.warn(
+              `Ollama ${code || 'transport'} on attempt ${attempt}, retrying in ${delay}ms`
+            )
+        }
+      )
 
       const reader = response.body?.getReader()
       if (!reader) throw new Error('No response body from Ollama')
@@ -116,32 +132,48 @@ export function startOllamaStream(
       const decoder = new TextDecoder()
       let buffer = ''
 
+      // A local model that wedges (VRAM exhaustion, a driver hang) never closes
+      // the socket, so without this the read below waits forever.
+      const guard = createStallGuard(() => {
+        stalled = true
+        aborter.abort()
+      })
+
       // Ollama streams newline-delimited JSON, not SSE.
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.trim()) continue
-          let event: { message?: { content?: string }; done?: boolean }
-          try {
-            event = JSON.parse(line)
-          } catch {
-            continue
-          }
-          if (event.message?.content)
-            send('hue:llm:delta', { streamId, text: event.message.content })
-          if (event.done) {
-            finishDone(false)
-            return
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          guard.beat()
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() ?? ''
+          for (const line of lines) {
+            if (!line.trim()) continue
+            let event: { message?: { content?: string }; done?: boolean }
+            try {
+              event = JSON.parse(line)
+            } catch {
+              continue
+            }
+            if (event.message?.content)
+              send('hue:llm:delta', { streamId, text: event.message.content })
+            if (event.done) {
+              finishDone(false)
+              return
+            }
           }
         }
+      } finally {
+        guard.clear()
       }
       finishDone(false)
     } catch (err) {
       const e = err as { name?: string; message?: string }
+      if (stalled) {
+        finishError('Ollama stopped responding mid-answer.')
+        return
+      }
       if (e?.name === 'AbortError' || aborter.signal.aborted) {
         finishDone(true)
         return
