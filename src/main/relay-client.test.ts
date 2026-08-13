@@ -141,3 +141,62 @@ test('stopping the relay drops work still queued behind an in-flight publish', a
     await relay.close()
   }
 })
+
+test('a burst of answer deltas collapses to what the network can carry, ending on the full text', async () => {
+  // The first request is held for 300ms, which is the window a real answer's
+  // deltas arrive in. Everything queued behind it is superseded before it can
+  // leave, and the relay keeps only the last write — so sending them all would
+  // be 200 round trips whose only observable effect is the final one.
+  const relay = await startFakeRelay(300, 200)
+  try {
+    const status = await startRelay(relay.baseUrl)
+    assert.equal(status.running, true, `relay did not start (${status.error})`)
+
+    let text = ''
+    for (let i = 0; i < 200; i++) {
+      text += `token${i} `
+      publishRelayEvent({ type: 'answer', text })
+    }
+
+    await sleep(1200)
+
+    assert.ok(
+      relay.arrivals.length <= 5,
+      `the queue did not coalesce: ${relay.arrivals.length} requests for 200 deltas`
+    )
+    assert.equal(
+      relay.arrivals.at(-1),
+      text,
+      `the phone was left on a partial answer: ${JSON.stringify(relay.arrivals.at(-1))}`
+    )
+  } finally {
+    stopRelay()
+    await relay.close()
+  }
+})
+
+test('coalescing never drops an event of a different type, since those do not supersede each other', async () => {
+  const relay = await startFakeRelay(200, 200)
+  try {
+    const status = await startRelay(relay.baseUrl)
+    assert.equal(status.running, true, `relay did not start (${status.error})`)
+
+    publishRelayEvent({ type: 'answer', text: 'holding the queue' })
+    publishRelayEvent({ type: 'question', text: 'the question' })
+    publishRelayEvent({ type: 'state', text: 'listening' })
+
+    await sleep(1200)
+
+    assert.ok(
+      relay.arrivals.includes('the question'),
+      `the question was dropped: ${JSON.stringify(relay.arrivals)}`
+    )
+    assert.ok(
+      relay.arrivals.includes('listening'),
+      `the state was dropped: ${JSON.stringify(relay.arrivals)}`
+    )
+  } finally {
+    stopRelay()
+    await relay.close()
+  }
+})

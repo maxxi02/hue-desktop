@@ -47,6 +47,24 @@ let publishChain: Promise<void> = Promise.resolve()
  * than delivered to a room nobody is watching any more.
  */
 let publishGeneration = 0
+/**
+ * Per-type sequence numbers, and the newest sequence queued for each type.
+ *
+ * `publishRelayEvent` is called once per LLM delta — hundreds of times per
+ * answer — and each event carries the *whole* cumulative answer. Chaining one
+ * serial POST per delta meant a 500-token answer became 500 round trips: on
+ * cellular at 100 ms RTT the queue could not drain within a turn, so the backlog
+ * (and the retained bodies behind it) grew monotonically for the whole session
+ * and the phone fell minutes behind.
+ *
+ * Because the relay keeps only the last write, a superseded event of the same
+ * type has no reader — sending it is pure cost. So a job that is no longer the
+ * newest of its type is dropped at the head of the queue instead of being sent,
+ * which collapses those 500 round trips into however many the network can
+ * actually carry, always ending on the final, complete text.
+ */
+const typeSeq = new Map<string, number>()
+const latestSeq = new Map<string, number>()
 
 export function getRelayStatus(): RelayStatus {
   return { running: Boolean(roomId), pairingUri, error: lastError }
@@ -155,6 +173,10 @@ export function stopRelay(): void {
   lastError = null
   consecutiveFailures = 0
   publishGeneration++
+  // A new room starts a new stream; carrying old sequence numbers over would let
+  // the first event of each type be judged stale against the previous session.
+  typeSeq.clear()
+  latestSeq.clear()
 }
 
 export function publishRelayEvent(ev: PhoneMirrorEvent): void {
@@ -169,10 +191,14 @@ export function publishRelayEvent(ev: PhoneMirrorEvent): void {
   const forRoom = roomId
   const generation = publishGeneration
 
+  const seq = (typeSeq.get(ev.type) ?? 0) + 1
+  typeSeq.set(ev.type, seq)
+  latestSeq.set(ev.type, seq)
+
   // Queue rather than launch: the caller still gets an immediate return, but the
   // request itself only leaves once everything published before it is done with.
   publishChain = publishChain.then(() =>
-    deliver({ url, body, token, forRoom, generation }).catch(() => {})
+    deliver({ url, body, token, forRoom, generation, type: ev.type, seq }).catch(() => {})
   )
 }
 
@@ -182,12 +208,20 @@ interface QueuedPublish {
   token: string
   forRoom: string
   generation: number
+  type: string
+  seq: number
 }
 
 async function deliver(job: QueuedPublish): Promise<void> {
   // Whatever was in front of us may have taken seconds; if the room died in the
   // meantime this event has nowhere useful to go.
   if (job.generation !== publishGeneration) return
+
+  // A newer event of this same type was queued while we waited. Since the relay
+  // keeps only the last write, this one would be overwritten on arrival by text
+  // that already exists — so it is dropped rather than sent. Ordering is
+  // unaffected: the survivor is by definition the newest.
+  if (job.seq !== latestSeq.get(job.type)) return
 
   // One controller for the whole job, so the hold limit cuts off the outstanding
   // request too — abandoning a request without aborting it would let it land later
@@ -204,11 +238,18 @@ async function deliver(job: QueuedPublish): Promise<void> {
           body: job.body,
           signal: AbortSignal.any([jobAbort.signal, AbortSignal.timeout(PUBLISH_TIMEOUT_MS)])
         })
-        // A 404 means the room is gone (relay restarted). Retrying cannot help.
+        // A 404 means the room is gone (relay restarted — rooms are in-memory —
+        // or it was swept). Retrying this event cannot help, but doing nothing
+        // else left the desktop publishing into a cleared roomId for the rest of
+        // the session: `publishRelayEvent` returns early on an empty room, so
+        // every later event was silently dropped and the only sign was an error
+        // string buried in Settings. Registering a fresh room at least leaves a
+        // scannable QR there instead of a dead session.
         if (res.status === 404) {
           if (roomId === job.forRoom) {
             stopRoomOnly()
             lastError = 'The relay room expired — re-pair your phone'
+            scheduleReRegister()
           }
           return
         }
@@ -232,6 +273,34 @@ async function deliver(job: QueuedPublish): Promise<void> {
   } finally {
     clearTimeout(holdTimer)
   }
+}
+
+/**
+ * Register a replacement room after the old one vanished.
+ *
+ * Guarded against re-entry, because the failure that triggers it is one of many
+ * queued events failing at once — without the latch, a single relay restart
+ * would fire a room-registration per queued event.
+ *
+ * The new room means a new pairing URI, so the phone cannot silently follow: the
+ * error says so, and Settings shows a QR that works.
+ */
+let reRegisterInFlight = false
+
+function scheduleReRegister(): void {
+  if (reRegisterInFlight || !baseUrl) return
+  const url = baseUrl
+  reRegisterInFlight = true
+  void startRelay(url)
+    .then((status) => {
+      if (status.running) {
+        lastError = 'The relay restarted — re-scan the QR in Settings to reconnect your phone'
+      }
+    })
+    .catch((e) => console.error('could not re-register the relay room:', e))
+    .finally(() => {
+      reRegisterInFlight = false
+    })
 }
 
 /** Clears the room but keeps the configured base URL, so a retry can re-register. */

@@ -101,6 +101,25 @@ const INTERIM_INTERVAL_MS = 800
 const INTERIM_MIN_SPEECH_MS = 1500
 
 /**
+ * Ceiling on the audio retained for interim transcription — Whisper's own
+ * context window, so trimming past it discards only audio the model could not
+ * attend to anyway.
+ *
+ * A VAD segment is normally one sentence, but nothing guarantees it: a talkative
+ * interviewer or a noisy line can hold the gate open for minutes, and this
+ * buffer is copied whole and transferred to the worker on every interim tick.
+ * Unbounded, that is the one allocation in the session that grows with time.
+ */
+const INTERIM_MAX_SAMPLES = 30 * SAMPLE_RATE
+
+/**
+ * How many past messages travel with each request — roughly a dozen
+ * question/answer exchanges, which is more conversational thread than any single
+ * answer actually draws on, and far short of any provider's context limit.
+ */
+const MAX_HISTORY_MESSAGES = 24
+
+/**
  * How often the scheduler is told that time has passed.
  *
  * Its trigger requires the interim text to be *stable* for 400 ms, and stability
@@ -202,7 +221,10 @@ export class VoicePipeline {
 
   /** Speech captured since the VAD opened this segment, for interim transcription. */
   private speechFrames: Float32Array[] = []
+  /** Cumulative samples in this segment. Drives the interim cadence. */
   private speechSamples = 0
+  /** Samples actually retained in `speechFrames` — bounded, unlike the above. */
+  private bufferedSamples = 0
   private samplesAtLastInterim = 0
   private interimInFlight = false
   private speechActive = false
@@ -255,6 +277,22 @@ export class VoicePipeline {
     // so the model and wasm load locally. Works in dev (http) and packaged (file).
     const assetBase = new URL('./', window.location.href).href
 
+    // Everything from here on acquires something that has to be given back. A
+    // throw past this point used to escape start() with the LLM listeners still
+    // registered and — worse — the desktop-capture session still live, video
+    // track and all: the OS "sharing your screen" indicator stayed on, and the
+    // caller had already dropped its reference to this pipeline, so nothing
+    // could ever stop it. Each retry stacked another one.
+    try {
+      await this.startCapture(assetBase)
+    } catch (e) {
+      await this.releaseAfterFailedStart()
+      throw e
+    }
+  }
+
+  /** The acquiring half of `start()`. Separated so its failure has one owner. */
+  private async startCapture(assetBase: string): Promise<void> {
     this.vad = await MicVAD.new({
       model: 'v5',
       baseAssetPath: assetBase,
@@ -306,6 +344,36 @@ export class VoicePipeline {
     if (this.settings.hueMode === 'interviewer') this.kickoffInterview()
   }
 
+  /**
+   * Give back everything a partially-completed `start()` acquired. Best-effort by
+   * design: this runs while an error is already propagating, and a throw in here
+   * would replace the real cause with a teardown detail.
+   */
+  private async releaseAfterFailedStart(): Promise<void> {
+    try {
+      if (this.vad) {
+        await this.vad.destroy()
+        this.vad = null
+      }
+    } catch (e) {
+      console.warn('[pipeline] VAD teardown after a failed start:', e)
+    }
+    if (this.systemStream) {
+      this.systemStream.getTracks().forEach((t) => t.stop())
+      this.systemStream = null
+    }
+    this.unsubscribe.forEach((u) => {
+      try {
+        u()
+      } catch {
+        // Nothing useful to do; the point is that the rest still unsubscribe.
+      }
+    })
+    this.unsubscribe = []
+    this.endSegment()
+    this.setState('idle')
+  }
+
   /** Resolve the audio source the VAD listens to (mic vs system/call audio). */
   private async getStream(): Promise<MediaStream> {
     if (this.settings.audioSource === 'system') {
@@ -343,6 +411,10 @@ export class VoicePipeline {
 
   async stop(): Promise<void> {
     this.abortResponse()
+    // The queue owns an AudioContext, and a new one is built per session — they
+    // have to be handed back or a handful of start/stop rounds exhausts the
+    // per-document limit and TTS goes silent for the rest of the app run.
+    this.tts.dispose()
     this.endSegment()
     this.scheduler?.reset()
     if (this.vad) {
@@ -451,6 +523,7 @@ export class VoicePipeline {
     this.speechActive = true
     this.speechFrames = []
     this.speechSamples = 0
+    this.bufferedSamples = 0
     this.samplesAtLastInterim = 0
     this.lastInterimText = ''
     if (this.tickTimer === null) {
@@ -466,6 +539,7 @@ export class VoicePipeline {
     this.speechActive = false
     this.speechFrames = []
     this.speechSamples = 0
+    this.bufferedSamples = 0
     this.samplesAtLastInterim = 0
     this.lastInterimText = ''
     if (this.tickTimer !== null) {
@@ -489,6 +563,22 @@ export class VoicePipeline {
     // The VAD reuses its frame buffer between callbacks, so this must be a copy.
     this.speechFrames.push(new Float32Array(frame))
     this.speechSamples += frame.length
+    this.bufferedSamples += frame.length
+
+    // Drop audio older than Whisper's own context window. A VAD segment is
+    // normally a sentence, but an interviewer who talks continuously (or line
+    // noise that holds the gate open) keeps one open indefinitely — and this
+    // buffer was copied *in full* into a fresh allocation every 800 ms and
+    // transferred to the worker. Minutes in, that is a tens-of-megabytes
+    // allocation per interim and a decode whose cost grows without bound, which
+    // is what pushed the *final* transcript — the one the answer ships from —
+    // behind a giant interim, and the likeliest source of a worker OOM.
+    // Nothing is lost by trimming: the interim only has to answer "is this a
+    // question yet", and the model cannot attend past 30 s anyway.
+    while (this.bufferedSamples > INTERIM_MAX_SAMPLES && this.speechFrames.length > 1) {
+      const dropped = this.speechFrames.shift()
+      this.bufferedSamples -= dropped?.length ?? 0
+    }
 
     if (this.interimInFlight) return
     if (this.speechSamples < (INTERIM_MIN_SPEECH_MS * SAMPLE_RATE) / 1000) return
@@ -497,7 +587,7 @@ export class VoicePipeline {
 
     this.samplesAtLastInterim = this.speechSamples
     this.interimInFlight = true
-    void this.runInterim(flatten(this.speechFrames, this.speechSamples))
+    void this.runInterim(flatten(this.speechFrames, this.bufferedSamples))
   }
 
   private async runInterim(audio: Float32Array): Promise<void> {
@@ -906,7 +996,34 @@ export class VoicePipeline {
       )
       this.pendingCaptureIndex = null
     }
+    this.trimHistory()
     this.setState('listening')
+  }
+
+  /**
+   * Keep the conversation history bounded.
+   *
+   * The whole array is sent on every turn, and a 45-minute interview is dozens of
+   * question/answer pairs — each answer a few hundred tokens, plus whatever
+   * survived of a screen capture. Left to grow, the session ends the way an
+   * unbounded context always does: a provider context-length error, mid-answer,
+   * on a question late in the interview, which is precisely when it costs most.
+   *
+   * The oldest turns are the ones to lose. What Hue needs is the thread of the
+   * last few exchanges; the substance an answer is built from comes from the
+   * profile bundle and the cue sheet, which are re-sent in the system prompt on
+   * every turn and are unaffected by this.
+   */
+  private trimHistory(): void {
+    if (this.messages.length <= MAX_HISTORY_MESSAGES) return
+    const dropped = this.messages.length - MAX_HISTORY_MESSAGES
+    this.messages = this.messages.slice(dropped)
+    // The capture index points into the array we just re-based. Anything that
+    // slid off the front is gone; anything left has moved down by `dropped`.
+    if (this.pendingCaptureIndex !== null) {
+      const moved = this.pendingCaptureIndex - dropped
+      this.pendingCaptureIndex = moved >= 0 ? moved : null
+    }
   }
 
   /**

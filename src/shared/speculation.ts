@@ -305,6 +305,12 @@ export class SpeculationScheduler {
   // one timestamp — and because the Kotlin it mirrors takes it too.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onFinal(text: string, speaker: Speaker, _now?: number): Command[] {
+    // Self speech leaves the in-flight draft strictly alone. This looks like a
+    // hole — the draft outlives the question that produced it — but it is the
+    // product's central case: the user is reading that draft aloud right now.
+    // Aborting it here would blank the card mid-sentence. (A draft stranded by a
+    // mid-session mode flip is unwedged by the next interviewer final, which
+    // reaches the commit/regenerate branch below.)
     if (speaker === 'self') return []
 
     const normalised = text.trim()
@@ -325,6 +331,17 @@ export class SpeculationScheduler {
 
     this.draft = null
     this.firesThisQuestion = 0
+
+    // An empty final is what Whisper emits for the breath or short silence that
+    // ends a question — it is the absence of new text, not a new question. The
+    // interim the draft was fired on is therefore still the best (and only)
+    // reading of what was asked, so it commits. Falling through to the F1
+    // comparison instead scored it zero, discarded a perfectly good draft, and
+    // asked the model to generate an answer to the empty string.
+    if (normalised.length === 0) {
+      this.committed += 1
+      return [{ kind: 'commit', specId: inFlight.specId }]
+    }
 
     if (commits(inFlight.firedOn, normalised, this.config.commitThreshold)) {
       this.committed += 1

@@ -638,7 +638,7 @@ export default function App(): React.JSX.Element {
   // The answer glance mode last painted, used to tell a growing answer from a
   // new one. See the scroll effect below.
   const prevGlanceTextRef = useRef<string | undefined>(undefined)
-  const prevTranscriptTextRef = useRef<string | undefined>(undefined)
+  const prevTranscriptIdRef = useRef<number | undefined>(undefined)
   const prevCaptureIdRef = useRef<number | undefined>(undefined)
   const prevResultIdRef = useRef<number | undefined>(undefined)
   // Whether a session was running on the previous render, so the end of one can
@@ -741,8 +741,11 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     const t: VoiceTurn | null = voice.userTranscript
-    if (!t?.text || t.text === prevTranscriptTextRef.current) return
-    prevTranscriptTextRef.current = t.text
+    // Deduped by utterance, not by text: two identical questions are two
+    // questions, and treating the second as a repeat of the first dropped its
+    // bubble and let the new answer overwrite the old one in place.
+    if (!t?.text || t.id === prevTranscriptIdRef.current) return
+    prevTranscriptIdRef.current = t.id
     setMessages((prev) => [
       ...prev,
       { role: 'user', text: t.text, tier: String(t.tier), latencyMs: t.latencyMs }
@@ -817,7 +820,17 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     const wasActive = prevActiveRef.current
     prevActiveRef.current = voice.active
-    if (!wasActive || voice.active) return
+
+    // A session starting closes the scorecard. It is checked ahead of the live
+    // view, so leaving it open meant a restarted session rendered last session's
+    // review over a running one: Hue listening and answering, with the answers
+    // invisible until the user found the Done button. Fat-fingering the stop
+    // hotkey mid-interview is all it took.
+    if (voice.active) {
+      if (!wasActive) setReviewIndex(null)
+      return
+    }
+    if (!wasActive) return
 
     const turns = toReviewTurns(messages)
     if (!isReviewable(turns)) return
@@ -826,7 +839,6 @@ export default function App(): React.JSX.Element {
     // value derived from state, so there is nothing to compute during render.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSessions(saveSession(createSession(turns)))
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setReviewIndex(0)
   }, [voice.active, messages])
 
@@ -839,7 +851,7 @@ export default function App(): React.JSX.Element {
     // the panel closes: "start fresh" means the screen is clear, and leaving the
     // last scorecard up would hide the empty transcript the user just asked for.
     setReviewIndex(null)
-    prevTranscriptTextRef.current = undefined
+    prevTranscriptIdRef.current = undefined
     prevCaptureIdRef.current = undefined
     prevResultIdRef.current = undefined
   }

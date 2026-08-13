@@ -455,3 +455,16 @@ function permutations<T>(items: T[]): T[][] {
   }
   return out
 }
+
+test('a whitespace-only final commits the draft rather than regenerating on nothing', () => {
+  const { scheduler, interim, final, settle } = harness()
+  interim('so tell me about a time you disagreed with your manager')
+  const fire = only(settle(), 'fire')
+
+  // What ASR emits for the breath or the beat of silence that ends a question:
+  // the absence of new text, not a new question. Scoring the draft against it
+  // discarded a good draft and asked the model to answer the empty string.
+  const committed = only(final('   '), 'commit')
+  assert.equal(committed.specId, fire.specId)
+  assert.equal(scheduler.metrics.fired, 1, 'a second generation was fired on nothing')
+})
