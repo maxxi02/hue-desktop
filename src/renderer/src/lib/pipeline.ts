@@ -3,6 +3,7 @@ import { transcribe, transcribeInterim } from './transcription'
 import { StreamingTTSQueue } from './streamingTTS'
 import { parseProfileBundle, profilePromptBlock } from '../../../shared/profile'
 import { groundResponse, stripStreamingCitation, type Grounding } from '../../../shared/grounding'
+import { parseJobSpec, jobSpecPromptBlock, rawJobDescriptionBlock } from '../../../shared/job-spec'
 import {
   SpeculationScheduler,
   type Command as SpeculationCommand,
@@ -1155,6 +1156,24 @@ function candidateBackground(s: HueSettings): string | null {
   return s.resumeSummary || null
 }
 
+/**
+ * The posting being interviewed against, as a prompt block, or null.
+ *
+ * Three states, best first. An analysed spec is preferred because it is bounded
+ * and verified — every requirement in it was proven to appear in the posting.
+ * The raw posting is the fallback, and it is the reason the raw text is stored
+ * at all: someone who pastes a posting sixty seconds before the call and never
+ * presses Analyse still gets most of the value, and an analysis that failed does
+ * not leave them worse off than they were before they pasted. With neither,
+ * nothing is added and behaviour is exactly what it was before postings existed.
+ */
+function jobContext(s: HueSettings): string | null {
+  const spec = parseJobSpec(s.jobSpecJson)
+  if (spec) return jobSpecPromptBlock(spec)
+  if (s.jobDescription.trim()) return rawJobDescriptionBlock(s.jobDescription)
+  return null
+}
+
 function buildSystemPrompt(s: HueSettings, cueSheet: CueSheet | null = null): string {
   // Prepared answers go only to the companion prompt. In interviewer mode Hue
   // is asking the questions, and handing it the user's own answers would let it
@@ -1178,6 +1197,22 @@ function buildInterviewerPrompt(s: HueSettings): string {
   // the companion: it names what exists rather than implying everything does.
   const background = candidateBackground(s)
   if (background) parts.push(`The candidate's background:\n\n${background}`)
+  // The posting goes to BOTH modes, unlike the cue sheet withheld above. The
+  // reason the cue sheet is withheld does not apply here: it is the user's own
+  // rehearsed answers, so giving it to the interviewer persona would let Hue ask
+  // exactly what has already been practised. A posting is the employer's
+  // document, not the user's answers — knowing it makes the practice
+  // role-specific rather than easier. It goes after the background so that
+  // "above" in the never-claim rule still resolves to the candidate.
+  const job = jobContext(s)
+  if (job) {
+    parts.push(
+      'Draw your questions from what this posting implies the interviewer would actually ask — the ' +
+        'requirements it lists, the responsibilities it describes, and any likely questions named ' +
+        'below — rather than generic questions for the job title.'
+    )
+    parts.push(job)
+  }
   if (s.interviewMode === 'star') {
     parts.push(
       'Favor behavioral questions that invite STAR-style (Situation, Task, Action, Result) answers.'
@@ -1263,6 +1298,25 @@ function buildCompanionPrompt(s: HueSettings, cueSheet: CueSheet | null = null):
     // Pre-bundle installs still work. This path has no story ids and no gap
     // scan, so it keeps the older, weaker guarantee.
     parts.push(`The user's background (draw on this): ${s.resumeSummary}`)
+  }
+  // The posting, after the background and before the cue sheet — and the order
+  // is load-bearing, not tidiness. The never-claim rule inside the block says a
+  // requirement may only be spoken as experience "if it also appears in the
+  // candidate's background above"; placed first, "above" would resolve to
+  // nothing and the guard would be decoration on a list of skills the user may
+  // not have. Everything here sits alongside the never-invent-facts instruction
+  // above, never in place of it.
+  const job = jobContext(s)
+  if (job) {
+    parts.push(
+      'A job posting for this role follows. Weight the answer toward the responsibilities and ' +
+        'requirements it names, and when several stories in the bank would work, choose the one ' +
+        'closest to what this role needs rather than simply the strongest one. Reuse the ' +
+        "posting's own vocabulary where doing so is honest. Treat it strictly as context about " +
+        'the JOB and never as a description of the user: a requirement their background does not ' +
+        'support gets the honest bridge, not a claim.'
+    )
+    parts.push(job)
   }
   // The prepared answers, as material rather than as a replacement.
   //

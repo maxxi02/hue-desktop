@@ -23,6 +23,8 @@ import { LlmRefusal, type LlmClient, type StructuredRequest } from './structured
 /** Groq's OpenAI-compatible surface. Same path shape as OpenAI, different host. */
 export const GROQ_BASE_URL = 'https://api.groq.com/openai/v1'
 export const OPENAI_BASE_URL = 'https://api.openai.com/v1'
+/** DeepSeek serves the compat surface at the root — no `/v1` segment. */
+export const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 
 /**
  * Structured extraction plus a long story-mining output, on a provider that
@@ -73,6 +75,13 @@ export interface OpenAiCompatOptions {
   retryBaseMs?: number
   /** Test seam so a fake provider can be injected without touching globals. */
   fetch?: typeof fetch
+  /**
+   * Provider-specific fields merged into the request body — DeepSeek's
+   * `thinking: { type: 'disabled' }` is the reason this exists. Kept as opaque
+   * data rather than named options so a vendor quirk never becomes a branch in
+   * the request builder.
+   */
+  extraBody?: Record<string, unknown>
 }
 
 /**
@@ -114,6 +123,13 @@ function schemaName(label: string): string {
  * restatement would drift from it silently, which is worse than no contract at
  * all. The two extra sentences are the deviations that actually show up: models
  * omit keys they consider empty, and they wrap JSON in a markdown fence.
+ *
+ * This string MUST keep containing the literal word "JSON". DeepSeek's
+ * `json_object` mode rejects outright — a 400, before any generation — a request
+ * whose prompt never mentions json, and this contract is the only place the word
+ * reliably appears in the DeepSeek path (it runs in `json_object` mode always).
+ * Rewording the block to say "structured object" would break every DeepSeek
+ * ingest and look like a provider outage.
  */
 function schemaContract(schema: Record<string, unknown>): string {
   return [
@@ -217,6 +233,7 @@ export function openAiCompatClient(opts: OpenAiCompatOptions = {}): LlmClient {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const retryBaseMs = opts.retryBaseMs ?? DEFAULT_RETRY_BASE_MS
   const doFetch = opts.fetch ?? fetch
+  const extraBody = opts.extraBody ?? {}
 
   /**
    * Negotiated once, then remembered — scoped to the client, which lives for the
@@ -314,10 +331,15 @@ export function openAiCompatClient(opts: OpenAiCompatOptions = {}): LlmClient {
             type: 'json_schema',
             json_schema: { name: schemaName(request.label), schema: request.schema, strict: true }
           }
-        : { type: 'json_object' }
+        : { type: 'json_object' },
       // `request.effort` is deliberately dropped: reasoning-effort is spelled
       // differently by every provider that has it and rejected outright by those
       // that do not, and a hard 400 on an advisory hint is a bad trade.
+      //
+      // Spread last so a provider quirk can override one of the defaults above
+      // — DeepSeek's `thinking` toggle is what makes `temperature: 0` mean
+      // anything at all, since it ignores temperature while thinking is on.
+      ...extraBody
     })
 
     const choice = completion.choices?.[0]
@@ -335,6 +357,21 @@ export function openAiCompatClient(opts: OpenAiCompatOptions = {}): LlmClient {
         `The model declined to process this document (${request.label}).`,
         request.label,
         'content_filter'
+      )
+    }
+    if (choice?.finish_reason === 'insufficient_system_resource') {
+      // DeepSeek ends a stream this way when its own capacity runs out
+      // mid-generation. It arrives as a 200 with a short or empty body, so
+      // without this branch it fell through to "returned output that was not
+      // JSON" — which points the user at their document and at us, when the
+      // truth is the provider was full and the very same upload will work in a
+      // minute. Wrong diagnosis is worse than no diagnosis here.
+      throw new LlmRefusal(
+        `The provider ran out of capacity partway through the ${request.label} step. ` +
+          'Nothing is wrong with your document — try the upload again in a moment, ' +
+          'or set a different Ingest provider in Settings.',
+        request.label,
+        'insufficient_system_resource'
       )
     }
     if (choice?.finish_reason === 'length') {

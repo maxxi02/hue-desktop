@@ -231,6 +231,52 @@ test('a fenced JSON body is recovered, since a fence is formatting rather than r
   )
 })
 
+test('a provider out of capacity says so, rather than blaming the output', async () => {
+  // DeepSeek ends a stream with this `finish_reason` when its own capacity runs
+  // out. It arrives as a 200 with nothing usable in it, so before this branch
+  // existed it fell through to "returned output that was not JSON" — sending
+  // the user to inspect a document that was never the problem, when the fix is
+  // to press upload again.
+  const provider = await fakeProvider([
+    { status: 200, json: completion('', 'insufficient_system_resource') }
+  ])
+
+  await assert.rejects(
+    () => client(provider.baseUrl).structured(REQUEST),
+    (err: unknown) => {
+      assert.ok(err instanceof LlmRefusal)
+      assert.equal(err.category, 'insufficient_system_resource')
+      assert.match(err.message, /capacity/i)
+      assert.doesNotMatch(err.message, /not JSON/)
+      return true
+    }
+  )
+})
+
+test('extraBody reaches the request body, which is how DeepSeek gets thinking off', async () => {
+  const provider = await fakeProvider([{ status: 200, json: completion('{"name":"Jordan"}') }])
+
+  await client(provider.baseUrl, {
+    strictSchema: false,
+    extraBody: { thinking: { type: 'disabled' } }
+  }).structured(REQUEST)
+
+  const sent = provider.path(0) as { thinking?: unknown; temperature?: number }
+  assert.deepEqual(sent.thinking, { type: 'disabled' })
+  // Both halves matter together: ingest asks for temperature 0 so two runs of
+  // one résumé hash the same, and DeepSeek silently ignores temperature while
+  // thinking is on. Sending the toggle is what makes the zero mean anything.
+  assert.equal(sent.temperature, 0)
+})
+
+test('extraBody wins over a default it collides with, rather than being dropped', async () => {
+  const provider = await fakeProvider([{ status: 200, json: completion('{"name":"Jordan"}') }])
+
+  await client(provider.baseUrl, { extraBody: { temperature: 0.7 } }).structured(REQUEST)
+
+  assert.equal((provider.path(0) as { temperature: number }).temperature, 0.7)
+})
+
 test('the timeout budgets the whole call, not each attempt', async () => {
   // Two 429s in a row, each asking for a long wait. With a per-attempt timeout
   // this would retry happily; with an overall deadline it must give up inside

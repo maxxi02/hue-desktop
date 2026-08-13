@@ -849,8 +849,16 @@
   gap: 12px;
 }
 
-/* HueType.overline — 11.5/700, +0.5 tracking, uppercase. */
+/* HueType.overline — 11.5/700, +0.5 tracking, uppercase.
+   A flex row so each section can carry a glyph beside its text: fourteen
+   headings in one uniform uppercase grey are hard to tell apart while
+   scrolling, and a distinct silhouette is what makes one findable at a
+   glance. The icon inherits `color` below, so `currentColor` covers both
+   themes with no second rule. */
 .settings-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -858,6 +866,42 @@
   color: var(--text-muted);
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
+}
+
+/* A long heading must squash itself, never the glyph — a half-width icon is
+   worse than no icon, because it no longer reads as its own shape. */
+.settings-section-title svg {
+  flex-shrink: 0;
+}
+
+/* The quiet secondary action beside a primary one — Clear, Delete, Refresh.
+   The class was already used in five places in Settings.tsx but had no rule
+   anywhere, so every one of them rendered as a raw browser button: a grey
+   bevelled box sitting next to Hue's own styling. Reads as a link because
+   these are all destructive-or-cheap actions that must not compete with the
+   button they sit beside. */
+.link-btn {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color 200ms var(--ease-out);
+}
+
+.link-btn:hover {
+  color: var(--text);
+}
+
+.link-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  text-decoration: none;
 }
 
 .settings-field {

@@ -15,7 +15,14 @@ import type {
   WindowAnchor
 } from '@shared/types'
 import { describeBundle, parseProfileBundle } from '../../../shared/profile'
+import {
+  describeJobSpec,
+  parseJobSpec,
+  JOB_DESCRIPTION_LIMIT,
+  type JobSpec
+} from '../../../shared/job-spec'
 import type { CueSheet } from '@shared/cuesheet'
+import { SectionIcon } from './SectionIcon'
 
 const KOKORO_VOICES = ['af_heart', 'af_bella', 'af_nicole', 'am_michael', 'bf_emma', 'bm_george']
 
@@ -101,11 +108,39 @@ const COMPAT_PROVIDERS: Record<OpenAiCompatProvider, CompatProviderInfo> = {
       'Open the "API Keys" page (link below) — a free trial key is created for you.',
       'Copy the trial key (or create a new one) and paste it above.'
     ]
+  },
+  deepseek: {
+    label: 'DeepSeek',
+    keyField: 'deepseekApiKey',
+    modelField: 'deepseekModel',
+    keyPlaceholder: 'sk-…',
+    consoleUrl: 'https://platform.deepseek.com/api_keys',
+    steps: [
+      'Go to platform.deepseek.com and create an account.',
+      'Open the "API keys" page (link below).',
+      'Click "Create new API key", name it, and confirm.',
+      'Copy the key (shown only once, starts with "sk-…") and paste it above.',
+      // The one step people skip, and the failure it causes looks nothing like
+      // its cause: a correctly-created key on a zero balance returns
+      // "Insufficient Balance", which reads as a broken key rather than an
+      // unfunded account.
+      'Add credit on the Billing page — DeepSeek has no free tier, so a new key with a zero balance returns "Insufficient Balance".'
+    ]
   }
 }
 
+/**
+ * Derived from `COMPAT_PROVIDERS` rather than written out.
+ *
+ * This used to be a hand-maintained `p === 'google' || p === 'groq' || …`
+ * chain — a second copy of the list directly above it, with nothing tying the
+ * two together. Adding a provider and forgetting the chain does not fail to
+ * compile: the provider simply never satisfies the guard, so a correctly
+ * configured account silently renders no key field at all. Reading the keys of
+ * the record makes that class of bug impossible.
+ */
 const isCompatProvider = (p: LlmProvider): p is OpenAiCompatProvider =>
-  p === 'google' || p === 'groq' || p === 'mistral' || p === 'cohere'
+  Object.hasOwn(COMPAT_PROVIDERS, p)
 
 // Cloud ASR providers and the settings key holding each one's credential. Only
 // the selected provider's key is shown, to keep the section uncluttered. Each
@@ -524,6 +559,29 @@ export function Settings({
   const [resumeProgress, setResumeProgress] = useState<number | null>(null)
   const [resumeIngesting, setResumeIngesting] = useState(false)
   const [cueIngesting, setCueIngesting] = useState(false)
+  // Job posting analysis, shaped exactly like the résumé trio above it:
+  // a running flag, a percentage for the bar, a status line, and — separately
+  // — the failure, which is rendered in red rather than in the muted style.
+  const [jobAnalysing, setJobAnalysing] = useState(false)
+  const [jobProgress, setJobProgress] = useState<number | null>(null)
+  const [jobStatus, setJobStatus] = useState<string | null>(null)
+  const [jobError, setJobError] = useState<string | null>(null)
+  /**
+   * The posting text the stored spec was built from.
+   *
+   * `JobSpec.sourceHash` is the authoritative answer to "is this summary still
+   * about what is in the box", but it is a sha256 and the renderer has no
+   * business hashing 20,000 characters on every keystroke to decide whether to
+   * grey out a panel. Keeping the analysed string and comparing it is exact for
+   * the case that matters — the user edited the box after analysing — and this
+   * only drives a visual hint, never anything the prompt depends on.
+   *
+   * null means "nothing analysed in this session", which is also the state
+   * after a reload: the main process writes `jobDescription` and `jobSpecJson`
+   * in the same update, so a freshly loaded pair is in sync by construction and
+   * must not be marked stale.
+   */
+  const [analysedText, setAnalysedText] = useState<string | null>(null)
   const cueFileInputRef = useRef<HTMLInputElement>(null)
   // Tracks whether unmount has already happened, so a slow ingest that finishes
   // after the pane closes can't set state on it or leave onProgress subscribed
@@ -536,6 +594,11 @@ export function Settings({
   // `s` is null until settings load; the pane renders a loading state then.
   const profileBundle = s ? parseProfileBundle(s.profileBundleJson) : null
   const openGaps = profileBundle ? profileBundle.gaps.filter((g) => g.status === 'open') : []
+  // Same reasoning as `profileBundle`: parsed from the settings field rather
+  // than mirrored into its own state, so the pane and the prompt builder read
+  // the identical source.
+  const jobSpec: JobSpec | null = s ? parseJobSpec(s.jobSpecJson) : null
+  const jobSpecStale = analysedText !== null && analysedText !== (s?.jobDescription ?? '').trim()
 
   // Groq's free tier caps a single request at 8,000 tokens; story mining asks
   // for roughly 10,000. Resolved the same way `providerFor` does in the main
@@ -576,6 +639,24 @@ export function Settings({
       cueStopProgressRef.current?.()
     }
   }, [loadCueSheets])
+
+  // Job posting analysis progress.
+  //
+  // Subscribed for the life of the pane rather than armed per click, unlike the
+  // résumé ingest: that one closes over the picked filename to write its status
+  // line, so it can only be subscribed once the file is known. These phases
+  // describe themselves, so there is nothing to close over and one subscription
+  // with one cleanup is the simpler shape. The mounted guard is the same guard
+  // the cue-sheet subscription uses, for the same reason — an analysis outlives
+  // a pane the user closes mid-run.
+  useEffect(() => {
+    const stop = window.hue.jobSpec.onProgress((p) => {
+      if (!mountedRef.current) return
+      setJobProgress(Number.isFinite(p.pct) ? p.pct : null)
+      setJobStatus(p.phase)
+    })
+    return stop
+  }, [])
 
   // Phone mirror: the toggle takes effect immediately (no Save needed) so the QR
   // code shows up the moment it's enabled.
@@ -895,6 +976,49 @@ export function Settings({
     }
   }
 
+  /**
+   * Sends the pasted posting off to be structured.
+   *
+   * The posting is worth something even un-analysed — the prompt builder falls
+   * back to the raw text — so this is an upgrade rather than a gate, and a
+   * failure here leaves the user exactly where they were rather than losing
+   * what they pasted.
+   */
+  const onAnalyseJob = async (): Promise<void> => {
+    const text = s.jobDescription.trim()
+    if (!text || jobAnalysing) return
+
+    setJobAnalysing(true)
+    setJobError(null)
+    setJobProgress(0)
+    setJobStatus('Reading the posting…')
+    try {
+      const spec = await window.hue.jobSpec.analyze(text)
+      // The main process has already persisted the spec beside the posting;
+      // mirroring it into the form is what makes the summary appear without a
+      // reload, exactly as the résumé ingest does with its bundle.
+      set('jobSpecJson', JSON.stringify(spec))
+      setAnalysedText(text)
+    } catch (err) {
+      setJobError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setJobAnalysing(false)
+      setJobProgress(null)
+      setJobStatus(null)
+    }
+  }
+
+  const onClearJobSpec = async (): Promise<void> => {
+    await window.hue.jobSpec.clear()
+    // Only the two fields it cleared are taken off the persisted object —
+    // assigning the whole thing would drop every unsaved edit open in the
+    // drawer, the same trap the cue-sheet handlers below document.
+    setS((prev) => (prev ? { ...prev, jobDescription: '', jobSpecJson: '' } : prev))
+    setAnalysedText(null)
+    setJobError(null)
+    setJobStatus(null)
+  }
+
   const onDeleteProfile = async (): Promise<void> => {
     await window.hue.profile.delete()
     set('profileBundleJson', '')
@@ -1078,7 +1202,10 @@ export function Settings({
             interview actually needs.
           */}
           <div className="settings-section">
-            <div className="settings-section-title">Setup</div>
+            <div className="settings-section-title">
+              <SectionIcon name="setup" />
+              Setup
+            </div>
             <ol className="setup-list">
               {setupSteps.map((step) => (
                 <li
@@ -1109,7 +1236,10 @@ export function Settings({
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Assistant</div>
+            <div className="settings-section-title">
+              <SectionIcon name="assistant" />
+              Assistant
+            </div>
             <div className="settings-field">
               <label className="settings-label">Provider</label>
               <select
@@ -1127,6 +1257,7 @@ export function Settings({
                 <option value="groq">Groq (cloud, fast)</option>
                 <option value="mistral">Mistral AI (cloud)</option>
                 <option value="cohere">Cohere (cloud)</option>
+                <option value="deepseek">DeepSeek (cloud)</option>
                 <option value="ollama">Ollama (local)</option>
               </select>
             </div>
@@ -1297,7 +1428,10 @@ export function Settings({
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Mode</div>
+            <div className="settings-section-title">
+              <SectionIcon name="mode" />
+              Mode
+            </div>
             <div className="settings-field">
               <label className="settings-label">Hue&apos;s role</label>
               <select
@@ -1333,7 +1467,10 @@ export function Settings({
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Phone mirror — opens a web page</div>
+            <div className="settings-section-title">
+              <SectionIcon name="phone-mirror" />
+              Phone mirror — opens a web page
+            </div>
             <div className="settings-field">
               <label className="settings-label">Mirror the session to your phone</label>
               <button
@@ -1394,7 +1531,10 @@ export function Settings({
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Phone app — scan this one in Hue</div>
+            <div className="settings-section-title">
+              <SectionIcon name="phone-app" />
+              Phone app — scan this one in Hue
+            </div>
             <div className="settings-field">
               <label className="settings-label">Relay URL</label>
               <input
@@ -1464,7 +1604,10 @@ export function Settings({
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Shortcuts</div>
+            <div className="settings-section-title">
+              <SectionIcon name="shortcuts" />
+              Shortcuts
+            </div>
             <div className="settings-field">
               <label className="settings-label">Summon Hue (show window)</label>
               <HotkeyRecorder value={s.summonHotkey} onChange={(v) => set('summonHotkey', v)} />
@@ -1499,7 +1642,10 @@ export function Settings({
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Interview context</div>
+            <div className="settings-section-title">
+              <SectionIcon name="interview" />
+              Interview context
+            </div>
             <div className="settings-field">
               <label className="settings-label">Job title</label>
               <input
@@ -1508,6 +1654,156 @@ export function Settings({
                 onChange={(e) => set('jobTitle', e.target.value)}
                 placeholder="Senior Frontend Engineer"
               />
+            </div>
+            {/*
+              The posting itself, directly under the one-line title it replaces
+              the guesswork of. A job title tells Hue almost nothing — two
+              postings with the same title measure completely different things —
+              so this is the field that decides whether an answer is aimed at
+              this employer or at the average one.
+            */}
+            <div className="settings-field">
+              <label className="settings-label">Job description</label>
+              <textarea
+                className="settings-input"
+                rows={8}
+                maxLength={JOB_DESCRIPTION_LIMIT}
+                value={s.jobDescription}
+                onChange={(e) => set('jobDescription', e.target.value)}
+                placeholder="Paste the job posting here — the full text, responsibilities and requirements included."
+              />
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                Hue uses this to answer the way <em>this</em> employer is measuring — weighting your
+                own stories toward what the posting actually asks for. It never claims a skill from
+                the posting that isn’t already in your résumé: where the two don’t meet, it gives
+                you an honest bridge instead of a sentence you’d have to defend.
+              </span>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  marginTop: 8,
+                  flexWrap: 'wrap'
+                }}
+              >
+                <button
+                  type="button"
+                  className="icon-btn"
+                  style={{
+                    alignSelf: 'flex-start',
+                    width: 'auto',
+                    padding: '6px 12px',
+                    fontSize: 13
+                  }}
+                  onClick={() => void onAnalyseJob()}
+                  disabled={jobAnalysing || !s.jobDescription.trim()}
+                >
+                  {jobSpec ? 'Re-analyse' : 'Analyse posting'}
+                </button>
+                {(jobSpec || s.jobDescription) && !jobAnalysing && (
+                  <button type="button" className="link-btn" onClick={() => void onClearJobSpec()}>
+                    Clear
+                  </button>
+                )}
+              </div>
+              {jobAnalysing ? (
+                <UploadProgress percent={jobProgress} label={jobStatus ?? 'Working…'} />
+              ) : (
+                <>
+                  {jobError && (
+                    <span style={{ color: 'var(--red)', fontSize: 12, marginTop: 6 }}>
+                      {jobError}
+                    </span>
+                  )}
+                  {jobSpec && (
+                    // Dimmed and marked when the box no longer holds the text
+                    // this was built from. Reading a confident summary of a
+                    // posting you have since replaced is worse than reading no
+                    // summary, because nothing on screen says it is out of date.
+                    <div style={{ marginTop: 10, opacity: jobSpecStale ? 0.55 : 1 }}>
+                      <AddedChip label={describeJobSpec(jobSpec)} />
+                      {jobSpecStale && (
+                        <span
+                          style={{
+                            color: 'var(--text-muted)',
+                            fontSize: 12,
+                            marginLeft: 8
+                          }}
+                        >
+                          edited since analysis — re-analyse to update
+                        </span>
+                      )}
+                      {jobSpec.mustHaves.length > 0 && (
+                        <div style={{ marginTop: 8 }}>
+                          <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                            What they say they require
+                          </div>
+                          <div
+                            style={{
+                              display: 'flex',
+                              flexWrap: 'wrap',
+                              gap: 6,
+                              marginTop: 6
+                            }}
+                          >
+                            {/*
+                              Capped, because a posting can list a dozen and this
+                              panel is a confirmation that the right document was
+                              read, not the document itself. Only `text` is ever
+                              shown: `evidence` is the verbatim span the
+                              verifier uses to prove a requirement came from the
+                              posting, and it is provenance, not copy.
+                            */}
+                            {jobSpec.mustHaves.slice(0, 10).map((req) => (
+                              <span
+                                key={req.id}
+                                style={{
+                                  border: '1px solid var(--border)',
+                                  borderRadius: 999,
+                                  padding: '3px 9px',
+                                  fontSize: 12
+                                }}
+                              >
+                                {req.text}
+                              </span>
+                            ))}
+                            {jobSpec.mustHaves.length > 10 && (
+                              <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                                +{jobSpec.mustHaves.length - 10} more
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {jobSpec.likelyQuestions.length > 0 && (
+                        // Collapsed: useful to skim before a call, and noise
+                        // while you are still setting the pane up.
+                        <details style={{ marginTop: 10 }}>
+                          <summary
+                            style={{ color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}
+                          >
+                            Questions they’re likely to ask
+                          </summary>
+                          <ul
+                            style={{
+                              color: 'var(--text-muted)',
+                              fontSize: 12,
+                              margin: '6px 0 0',
+                              paddingLeft: 18,
+                              lineHeight: 1.5
+                            }}
+                          >
+                            {jobSpec.likelyQuestions.map((q) => (
+                              <li key={q}>{q}</li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
             <div className="settings-field">
               <label className="settings-label">Mode</label>
@@ -1580,6 +1876,7 @@ export function Settings({
                 <option value="groq">Groq</option>
                 <option value="mistral">Mistral</option>
                 <option value="cohere">Cohere</option>
+                <option value="deepseek">DeepSeek</option>
               </select>
               {/*
                 Warned before the upload rather than after it. The failure this
@@ -1693,7 +1990,10 @@ export function Settings({
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Cue sheets</div>
+            <div className="settings-section-title">
+              <SectionIcon name="cue-sheets" />
+              Cue sheets
+            </div>
             <div className="settings-field">
               <label className="settings-label">Prepared answers</label>
               <input
@@ -1805,7 +2105,10 @@ export function Settings({
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Transcription (ASR)</div>
+            <div className="settings-section-title">
+              <SectionIcon name="asr" />
+              Transcription (ASR)
+            </div>
             <div className="settings-field">
               <label className="settings-label">Tier</label>
               <select
@@ -1879,7 +2182,10 @@ export function Settings({
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Voice (TTS)</div>
+            <div className="settings-section-title">
+              <SectionIcon name="tts" />
+              Voice (TTS)
+            </div>
             <div className="settings-field">
               <label className="settings-label">Voice</label>
               <select
@@ -1911,7 +2217,10 @@ export function Settings({
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Stealth</div>
+            <div className="settings-section-title">
+              <SectionIcon name="stealth" />
+              Stealth
+            </div>
             <div className="settings-field">
               <label className="settings-label">Hide Hue from screen sharing</label>
               <button
@@ -1947,7 +2256,10 @@ export function Settings({
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Answering</div>
+            <div className="settings-section-title">
+              <SectionIcon name="answering" />
+              Answering
+            </div>
             <div className="settings-field">
               <label className="settings-label">Speculative drafting</label>
               <button
@@ -1967,7 +2279,10 @@ export function Settings({
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Docking</div>
+            <div className="settings-section-title">
+              <SectionIcon name="docking" />
+              Docking
+            </div>
             <div className="settings-field">
               <label className="settings-label">Anchor position</label>
               <div className="anchor-grid">
@@ -2016,7 +2331,10 @@ export function Settings({
           </div>
 
           <div className="settings-section">
-            <div className="settings-section-title">Appearance</div>
+            <div className="settings-section-title">
+              <SectionIcon name="appearance" />
+              Appearance
+            </div>
             <div className="settings-field">
               <label className="settings-label">Window transparency</label>
               <div className="range-row">

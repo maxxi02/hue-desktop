@@ -20,6 +20,7 @@ import type {
   ProfileBundle
 } from '../shared/profile'
 import type { CueSheet } from '../shared/cuesheet'
+import type { JobSpec } from '../shared/job-spec'
 
 function sub<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: IpcRendererEvent, payload: T): void => cb(payload)
@@ -89,6 +90,14 @@ const hue = {
     delete: (id: string): Promise<void> => ipcRenderer.invoke('hue:cuesheet:delete', id),
     onProgress: (cb: (p: { phase: string; pct: number }) => void): (() => void) =>
       sub('hue:cuesheet:progress', cb)
+  },
+  jobSpec: {
+    /** Analyse the pasted posting into a JobSpec and persist it. Subscribe to onProgress first. */
+    analyze: (text: string): Promise<JobSpec> => ipcRenderer.invoke('hue:jobspec:analyze', text),
+    /** Clears both the pasted posting and its analysis. */
+    clear: (): Promise<HueSettings> => ipcRenderer.invoke('hue:jobspec:clear'),
+    onProgress: (cb: (p: { phase: string; pct: number }) => void): (() => void) =>
+      sub('hue:jobspec:progress', cb)
   },
   phone: {
     status: (): Promise<PhoneMirrorStatus> => ipcRenderer.invoke('hue:phone:status'),

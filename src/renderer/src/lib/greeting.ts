@@ -27,6 +27,8 @@ export function isLlmConfigured(s: HueSettings): boolean {
       return s.mistralApiKey.trim() !== ''
     case 'cohere':
       return s.cohereApiKey.trim() !== ''
+    case 'deepseek':
+      return s.deepseekApiKey.trim() !== ''
     default:
       return false
   }
