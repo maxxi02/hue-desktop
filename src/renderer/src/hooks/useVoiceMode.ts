@@ -11,6 +11,15 @@ export interface VoiceTurn {
   text: string
   tier: ResolvedTier
   latencyMs: number
+  /**
+   * Identifies this utterance, the way `capture` and `assistantResult` already
+   * do. Without it the transcript deduped on text alone, so an interviewer who
+   * repeated a phrase — "Right.", "Sorry, say that again?", or genuinely
+   * re-asking the same question — produced no new user bubble, and the answer
+   * that followed replaced the previous answer's slot instead of appending. The
+   * earlier answer simply vanished from the transcript.
+   */
+  id: number
 }
 
 /**
@@ -87,6 +96,14 @@ export function useVoiceMode(): UseVoiceMode {
   const [mode, setMode] = useState<HueMode>('companion')
   const [audioSource, setAudioSource] = useState<AudioSource>('microphone')
   const pipelineRef = useRef<VoicePipeline | null>(null)
+  /**
+   * A session is "running" from the first line of start(), not from the moment
+   * the pipeline object exists — model loading and VAD init sit in between, and
+   * every double-start and orphaned-microphone bug lived in that gap.
+   */
+  const startingRef = useRef(false)
+  /** A stop that arrived mid-start, to be honoured once start() finishes. */
+  const stopRequestedRef = useRef(false)
   const [greetingText, setGreetingText] = useState('')
   const greetedRef = useRef(false)
   const cancelGreetingRef = useRef<(() => void) | null>(null)
@@ -130,7 +147,14 @@ export function useVoiceMode(): UseVoiceMode {
   useEffect(() => () => cancelGreetingRef.current?.(), [])
 
   const start = useCallback(async (): Promise<void> => {
-    if (pipelineRef.current) return
+    // `pipelineRef` alone is not a sufficient guard: it is assigned several
+    // awaits into this function, so two starts inside that window both passed it
+    // and built two pipelines on the same microphone — doubled transcripts,
+    // doubled LLM spend, and only the second one reachable by stop(). The first
+    // kept the mic and the loopback capture open for the life of the app.
+    if (pipelineRef.current || startingRef.current) return
+    startingRef.current = true
+    stopRequestedRef.current = false
     setError(null)
     // A greeting may still be streaming/speaking; stop it so it doesn't overlap.
     cancelGreetingRef.current?.()
@@ -159,7 +183,14 @@ export function useVoiceMode(): UseVoiceMode {
         window.hue.phone.event({ type: 'state', text: st })
       },
       onUserTranscript: (text, tier, latencyMs) => {
-        setUserTranscript({ text, tier, latencyMs })
+        // A new question clears the last failure. Errors were only ever reset at
+        // start(), so one transient fault — a single dropped ASR request, one
+        // bad LLM response — left a red banner pinned under the answer, and in
+        // glance mode directly under the text being read, for the rest of the
+        // session. The next successful turn is the strongest possible evidence
+        // that the previous failure is over.
+        setError(null)
+        setUserTranscript({ text, tier, latencyMs, id: Date.now() })
         setAssistantText('')
         setAssistantResult(null)
         window.hue.phone.event({ type: 'question', text })
@@ -187,14 +218,32 @@ export function useVoiceMode(): UseVoiceMode {
     pipelineRef.current = pipeline
     try {
       await pipeline.start()
+      // A stop that arrived while the models were loading found nothing to tear
+      // down — `stop()` ran before the VAD existed — and then start() finished
+      // and brought the microphone up anyway, with no reference left to shut it
+      // off. Honour the request now that there is something to honour it with.
+      if (stopRequestedRef.current) {
+        pipelineRef.current = null
+        await pipeline.stop()
+        setState('idle')
+      }
     } catch (e) {
       pipelineRef.current = null
       setError(e instanceof Error ? e.message : String(e))
       setState('idle')
+    } finally {
+      startingRef.current = false
+      stopRequestedRef.current = false
     }
   }, [])
 
   const stop = useCallback(async (): Promise<void> => {
+    // Mid-start there is nothing to stop yet; record the intent and let start()
+    // act on it once the pipeline is real.
+    if (startingRef.current) {
+      stopRequestedRef.current = true
+      return
+    }
     const pipeline = pipelineRef.current
     if (!pipeline) return
     pipelineRef.current = null
@@ -221,7 +270,9 @@ export function useVoiceMode(): UseVoiceMode {
   // running" check even before state updates.
   useEffect(() => {
     return window.hue.hotkey.onToggleSession(() => {
-      if (pipelineRef.current) {
+      // "Starting" counts as running, or the hotkey pressed during model load
+      // would start a second session instead of cancelling the first.
+      if (pipelineRef.current || startingRef.current) {
         void stop()
       } else {
         void start()

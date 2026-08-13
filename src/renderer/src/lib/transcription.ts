@@ -45,9 +45,49 @@ export function onModelLoadStateChange(cb: (s: ModelLoadState) => void): () => v
   return () => loadListeners.delete(cb)
 }
 
+/**
+ * Longest a single decode may take before we stop waiting for it.
+ *
+ * Nothing legitimate comes close: a wasm decode of a long interim is seconds,
+ * not a minute. This exists for the case where a reply never arrives at all —
+ * the worker died, or a message was lost — because a `pending` entry that is
+ * never settled is not a slow transcript, it is a pipeline pinned on
+ * 'transcribing' with no further utterance ever answered for the rest of the
+ * session.
+ */
+const DECODE_TIMEOUT_MS = 45_000
+
+/**
+ * Settle every outstanding request as failed and drop the worker.
+ *
+ * Dropping it is the recovery: `getWorker()` builds a fresh one on the next
+ * call, and clearing `lastPreferWasm` makes the next preload actually re-issue
+ * the load rather than no-op. Without this, one worker death meant ASR was dead
+ * for the remaining life of the app.
+ */
+function failAllPending(message: string): void {
+  for (const [, entry] of pending) entry.reject(new Error(message))
+  pending.clear()
+  if (worker) {
+    worker.terminate()
+    worker = null
+  }
+  lastPreferWasm = null
+  setLoadState({ status: 'error', message })
+}
+
 function getWorker(): Worker {
   if (worker) return worker
   worker = new Worker(new URL('../workers/whisper.worker.ts', import.meta.url), { type: 'module' })
+  // A worker crash (wasm OOM on a long segment, an onnxruntime abort) emits
+  // 'error' and then nothing ever again. Without these handlers every pending
+  // promise stayed pending forever and the pipeline never recovered.
+  worker.onerror = (e): void => {
+    failAllPending(`The speech recogniser crashed: ${e.message || 'unknown error'}`)
+  }
+  worker.onmessageerror = (): void => {
+    failAllPending('The speech recogniser sent a message that could not be read.')
+  }
   worker.onmessage = (e: MessageEvent<WorkerOut>): void => {
     const msg = e.data
     switch (msg.type) {
@@ -113,9 +153,35 @@ export function transcribeOnDevice(audio: Float32Array): Promise<string> {
     // A final is never skipped by the worker, so the null branch is unreachable
     // here; it is collapsed rather than propagated so callers of the normal path
     // keep a plain string.
-    pending.set(id, { resolve: (text) => resolve(text ?? ''), reject })
+    trackPending(id, { resolve: (text) => resolve(text ?? ''), reject })
     // Transfer the underlying buffer to avoid a copy.
     w.postMessage({ type: 'transcribe', id, audio }, [audio.buffer])
+  })
+}
+
+/**
+ * Register a request and guarantee it settles. Every path that resolves a
+ * request goes through `pending.delete`, which clears the timer with it.
+ */
+function trackPending(
+  id: number,
+  entry: { resolve: (text: string | null) => void; reject: (e: Error) => void }
+): void {
+  const timer = setTimeout(() => {
+    if (!pending.has(id)) return
+    pending.delete(id)
+    entry.reject(new Error('The speech recogniser did not respond in time.'))
+  }, DECODE_TIMEOUT_MS)
+
+  pending.set(id, {
+    resolve: (text) => {
+      clearTimeout(timer)
+      entry.resolve(text)
+    },
+    reject: (e) => {
+      clearTimeout(timer)
+      entry.reject(e)
+    }
   })
 }
 
@@ -138,7 +204,7 @@ export function transcribeInterim(audio: Float32Array): Promise<string | null> {
   const w = getWorker()
   const id = nextId++
   return new Promise<string | null>((resolve, reject) => {
-    pending.set(id, { resolve, reject })
+    trackPending(id, { resolve, reject })
     // The caller hands over a fresh copy of the accumulated audio (its own
     // buffer keeps growing), so transferring is safe and skips a copy.
     w.postMessage({ type: 'transcribe', id, audio, interim: true }, [audio.buffer])

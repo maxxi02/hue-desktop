@@ -125,7 +125,19 @@ function getTranscriber(
   }
   if (!transcriberPromise) {
     loadedPreferWasm = preferWasm
-    transcriberPromise = createTranscriber(preferWasm)
+    const attempt = createTranscriber(preferWasm)
+    // A rejected promise must not stay in the cache. The weights are fetched from
+    // the hub (local models are disabled), so a flaky network at the start of an
+    // interview is the ordinary way this fails — and caching that rejection meant
+    // every later attempt awaited the same dead promise, leaving on-device ASR
+    // broken for the whole app run with no path back short of a restart.
+    attempt.catch(() => {
+      if (transcriberPromise === attempt) {
+        transcriberPromise = null
+        loadedPreferWasm = null
+      }
+    })
+    transcriberPromise = attempt
   }
   return transcriberPromise
 }

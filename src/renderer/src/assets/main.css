@@ -437,6 +437,45 @@
   animation: fade-in-up 280ms var(--ease-out);
 }
 
+/* The screen the error boundary shows in place of a blank window. Sized and
+ * padded like the card it replaces so a crash mid-session reads as Hue having a
+ * problem, not as Hue having vanished. */
+.crash-shield {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 24px;
+  color: var(--fg);
+  font-size: 14px;
+}
+
+.crash-shield h2 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--danger);
+}
+
+.crash-shield p {
+  margin: 0;
+  opacity: 0.8;
+}
+
+.crash-shield pre {
+  margin: 0;
+  max-width: 100%;
+  max-height: 30vh;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: var(--r-card-s);
+  background: var(--danger-tint);
+  border: 1px solid var(--danger-border);
+  color: var(--danger);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .error-msg {
   align-self: center;
   padding: 9px 16px;

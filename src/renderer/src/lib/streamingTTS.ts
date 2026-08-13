@@ -176,6 +176,20 @@ export class StreamingTTSQueue {
     getWorker().postMessage({ type: 'start', id: this.id, voice: this.voice, speed: this.speed })
   }
 
+  /**
+   * Release the audio device. A queue is built per pipeline, i.e. per session,
+   * and Chromium caps a document at a handful of AudioContexts — so without this
+   * a few start/stop rounds in one app run exhausted them, and the next
+   * `new AudioContext()` threw from inside the worker's message handler, leaving
+   * TTS permanently silent for the rest of the run.
+   */
+  dispose(): void {
+    this.interrupt()
+    const ctx = this.ctx
+    this.ctx = null
+    if (ctx) void ctx.close().catch(() => {})
+  }
+
   private getCtx(): AudioContext {
     if (!this.ctx) this.ctx = new AudioContext()
     if (this.ctx.state === 'suspended') void this.ctx.resume()
@@ -187,6 +201,18 @@ export class StreamingTTSQueue {
       this.maybeFinish()
       return
     }
+    try {
+      this.scheduleChunk(samples, sampleRate)
+    } catch (e) {
+      // Runs from the worker's onmessage handler, where a throw is an unhandled
+      // error rather than a failed sentence. Losing the audio for one chunk is
+      // recoverable; losing the handler is not.
+      console.warn('[tts] could not schedule an audio chunk:', e)
+      this.maybeFinish()
+    }
+  }
+
+  private scheduleChunk(samples: Float32Array, sampleRate: number): void {
     const ctx = this.getCtx()
     const buf = ctx.createBuffer(1, samples.length, sampleRate)
     buf.getChannelData(0).set(samples)
