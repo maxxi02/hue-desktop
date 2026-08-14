@@ -842,10 +842,15 @@ export default function App(): React.JSX.Element {
    * transition has been consumed, `wasActive` is false and every later run
    * returns immediately.
    *
+   * Filing is all this does — it deliberately does not open the panel. A review
+   * that appeared on its own took over the screen at the one moment the user is
+   * least ready for it: the call has just ended, they may still be on it saying
+   * goodbye, and the thing they were reading was replaced by a scorecard they
+   * did not ask for. Reading it is a decision, not a consequence of stopping, so
+   * it waits behind the header's review button until they choose to open it.
+   *
    * Nothing is shown or stored for a session with no receipts — see
-   * `isReviewable`. And the panel is opened even in glance mode: the glance
-   * branch never renders it, so what the user gets there is an unchanged live
-   * surface and a review waiting the moment they come back out.
+   * `isReviewable`.
    */
   useEffect(() => {
     const wasActive = prevActiveRef.current
@@ -869,7 +874,6 @@ export default function App(): React.JSX.Element {
     // value derived from state, so there is nothing to compute during render.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSessions(saveSession(createSession(turns)))
-    setReviewIndex(0)
   }, [voice.active, messages])
 
   // Reset the visible transcript and the underlying LLM history so the next turn
