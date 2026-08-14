@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
 import { useVoiceMode } from './hooks/useVoiceMode'
 import type { PipelineState } from './lib/pipeline'
+import { isAtBottom } from './lib/stickToBottom'
 import type { VoiceTurn, CaptureTurn } from './hooks/useVoiceMode'
 import type { ScreenCapture } from '@shared/types'
 import { describeStory, type Grounding } from '@shared/grounding'
@@ -626,6 +627,13 @@ export default function App(): React.JSX.Element {
   const [messages, setMessages] = useState<Message[]>([])
   const transcriptRef = useRef<HTMLDivElement>(null)
   /**
+   * Whether the transcript should keep following new text. A ref, not state:
+   * it is read by the scroll effect and written by the scroll handler, and
+   * re-rendering on every wheel tick to store it would be pure waste. Starts
+   * true so a fresh session follows from the first token.
+   */
+  const followTranscriptRef = useRef(true)
+  /**
    * Where the transcript ends and the cue sheet begins, as a percentage of the
    * split row. Transient state like `glance`, and for the same reason: it is a
    * posture for the call you are on, not a preference worth restoring into a
@@ -794,10 +802,32 @@ export default function App(): React.JSX.Element {
     })
   }, [voice.assistantResult])
 
+  /**
+   * Follow new text, but only for a reader who is already at the bottom.
+   *
+   * `messages` changes on every streamed token, so an unconditional jump here
+   * re-pins the pane dozens of times a second and scrolling up is undone in the
+   * frame it happens — the wheel reads as dead and nothing above the fold can be
+   * reached while Hue is answering. `followTranscriptRef` is maintained by the
+   * pane's own scroll handler, so leaving the bottom stops the chase and
+   * returning to it resumes.
+   */
   useEffect(() => {
     const el = transcriptRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (el && followTranscriptRef.current) el.scrollTop = el.scrollHeight
   }, [messages, voice.greetingText, voice.cueCard])
+
+  /**
+   * Re-arm auto-follow when the reader comes back to the bottom.
+   *
+   * Fires for programmatic scrolls too, including the effect above — which is
+   * harmless, because that one only ever lands at the bottom and so re-asserts
+   * the `true` it was gated on.
+   */
+  const onTranscriptScroll = useCallback(() => {
+    const el = transcriptRef.current
+    if (el) followTranscriptRef.current = isAtBottom(el)
+  }, [])
 
   /**
    * File the review when the session ends.
@@ -1129,7 +1159,7 @@ export default function App(): React.JSX.Element {
               className="cuesheet-split-pane"
               style={visibleSheet ? { flex: `0 0 ${splitPct}%` } : { flex: '1 1 auto' }}
             >
-              <div className="transcript" ref={transcriptRef}>
+              <div className="transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
                 {voice.greetingText && (
                   <div className="bubble bubble--assistant">
                     <div className="bubble-label">Hue</div>
