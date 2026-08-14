@@ -1,4 +1,4 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { Component, Fragment, type ErrorInfo, type ReactNode } from 'react'
 
 /**
  * The last thing between a render-time throw and a blank window.
@@ -44,7 +44,22 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render(): ReactNode {
     const { error } = this.state
-    if (!error) return <div key={this.state.attempt}>{this.props.children}</div>
+    // A Fragment, not a <div>. The key is what makes "Reload the screen" work —
+    // changing it remounts the subtree — and a Fragment carries a key just as
+    // well while emitting no DOM node at all.
+    //
+    // A wrapper div here emitted one, and it broke scrolling everywhere in the
+    // app. #root is a 100vh flex column whose child is meant to be `.app`
+    // (flex: 1; min-height: 0). Slipping an unstyled block box in between made
+    // *it* the flex item instead: block-level, not a scroll container, so its
+    // automatic minimum size is its content height and it refuses to shrink. It
+    // grew to the full height of the transcript — 11518px inside a 670px window
+    // — and `.app`'s flex sizing stopped meaning anything, because its parent
+    // was no longer a height-constrained flex container. Every pane below
+    // inherited that: `.transcript` ended up with scrollHeight === clientHeight,
+    // so there was nothing to scroll and the wheel did nothing, while everything
+    // past the first 670px sat clipped by `body { overflow: hidden }`.
+    if (!error) return <Fragment key={this.state.attempt}>{this.props.children}</Fragment>
 
     return (
       <div className="crash-shield">
