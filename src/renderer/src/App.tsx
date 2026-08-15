@@ -18,6 +18,7 @@ import {
 } from './lib/sessionHistory'
 import { Settings } from './components/Settings'
 import { CueSheetPanel } from './components/CueSheetPanel'
+import { UsagePanel } from './components/UsagePanel'
 
 // ── Icons ──
 
@@ -150,6 +151,32 @@ function ReviewIcon(): React.JSX.Element {
       <rect x="9" y="2" width="6" height="4" rx="1" />
       <path d="M9 12l2 2 4-4" />
       <path d="M9 17h6" />
+    </svg>
+  )
+}
+
+/**
+ * The usage toggle: a gauge, not a coin or a chart.
+ *
+ * What the panel is actually about is headroom — how much of a fixed allowance
+ * is left — and a gauge is the one glyph that says "remaining" without also
+ * promising billing (a coin would imply we know what it cost in money, which we
+ * do not) or history over time (a line chart, which the panel does not draw).
+ */
+function UsageIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="17"
+      height="17"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3.5 17a9 9 0 1 1 17 0" />
+      <path d="M12 17l4.5-4.5" />
     </svg>
   )
 }
@@ -611,6 +638,15 @@ export default function App(): React.JSX.Element {
   const voice = useVoiceMode()
   const [settingsOpen, setSettingsOpen] = useState(false)
   /**
+   * The usage panel, which takes the main area the way the review does.
+   *
+   * Not a drawer and not a Settings pane: quota is something you check *because*
+   * a session is behaving oddly, and burying it behind the gear would put it
+   * three clicks from the moment it is wanted. It is transient state for the
+   * same reason glance mode is — nobody wants to launch into a stats screen.
+   */
+  const [usageOpen, setUsageOpen] = useState(false)
+  /**
    * Glance mode: the card becomes a teleprompter for the current suggested
    * answer (see `.glance` in main.css for the type scale and why it exists).
    *
@@ -1005,6 +1041,16 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [glance, reviewIndex])
 
+  // And out of usage, so "back" means the same thing in all three modes.
+  useEffect(() => {
+    if (glance || !usageOpen) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setUsageOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [glance, usageOpen])
+
   return (
     <div className={glance ? 'app app--glance' : 'app'}>
       <header className="app-header">
@@ -1043,7 +1089,13 @@ export default function App(): React.JSX.Element {
         {sessions.length > 0 && !glance && (
           <button
             className={reviewIndex !== null ? 'icon-btn icon-btn--on' : 'icon-btn'}
-            onClick={() => setReviewIndex((v) => (v === null ? 0 : null))}
+            onClick={() => {
+              // Review and usage both take the whole main area, so opening one
+              // has to close the other — leaving both flags set would make the
+              // hidden panel's button light up for a surface nobody can see.
+              setUsageOpen(false)
+              setReviewIndex((v) => (v === null ? 0 : null))
+            }}
             aria-pressed={reviewIndex !== null}
             title={
               reviewIndex !== null
@@ -1052,6 +1104,27 @@ export default function App(): React.JSX.Element {
             }
           >
             <ReviewIcon />
+          </button>
+        )}
+        {/* Usage. Always available, unlike the review, because there is a real
+            answer even before the first session ("nothing recorded yet") — but
+            hidden in glance mode, which must not gain a way to cover the answer
+            being read aloud. */}
+        {!glance && (
+          <button
+            className={usageOpen ? 'icon-btn icon-btn--on' : 'icon-btn'}
+            onClick={() => {
+              setReviewIndex(null)
+              setUsageOpen((v) => !v)
+            }}
+            aria-pressed={usageOpen}
+            title={
+              usageOpen
+                ? 'Close usage'
+                : 'Usage and quota — what Hue has spent, and what each provider says is left'
+            }
+          >
+            <UsageIcon />
           </button>
         )}
         {hasConversation && !glance && (
@@ -1119,6 +1192,12 @@ export default function App(): React.JSX.Element {
               </div>
             )}
           </div>
+        </main>
+      ) : usageOpen ? (
+        // Same slot and same reasoning as the review below: inside the card, no
+        // second window, and the way back is the button that opened it.
+        <main className="app-main">
+          <UsagePanel onClose={() => setUsageOpen(false)} />
         </main>
       ) : reviewIndex !== null ? (
         /*

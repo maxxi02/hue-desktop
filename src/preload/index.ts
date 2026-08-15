@@ -13,6 +13,7 @@ import type {
   ScreenCapture,
   StealthStatus
 } from '../shared/types'
+import type { UsageSummary } from '../shared/usage'
 import type {
   GapAnswerOutcome,
   IngestOutcome,
@@ -75,6 +76,19 @@ const hue = {
     /** Record that the user has no story for this gap. Costs no model call. */
     skipGap: (gapId: string): Promise<ProfileBundle> =>
       ipcRenderer.invoke('hue:profile:skip-gap', gapId)
+  },
+  usage: {
+    /** Totals and remaining quota per provider, already summarised. */
+    get: (): Promise<UsageSummary> => ipcRenderer.invoke('hue:usage:get'),
+    /**
+     * Ask main to start pushing updates, then listen for them. Both halves are
+     * needed: the subscribe tells main which renderer to push to, and the
+     * returned unsubscribe drops the listener when the panel closes.
+     */
+    watch: (cb: (s: UsageSummary) => void): (() => void) => {
+      ipcRenderer.send('hue:usage:subscribe')
+      return sub('hue:usage:changed', cb)
+    }
   },
   cueSheet: {
     /**

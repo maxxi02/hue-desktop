@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { record } from './usage-store.ts'
 
 /**
  * The model boundary.
@@ -134,6 +135,27 @@ export function anthropicClient(opts: AnthropicOptions = {}): LlmClient {
     } as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming)
 
     const message = (await stream.finalMessage()) as unknown as Anthropic.Message
+
+    // Ingest is where the token-heavy work happens — a whole résumé read in one
+    // call dwarfs any single interview turn — so leaving it out would make the
+    // panel's totals quietly wrong. Recorded before the `stop_reason` checks
+    // below, because a refused or truncated response was still generated and
+    // still billed.
+    // No `limit`: the SDK owns the HTTP response here, so its rate-limit
+    // headers never reach this code. Tokens without headroom, and honest about
+    // which is which.
+    if (message.usage) {
+      record({
+        at: Date.now(),
+        kind: 'llm',
+        provider: 'anthropic',
+        model,
+        inputTokens: message.usage.input_tokens,
+        outputTokens: message.usage.output_tokens,
+        cacheReadTokens: message.usage.cache_read_input_tokens ?? undefined,
+        cacheWriteTokens: message.usage.cache_creation_input_tokens ?? undefined
+      })
+    }
 
     if (message.stop_reason === 'refusal') {
       const details = (message as { stop_details?: { category?: string | null } }).stop_details
@@ -388,6 +410,7 @@ export async function clientForSettings(role: 'drafting' | 'ingest'): Promise<Ll
     // ingest. The compat client still wants a non-empty bearer.
     return openAiCompatClient({
       apiKey: 'ollama',
+      provider: 'ollama',
       baseUrl: baseUrlFor('ollama', s.ollamaBaseUrl),
       model: s.ollamaModel || undefined,
       timeoutMs: LOCAL_INGEST_TIMEOUT_MS
@@ -418,6 +441,7 @@ export async function clientForSettings(role: 'drafting' | 'ingest'): Promise<Ll
 
   return openAiCompatClient({
     apiKey,
+    provider,
     baseUrl: baseUrlFor(provider, s.ollamaBaseUrl),
     // Empty means "auto-pick", which the compat client's default already does.
     model: models[provider] || undefined,

@@ -4,6 +4,7 @@ import {
   createStallGuard,
   fetchWithRetry,
   isRetryableStatus,
+  ProviderHttpError,
   retryDelayMs
 } from './stream-resilience.ts'
 
@@ -196,4 +197,62 @@ test('a cleared guard never fires, so a finished stream cannot abort a later one
   guard.beat()
   await new Promise((r) => setTimeout(r, 60))
   assert.equal(stalled, false)
+})
+
+/**
+ * A 429 is the single most informative response the app ever gets about quota —
+ * it arrives with the vendor's own rate-limit headers attached — and it used to
+ * be the one response that threw them away, collapsing into a plain Error whose
+ * only content was a string. The usage panel exists to answer "am I near a
+ * limit", so the moment the answer is definitively "yes" must not be the moment
+ * the evidence is destroyed.
+ */
+test('a rate-limited response throws an error that still carries its headers', async () => {
+  const f = scriptedFetch([
+    status(429, { 'x-ratelimit-remaining-tokens': '0', 'x-ratelimit-reset-tokens': '30s' })
+  ])
+  await assert.rejects(
+    () =>
+      fetchWithRetry('https://x/y', {}, 'groq', {
+        signal: live,
+        fetchImpl: f.impl,
+        sleep: noSleep,
+        maxAttempts: 1
+      }),
+    (e: Error) => {
+      const http = e as ProviderHttpError
+      assert.equal(http.status, 429)
+      assert.equal(http.headers?.get('x-ratelimit-remaining-tokens'), '0')
+      return true
+    }
+  )
+})
+
+test('the error message is unchanged, because it is what the user is shown', async () => {
+  const f = scriptedFetch([status(401)])
+  await assert.rejects(
+    () =>
+      fetchWithRetry('https://x/y', {}, 'groq', {
+        signal: live,
+        fetchImpl: f.impl,
+        sleep: noSleep
+      }),
+    /groq error 401/
+  )
+})
+
+test('a transport failure has no status or headers to carry, and does not pretend to', async () => {
+  // DNS failure, connection refused. There is no response, so anything other
+  // than the original error here would be invented.
+  const f = scriptedFetch([new Error('getaddrinfo ENOTFOUND')])
+  await assert.rejects(
+    () =>
+      fetchWithRetry('https://x/y', {}, 'groq', {
+        signal: live,
+        fetchImpl: f.impl,
+        sleep: noSleep,
+        maxAttempts: 1
+      }),
+    (e: Error) => !(e instanceof ProviderHttpError)
+  )
 })

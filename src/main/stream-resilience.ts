@@ -58,6 +58,32 @@ export function retryDelayMs(attempt: number, retryAfter: string | null): number
   return Math.min(Math.max(seconds * 1000, backoff), MAX_BACKOFF_MS)
 }
 
+/**
+ * A non-ok response, with the response's own evidence still attached.
+ *
+ * This used to be a plain `Error` holding only a formatted string, which meant
+ * every 429 — the one response that arrives with the vendor's rate-limit headers
+ * filled in — destroyed those headers at the throw. Since the usage panel exists
+ * to answer "how close am I to a limit", losing the numbers at exactly the
+ * moment the limit is hit was the worst possible place to lose them.
+ *
+ * The message is unchanged and still what surfaces to the user; `status` and
+ * `headers` are extra for callers that want them. Transport failures (DNS,
+ * refused) still throw the original error — there is no response behind them, so
+ * there is nothing to carry.
+ */
+export class ProviderHttpError extends Error {
+  readonly status: number
+  readonly headers: Headers
+
+  constructor(message: string, status: number, headers: Headers) {
+    super(message)
+    this.name = 'ProviderHttpError'
+    this.status = status
+    this.headers = headers
+  }
+}
+
 export interface RetryingFetchOptions {
   /** Caller's cancellation (user hit stop / the question was withdrawn). */
   signal: AbortSignal
@@ -124,13 +150,13 @@ export async function fetchWithRetry(
     const message = `${label} error ${response.status}: ${detail || response.statusText}`
 
     if (!isRetryableStatus(response.status) || attempt >= maxAttempts) {
-      throw new Error(message)
+      throw new ProviderHttpError(message, response.status, response.headers)
     }
 
     const delay = retryDelayMs(attempt, response.headers.get('retry-after'))
     opts.onRetry?.(attempt, response.status, delay)
     await sleep(delay)
-    lastError = new Error(message)
+    lastError = new ProviderHttpError(message, response.status, response.headers)
   }
 
   throw lastError ?? new Error(`${label} failed after ${maxAttempts} attempts`)

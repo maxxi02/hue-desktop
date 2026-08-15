@@ -4,6 +4,11 @@ import type { WebContents } from 'electron'
 // `node --test` (see the deferred `./settings` import below) — which it is not
 // if this specifier needs a bundler to find its extension.
 import { createStallGuard, fetchWithRetry } from './stream-resilience.ts'
+// Safe to import at module load despite this file being loadable under
+// `node --test`: `usage-store` only reaches for Electron inside `usageDir()`,
+// and `record()` swallows the failure if it is not there.
+import { record } from './usage-store.ts'
+import { parseRateLimitHeaders } from '../shared/usage.ts'
 import type {
   HueSettings,
   LlmMessage,
@@ -290,6 +295,19 @@ export function startOpenAiCompatStream(
             )
         }
       )
+
+      // Read before the body is touched. These headers are the only quota
+      // signal on the drafting path: without `stream_options: {include_usage}`
+      // these providers put no token counts in the stream at all, so the
+      // vendor's own "remaining" figure is all there is — and it is stated on
+      // every response, including this one.
+      record({
+        at: Date.now(),
+        kind: 'llm',
+        provider,
+        model,
+        limit: parseRateLimitHeaders(provider, response.headers, Date.now()) ?? undefined
+      })
 
       const reader = response.body?.getReader()
       if (!reader) throw new Error(`No response body from ${provider}`)

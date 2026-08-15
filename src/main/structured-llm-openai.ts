@@ -1,4 +1,6 @@
 import { LlmRefusal, type LlmClient, type StructuredRequest } from './structured-llm.ts'
+import { record } from './usage-store.ts'
+import { parseRateLimitHeaders } from '../shared/usage.ts'
 
 /**
  * The OpenAI-compatible arm of the model boundary.
@@ -64,6 +66,14 @@ export interface OpenAiCompatOptions {
   apiKey?: string
   baseUrl?: string
   model?: string
+  /**
+   * Which provider this is, for usage accounting only — the request itself is
+   * identical either way, since that is the point of a compatible surface.
+   * Absent means usage goes unattributed rather than being guessed from the
+   * base URL, because a guess here would silently file Ollama's local tokens
+   * under whichever cloud vendor shares its URL shape.
+   */
+  provider?: string
   /**
    * Test seam, and the escape hatch for a provider we cannot detect: `false`
    * starts in `json_object` mode without spending a call to discover it.
@@ -191,6 +201,16 @@ interface ChatCompletion {
     finish_reason?: string | null
     message?: { content?: string | null; refusal?: string | null }
   }[]
+  /**
+   * Always present — this call is deliberately non-streaming, and the
+   * OpenAI-compatible shape puts token counts on every non-streamed reply. It
+   * was arriving all along and being erased by the cast to this interface,
+   * which declared only `choices`.
+   */
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+  }
 }
 
 /**
@@ -276,7 +296,23 @@ export function openAiCompatClient(opts: OpenAiCompatOptions = {}): LlmClient {
           signal: AbortSignal.timeout(remaining())
         })
 
-        if (res.ok) return (await res.json()) as ChatCompletion
+        if (res.ok) {
+          const completion = (await res.json()) as ChatCompletion
+          // Headers and body together — the one call site in the app where both
+          // are in hand at once, because this request is not streamed.
+          record({
+            at: Date.now(),
+            kind: 'llm',
+            provider: opts.provider ?? 'openai-compat',
+            model,
+            inputTokens: completion.usage?.prompt_tokens,
+            outputTokens: completion.usage?.completion_tokens,
+            limit: opts.provider
+              ? (parseRateLimitHeaders(opts.provider, res.headers, Date.now()) ?? undefined)
+              : undefined
+          })
+          return completion
+        }
 
         const text = await res.text().catch(() => '')
         const err = new ProviderError(res.status, text)

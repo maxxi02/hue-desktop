@@ -31,6 +31,8 @@ import { analyzeJobDescription } from './job-spec-ingest'
 import { JOB_DESCRIPTION_LIMIT } from '../shared/job-spec'
 import { listSheets, deleteSheet, sheetsDir, isValidSheetId } from './cuesheet-store'
 import { applyStealth, isStealthSupported } from './stealth'
+import { currentEvents, onRecorded } from './usage-store'
+import { summarize, type UsageSummary } from '../shared/usage'
 import { applyWindowAnchor } from './window-placement'
 import type {
   HueSettings,
@@ -114,6 +116,55 @@ export function registerIpc(): void {
   )
 
   ipcMain.handle('hue:asr:cloud', (_e, pcm: ArrayBuffer) => transcribeCloud(pcm))
+
+  // Usage. Summarised in the main process rather than shipping the raw event
+  // log to the renderer: a week of interviews is thousands of rows, and the
+  // panel only ever renders the totals.
+  ipcMain.handle('hue:usage:get', (): UsageSummary => {
+    const now = Date.now()
+    return summarize(currentEvents(now), now)
+  })
+
+  // Pushed so the panel is live while a session runs. Coalesced on a timer —
+  // an event fires per utterance and per model turn, and re-rendering a
+  // stats panel at that rate is pure overhead for numbers nobody reads that
+  // fast.
+  // One subscription per renderer, however many times it asks.
+  //
+  // The panel subscribes on mount, and closing it only removes the listener on
+  // the renderer's side — this one would survive. Opening and closing the panel
+  // ten times would then leave ten live subscriptions here, each re-summarising
+  // the entire event log on every utterance, for a panel nobody is looking at.
+  const usageSubscribers = new Map<number, () => void>()
+
+  ipcMain.on('hue:usage:subscribe', (event) => {
+    const id = event.sender.id
+    if (usageSubscribers.has(id)) return
+
+    let pending = false
+    const stop = onRecorded(() => {
+      // Coalesced: an event fires per utterance and per model turn, and
+      // re-rendering a stats panel at that rate is pure overhead for numbers
+      // nobody reads that fast.
+      if (pending) return
+      pending = true
+      setTimeout(() => {
+        pending = false
+        if (event.sender.isDestroyed()) return
+        const now = Date.now()
+        event.sender.send('hue:usage:changed', summarize(currentEvents(now), now))
+      }, 1_000).unref?.()
+    })
+
+    const release = (): void => {
+      stop()
+      usageSubscribers.delete(id)
+    }
+    usageSubscribers.set(id, release)
+    // A reloaded renderer would otherwise leave its listener behind for a
+    // WebContents that no longer exists.
+    event.sender.once('destroyed', release)
+  })
 
   // Phone mirror: the toggle persists the setting and starts/stops the server in
   // one step, so the QR code appears immediately without a separate Save.

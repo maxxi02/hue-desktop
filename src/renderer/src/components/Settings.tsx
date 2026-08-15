@@ -22,6 +22,7 @@ import {
   type JobSpec
 } from '../../../shared/job-spec'
 import type { CueSheet } from '@shared/cuesheet'
+import { clampCursor, nextAfterAnswered, stepCursor } from '../lib/gapCursor'
 import { SectionIcon } from './SectionIcon'
 
 const KOKORO_VOICES = ['af_heart', 'af_bella', 'af_nicole', 'am_michael', 'bf_emma', 'bm_george']
@@ -550,6 +551,9 @@ export function Settings({
   const [gapDrafts, setGapDrafts] = useState<Record<string, string>>({})
   const [gapBusy, setGapBusy] = useState<string | null>(null)
   const [gapNotes, setGapNotes] = useState<Record<string, string>>({})
+  // The question on screen, as an id. See `lib/gapCursor.ts` for why an index
+  // cannot work here.
+  const [gapCursorId, setGapCursorId] = useState<string | null>(null)
   const [cueSheets, setCueSheets] = useState<CueSheet[]>([])
   const [cueSheetStatus, setCueSheetStatus] = useState<string | null>(null)
   // Set once a file is picked; cleared once its ingest is confirmed or
@@ -594,6 +598,24 @@ export function Settings({
   // `s` is null until settings load; the pane renders a loading state then.
   const profileBundle = s ? parseProfileBundle(s.profileBundleJson) : null
   const openGaps = profileBundle ? profileBundle.gaps.filter((g) => g.status === 'open') : []
+  const openGapIds = openGaps.map((g) => g.id)
+  // Clamped on every render rather than in an effect: a reload or a re-ingest
+  // swaps the whole bundle and the id in state can vanish with it, and doing it
+  // here means the stale id is never the one that reaches the screen — no
+  // second render, and no frame where the pane asks for a question that is gone.
+  const currentGap = openGaps.find((g) => g.id === clampCursor(openGapIds, gapCursorId)) ?? null
+  const gapPosition = currentGap ? openGaps.indexOf(currentGap) : 0
+  /**
+   * The counter's denominator: every gap the scan produced, not the open ones.
+   *
+   * Answered and skipped gaps stay in `bundle.gaps` with their status changed,
+   * so this is the size of the interview and it does not move as the user works
+   * through it. Counting only the open ones would turn "3 of 8" into "4 of 7"
+   * and then "5 of 6" — a finish line walking towards the user, which is how a
+   * short interview comes to feel endless.
+   */
+  const gapTotal = profileBundle ? profileBundle.gaps.length : 0
+  const gapNumberShown = gapTotal - openGaps.length + gapPosition + 1
   // Same reasoning as `profileBundle`: parsed from the settings field rather
   // than mirrored into its own state, so the pane and the prompt builder read
   // the identical source.
@@ -1039,6 +1061,10 @@ export function Settings({
   const onAnswerGap = async (gapId: string): Promise<void> => {
     const text = (gapDrafts[gapId] ?? '').trim()
     if (!text) return
+    // Captured before the await. The list the call returns no longer contains
+    // the answered gap, so it has lost the position the cursor needs to walk
+    // forward from — only the pre-call list knows what came next.
+    const openBefore = openGaps.map((g) => g.id)
     setGapBusy(gapId)
     try {
       const outcome = await window.hue.profile.answerGap(gapId, text)
@@ -1047,6 +1073,11 @@ export function Settings({
         return
       }
       set('profileBundleJson', JSON.stringify(outcome.bundle))
+      // Routed through `nextAfterAnswered` even when the answer was rejected:
+      // a rejected gap is still open, so this returns the same id and the
+      // question the "we couldn't use that" note refers to stays on screen.
+      const openAfter = outcome.bundle.gaps.filter((g) => g.status === 'open').map((g) => g.id)
+      setGapCursorId(nextAfterAnswered(openBefore, gapId, openAfter))
       if (outcome.accepted) {
         setGapDrafts((d) => ({ ...d, [gapId]: '' }))
         setGapNotes((n) => ({ ...n, [gapId]: '' }))
@@ -1064,13 +1095,33 @@ export function Settings({
   }
 
   const onSkipGap = async (gapId: string): Promise<void> => {
+    const openBefore = openGaps.map((g) => g.id)
     setGapBusy(gapId)
     try {
       const bundle = await window.hue.profile.skipGap(gapId)
       set('profileBundleJson', JSON.stringify(bundle))
+      const openAfter = bundle.gaps.filter((g) => g.status === 'open').map((g) => g.id)
+      setGapCursorId(nextAfterAnswered(openBefore, gapId, openAfter))
     } finally {
       setGapBusy(null)
     }
+  }
+
+  /**
+   * The single forward control.
+   *
+   * Typing an answer and then hunting for a separate "Save" is how answers get
+   * lost — the user has already said what they came to say, and Next is where
+   * their hand is. So Next saves when there is something to save and is plain
+   * navigation when there isn't; `onAnswerGap` moves the cursor itself on
+   * success, which is also what keeps a rejected answer from scrolling away.
+   */
+  const onNextGap = (gapId: string): void => {
+    if ((gapDrafts[gapId] ?? '').trim()) {
+      void onAnswerGap(gapId)
+      return
+    }
+    setGapCursorId(stepCursor(openGapIds, gapId, 1))
   }
 
   // Derives the default label from a filename by stripping its extension —
@@ -1901,62 +1952,82 @@ export function Settings({
               {profileBundle ? (
                 <div style={{ marginTop: 8, fontSize: 13 }}>
                   <div>{describeBundle(profileBundle)}</div>
-                  {openGaps.length > 0 ? (
-                    <div
-                      style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 14 }}
-                    >
+                  {currentGap ? (
+                    /*
+                      One question at a time. The whole list used to render at
+                      once, and a dozen stacked textareas reads as a form to be
+                      completed rather than a conversation to be had — the user
+                      scrolls it, sizes up the work, and closes the pane. A
+                      single question with a visible end to it is answerable.
+                    */
+                    <div className="settings-field" style={{ marginTop: 10, gap: 10 }}>
                       <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
                         These cover the things your résumé can’t show — which are exactly the ones
                         an AI would otherwise make up. “I don’t have one” is a real answer, and Hue
                         records it as one rather than inventing a story.
                       </div>
-                      {openGaps.map((gap) => (
-                        <div
-                          key={gap.id}
-                          style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+                      <div className="gap-progress">
+                        <span className="gap-progress-count">
+                          Question {gapNumberShown} of {gapTotal}
+                        </span>
+                        <span className="gap-dots">
+                          {Array.from({ length: gapTotal }, (_, i) => (
+                            <span
+                              key={i}
+                              className={i < gapNumberShown ? 'gap-dot gap-dot-filled' : 'gap-dot'}
+                            />
+                          ))}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 13 }}>{currentGap.question}</div>
+                      <textarea
+                        className="settings-input"
+                        rows={3}
+                        value={gapDrafts[currentGap.id] ?? ''}
+                        disabled={gapBusy === currentGap.id}
+                        onChange={(e) =>
+                          setGapDrafts((d) => ({ ...d, [currentGap.id]: e.target.value }))
+                        }
+                        placeholder="Tell it the way you’d tell it out loud…"
+                      />
+                      {gapNotes[currentGap.id] && (
+                        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                          {gapNotes[currentGap.id]}
+                        </span>
+                      )}
+                      <div className="gap-nav">
+                        <button
+                          type="button"
+                          className="link-btn"
+                          disabled={gapBusy === currentGap.id || gapPosition === 0}
+                          onClick={() => setGapCursorId(stepCursor(openGapIds, currentGap.id, -1))}
                         >
-                          <div style={{ fontSize: 13 }}>{gap.question}</div>
-                          <textarea
-                            className="settings-input"
-                            rows={3}
-                            value={gapDrafts[gap.id] ?? ''}
-                            disabled={gapBusy === gap.id}
-                            onChange={(e) =>
-                              setGapDrafts((d) => ({ ...d, [gap.id]: e.target.value }))
-                            }
-                            placeholder="Tell it the way you’d tell it out loud…"
-                          />
-                          {gapNotes[gap.id] && (
-                            <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                              {gapNotes[gap.id]}
-                            </span>
-                          )}
-                          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                            <button
-                              type="button"
-                              className="icon-btn"
-                              disabled={gapBusy === gap.id || !(gapDrafts[gap.id] ?? '').trim()}
-                              style={{
-                                alignSelf: 'flex-start',
-                                width: 'auto',
-                                padding: '4px 10px',
-                                fontSize: 12
-                              }}
-                              onClick={() => void onAnswerGap(gap.id)}
-                            >
-                              {gapBusy === gap.id ? 'Saving…' : 'Save answer'}
-                            </button>
-                            <button
-                              type="button"
-                              className="link-btn"
-                              disabled={gapBusy === gap.id}
-                              onClick={() => void onSkipGap(gap.id)}
-                            >
-                              I don’t have one
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                          ← Back
+                        </button>
+                        <button
+                          type="button"
+                          className="link-btn"
+                          disabled={gapBusy === currentGap.id}
+                          onClick={() => void onSkipGap(currentGap.id)}
+                        >
+                          I don’t have one
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          disabled={
+                            gapBusy === currentGap.id ||
+                            // Nothing typed and nowhere further to go, so Next
+                            // would be a button that does nothing.
+                            (!(gapDrafts[currentGap.id] ?? '').trim() &&
+                              gapPosition === openGaps.length - 1)
+                          }
+                          style={{ width: 'auto', padding: '4px 10px', fontSize: 12 }}
+                          onClick={() => onNextGap(currentGap.id)}
+                        >
+                          {gapBusy === currentGap.id ? 'Saving…' : 'Next →'}
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
