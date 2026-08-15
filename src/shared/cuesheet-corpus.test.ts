@@ -18,18 +18,19 @@ test('false-suppress rate is zero', () => {
 })
 
 /**
- * FIXED (see `DEFAULT_MATCH_CONFIG` in `cuesheet.ts` for the full sweep):
- * `scoreAgainst` used to fold bigrams into a single weighted-overlap
- * denominator (`BIGRAM_WEIGHT = 2.5`), which made adjacency roughly
- * two-thirds of the score and capped a vocabulary-only paraphrase near 1/3.
- * Median correct-card score was 0.28 and hit rate topped out at 0.722
- * (65/90) under any zero-false-render threshold pair. Blending IDF-weighted
- * unigram recall with a small bigram bonus (`BIGRAM_BLEND = 0.19`) raised
- * hit rate to 0.778 (70/90) at `suppressThreshold: 0.75`,
- * `renderThreshold: 0.25`, `margin: 0.02` — with zero false renders and zero
- * false suppressions across the whole corpus, same as before.
+ * History, since the bar has moved twice and each move is a different fix:
+ *
+ *  - 0.722 (65/90): `scoreAgainst` folded bigrams into one weighted-overlap
+ *    denominator (`BIGRAM_WEIGHT = 2.5`), making adjacency ~two-thirds of the
+ *    score and capping a vocabulary-only paraphrase near 1/3.
+ *  - 0.778 (70/90): blended IDF-weighted unigram and bigram recall
+ *    (`BIGRAM_BLEND = 0.19`).
+ *  - 0.867 (78/90): stemmed both sides of the comparison, scored cards on
+ *    trigger agreement rather than their single best trigger, and scaled down
+ *    recall against very short triggers. See `DEFAULT_MATCH_CONFIG` in
+ *    `cuesheet.ts` for the sweep behind all three.
  */
-test('hit rate is at least 0.75', () => {
+test('hit rate is at least 0.85', () => {
   let hits = 0
   let total = 0
   for (const { sheet, cases } of CORPUS) {
@@ -41,7 +42,7 @@ test('hit rate is at least 0.75', () => {
       if (m.renders(r) && r.cardId === c.expect) hits++
     }
   }
-  assert.ok(hits / total >= 0.75, `hit rate ${(hits / total).toFixed(2)} below 0.75`)
+  assert.ok(hits / total >= 0.85, `hit rate ${(hits / total).toFixed(2)} below 0.85`)
 })
 
 test('no negative case renders', () => {
@@ -65,13 +66,22 @@ test('no negative case renders', () => {
  * nobody asked, mid-interview, in the surface that in glance mode HIDES the
  * generated one.
  *
- * MEASURED: 7 of 90 (0.078). The worst is "Tell me about saying no to a
- * stakeholder who wanted something unreasonable", which scores pm-prioritize
- * over pm-stakeholder at 0.7414 — the two cards genuinely share most of their
- * vocabulary. The bar is set at the measured value so it is a regression
- * guard: any change that renders an eighth wrong card fails here.
+ * MEASURED: 3 of 90 (0.033), down from 7 of 90 (0.078). The old worst case —
+ * "Tell me about saying no to a stakeholder who wanted something unreasonable"
+ * scoring pm-prioritize over pm-stakeholder at 0.7414 — no longer renders
+ * wrong at all: it was a single lucky trigger carrying a card, which is
+ * exactly what `SECOND_BEST_BLEND` exists to refuse.
+ *
+ * The three that remain all score low (0.253, 0.275, 0.395) and are genuine
+ * near-neighbours rather than scoring accidents: "above your pay grade"
+ * (escalation vs prioritization), "personal friction" (conflict vs
+ * stakeholder), and "tell stakeholders you were going to be late" (deadline vs
+ * stakeholder — the transcript names the wrong card's subject outright).
+ *
+ * The bar is the measured value, so any change that renders a fourth wrong
+ * card fails here.
  */
-test('wrong-card render rate stays at or below 0.078', () => {
+test('wrong-card render rate stays at or below 0.033', () => {
   let wrong = 0
   let total = 0
   const offenders: string[] = []
@@ -90,8 +100,8 @@ test('wrong-card render rate stays at or below 0.078', () => {
     }
   }
   assert.ok(
-    wrong / total <= 0.078,
-    `wrong-card render rate ${(wrong / total).toFixed(3)} above the 0.078 bar:\n${offenders.join('\n')}`
+    wrong / total <= 0.034,
+    `wrong-card render rate ${(wrong / total).toFixed(3)} above the 0.033 bar:\n${offenders.join('\n')}`
   )
 })
 
@@ -100,11 +110,13 @@ test('wrong-card render rate stays at or below 0.078', () => {
  * read off one test rather than inferred from three separate bars. They must
  * account for every positive case exactly once.
  *
- * This used to lock the exact triple ({hit: 70, wrong: 7, none: 13}), which
- * fails a future change that only IMPROVES things — a none-render becoming a
- * hit, say — as loudly as one that regresses. The three assertions below are
- * a real guard (a wrong-card rate above today's bar, or a hit rate below it,
- * still fails), just not one that also fails on improvement.
+ * This used to lock the exact triple, which fails a future change that only
+ * IMPROVES things — a none-render becoming a hit, say — as loudly as one that
+ * regresses. The assertions below are a real guard (a wrong-card rate above
+ * today's bar, or a hit rate below it, still fails), just not one that also
+ * fails on improvement.
+ *
+ * MEASURED: {hit: 78, wrong: 3, none: 9}.
  */
 test('the three positive-case outcomes partition the corpus', () => {
   let hit = 0
@@ -122,10 +134,10 @@ test('the three positive-case outcomes partition the corpus', () => {
   }
   const total = hit + wrong + none
   assert.equal(total, 90, 'every positive case must land in exactly one bucket')
-  assert.ok(hit / total >= 70 / 90, `hit rate ${hit}/${total} fell below the measured bar of 70/90`)
+  assert.ok(hit / total >= 78 / 90, `hit rate ${hit}/${total} fell below the measured bar of 78/90`)
   assert.ok(
-    wrong / total <= 7 / 90,
-    `wrong-card rate ${wrong}/${total} rose above the measured bar of 7/90`
+    wrong / total <= 3 / 90,
+    `wrong-card rate ${wrong}/${total} rose above the measured bar of 3/90`
   )
 })
 
@@ -142,6 +154,13 @@ test('the three positive-case outcomes partition the corpus', () => {
  * This asserts the distance directly. If a future scoring change lifts wrong
  * cards toward the bar, this fails while the count is still zero — before a
  * user ever sees a blank card.
+ *
+ * MEASURED: worst wrong-card score 0.3951 against a 0.70 bar, so 0.3049 of
+ * headroom — about five times what the old 0.80 bar bought over the old
+ * scorer's 0.7414. The floor below is raised from 0.05 to 0.20 to match:
+ * leaving it at 0.05 would let a future change give back nearly all of that
+ * gain silently. It is still well under the measured value, so it guards
+ * rather than merely restating it.
  */
 test('the suppress threshold keeps real headroom over the worst wrong-card score', () => {
   let topWrong = 0
@@ -155,7 +174,7 @@ test('the suppress threshold keeps real headroom over the worst wrong-card score
   }
   const headroom = DEFAULT_MATCH_CONFIG.suppressThreshold - topWrong
   assert.ok(
-    headroom >= 0.05,
+    headroom >= 0.2,
     `suppressThreshold ${DEFAULT_MATCH_CONFIG.suppressThreshold} is only ${headroom.toFixed(4)} above the worst wrong-card score ${topWrong.toFixed(4)}`
   )
 })
@@ -199,12 +218,15 @@ test('verifyCard keeps at least half the corpus cues, and leaves at most one car
  * REGRESSION GUARD: suppression coverage — the fraction of the 90 positive
  * cases that correctly suppress generation entirely — is the metric that
  * decides whether the feature's token-saving half delivers any value at
- * all. It was 0.08 (7/90) before the scoring fix, 0.133 (12/90) after, and
- * measures 0.111 (10/90) now that `suppressThreshold` has been raised from
- * 0.75 to 0.80 to buy headroom over the worst wrong-card score (see the test
- * below and the note on `DEFAULT_MATCH_CONFIG`). Two suppressions is what
- * that safety margin cost, and it is worth it: a false suppression blanks
- * the card, while a missed suppression merely spends tokens.
+ * all. It was 0.08 (7/90) before the first scoring fix, 0.133 (12/90) after,
+ * then 0.111 (10/90) once `suppressThreshold` was raised to 0.80 to buy
+ * headroom over the worst wrong-card score.
+ *
+ * MEASURED: 0.122 (11/90). The stem/agreement/short-trigger change dropped the
+ * worst wrong-card score from 0.7414 to 0.3951, which let `suppressThreshold`
+ * come back DOWN to 0.70 with far more headroom than 0.80 ever had — so
+ * coverage and safety both improved rather than trading against each other.
+ * See the note on `DEFAULT_MATCH_CONFIG`.
  *
  * The floor is set a notch below the measured value so this is a real
  * regression guard, not a tautology that merely restates today's number.

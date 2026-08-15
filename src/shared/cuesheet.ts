@@ -122,6 +122,29 @@ function bigrams(tokens: string[]): string[] {
 }
 
 /**
+ * Tokens as the MATCHER sees them: `cueTokens` put through `stem`.
+ *
+ * Matching and grounding want the same tokeniser but not the same surface
+ * forms, so the stemming lives here rather than inside `cueTokens` itself.
+ * `verifyCard` calls `stem` where it wants stems and compares RAW tokens where
+ * it must — negation parity is tested on raw tokens precisely because
+ * `stem('nothing')` is `'noth'`, which is not in `NEGATIONS`. Folding stemming
+ * into `cueTokens` would silently disarm that check.
+ *
+ * Used by `buildDf` and `scoreAgainst` together, and they MUST agree: a DF
+ * table built on surface forms and queried with stems finds nothing, and every
+ * term would score as maximally rare.
+ *
+ * Worth 6 of the 8 hit-rate points this change buys. An interviewer says
+ * "how do you prioritise competing deadlines" against a trigger written "how
+ * do you handle competing priorities" — before stemming, `priorities` and
+ * `prioritise` were unrelated tokens and the shared concept scored zero.
+ */
+function scoreTokens(text: string): string[] {
+  return cueTokens(text).map(stem)
+}
+
+/**
  * Document frequency across the sheet's own trigger set.
  *
  * Rarity is measured against the cue sheet, not against English. A word that
@@ -132,7 +155,7 @@ function bigrams(tokens: string[]): string[] {
 export function buildDf(targets: string[]): { df: Map<string, number>; docCount: number } {
   const df = new Map<string, number>()
   for (const target of targets) {
-    const t = cueTokens(target)
+    const t = scoreTokens(target)
     for (const term of new Set([...t, ...bigrams(t)])) {
       df.set(term, (df.get(term) ?? 0) + 1)
     }
@@ -163,7 +186,27 @@ function idf(term: string, df: Map<string, number>, docCount: number): number {
  * `cuesheet-corpus.test.ts` and the calibration note on
  * `DEFAULT_MATCH_CONFIG` below for the swept replacement.
  */
-const BIGRAM_BLEND = 0.19
+const BIGRAM_BLEND = 0.1
+
+/**
+ * Below this many content tokens, a target's recall is scaled by how short it
+ * is (`t.length / MIN_TARGET_TOKENS`).
+ *
+ * A two-token trigger is trivially covered: a rambling transcript will contain
+ * both its words by accident and score it 1.0 on almost no evidence. That is
+ * the shape behind the corpus's remaining false render on a NEGATIVE case —
+ * a question the user prepared nothing for, landing on a card because one of
+ * its stubbiest paraphrases happened to be a substring of the rambling.
+ *
+ * The value is a cliff rather than a curve, and honestly so: 3 is the only
+ * setting in the swept range that is both safe and good. At 0 or 2 the
+ * negative case renders (a safety-gate violation); at 4 the hit count falls
+ * from 78 to 73 and suppression coverage from 11 to 5, because real triggers
+ * of exactly three content tokens are common and get penalised for it. It is
+ * a narrow optimum on a 111-case corpus and should be re-swept, not trusted,
+ * if the corpus grows.
+ */
+const MIN_TARGET_TOKENS = 3
 
 /**
  * Blend of IDF-weighted unigram recall and IDF-weighted bigram recall against
@@ -187,8 +230,8 @@ export function scoreAgainst(
   df: Map<string, number>,
   docCount: number
 ): number {
-  const q = cueTokens(query)
-  const t = cueTokens(target)
+  const q = scoreTokens(query)
+  const t = scoreTokens(target)
   if (t.length === 0) return 0
 
   const queryTerms = new Set(q)
@@ -212,10 +255,28 @@ export function scoreAgainst(
   // unigram recall — there is no adjacency to blend in, so it must not be
   // treated as a zero.
   if (unigramRecall === null) return 0
-  if (bigramRecall === null) return unigramRecall
+  const blended =
+    bigramRecall === null
+      ? unigramRecall
+      : (1 - BIGRAM_BLEND) * unigramRecall + BIGRAM_BLEND * bigramRecall
 
-  return (1 - BIGRAM_BLEND) * unigramRecall + BIGRAM_BLEND * bigramRecall
+  // A very short target is trivially covered by a long transcript, so full
+  // recall against it is weak evidence. See `MIN_TARGET_TOKENS`.
+  if (t.length < MIN_TARGET_TOKENS) return blended * (t.length / MIN_TARGET_TOKENS)
+  return blended
 }
+
+/**
+ * Weight of a card's SECOND-best trigger in its card score. See
+ * `CueMatcher.scoreCard`, which is where this is worth explaining.
+ *
+ * 0.3 is high for what reads like a tie-breaker, and that is deliberate: the
+ * sweep's whole safe frontier sits here. Lower values (0 to 0.15) score more
+ * hits on the corpus but every one of them also renders a card on a negative
+ * case, because a lone lucky trigger is exactly what a prepared-nothing
+ * question trips over.
+ */
+const SECOND_BEST_BLEND = 0.3
 
 export interface CueCard {
   id: string
@@ -279,7 +340,7 @@ export interface MatchConfig {
  * support, backend engineering, and project management). Do not hand-tune
  * these against intuition; move the corpus numbers instead.
  *
- * ## The fix and the sweep
+ * ## The original fix and sweep
  *
  * Under the old scoring (bigrams folded into one weighted-overlap
  * denominator at `BIGRAM_WEIGHT = 2.5`), the median correct-card score
@@ -305,30 +366,45 @@ export interface MatchConfig {
  * below 0.25 does not raise suppression coverage further while lowering it
  * risks the false-render bar on later corpus growth.
  *
- * ## Why `suppressThreshold` is 0.80 and not the sweep's 0.75
+ * ## The three-part scoring change, and why `suppressThreshold` came DOWN
  *
- * The sweep picked 0.75 as the lowest value with zero false suppressions on
- * this corpus. That is true and it is also one point of luck: the highest
- * score reached by a case that renders the WRONG card while clearing the
- * margin gate is 0.7414 ("Tell me about saying no to a stakeholder who wanted
- * something unreasonable", which scores pm-prioritize over pm-stakeholder).
- * The bar cleared it by 0.0086 on a 111-case corpus — one more case of that
- * shape and the zero becomes a one, and a false suppression is the failure
- * that blanks the card mid-interview.
+ * The scorer above now differs from that swept version in three ways, each
+ * measured to earn its place on the same corpus (see the constants for the
+ * reasoning behind each):
  *
- * 0.80 buys 0.0586 of headroom, near seven times as much, and costs 2 of the
- * 12 suppressions. That is a cheap trade because suppression coverage is only
- * ~13% to begin with: the token saving was never the load-bearing half of the
- * feature, and there is little to lose by insisting on real confidence before
- * refusing to generate at all. `cuesheet-corpus.test.ts` asserts the headroom
- * directly so a future scoring change cannot quietly eat it.
+ *  - `scoreTokens` stems both sides before scoring and before building DF.
+ *    Worth the bulk of it: best-achievable hit count under identical safety
+ *    gates goes 72 -> 78.
+ *  - `SECOND_BEST_BLEND` scores a card on trigger AGREEMENT rather than on its
+ *    single best trigger.
+ *  - `MIN_TARGET_TOKENS` scales down recall against very short triggers.
  *
- * MEASURED RESULT (at 0.80): hit rate 0.778 (70/90), wrong-card render rate
- * 0.078 (7/90), no-render rate 0.144 (13/90), 0 false suppressions, 0 false
- * renders on the 21 negatives, suppression coverage 0.111 (10/90).
+ * All three were re-swept together (stemming on/off x `BIGRAM_BLEND` x
+ * `SECOND_BEST_BLEND` x `MIN_TARGET_TOKENS` x the three gates, 19,155
+ * combinations), keeping only combinations with zero false suppressions, zero
+ * false renders on the negatives, and at least 0.05 of suppress headroom.
+ * `BIGRAM_BLEND` fell from 0.19 to 0.1 in the process: stemming already
+ * recovers much of what adjacency was standing in for, so paying for word
+ * order twice now costs hits.
+ *
+ * `suppressThreshold` moves 0.80 -> 0.70, which reads backwards and is not.
+ * The previous 0.80 was bought to escape a 0.0086 sliver of headroom over the
+ * worst wrong-card score (0.7414), and it cost 2 of 12 suppressions to do it.
+ * Under the new scorer the worst wrong-card score is 0.395, so 0.70 carries
+ * 0.305 of headroom — about five times what 0.80 bought before — while
+ * restoring suppression coverage. Both guards improve at once; this is not a
+ * safety trade.
+ *
+ * MEASURED RESULT (at 0.70): hit rate 0.867 (78/90), wrong-card render rate
+ * 0.033 (3/90), no-render rate 0.100 (9/90), 0 false suppressions, 0 false
+ * renders on the 21 negatives, suppression coverage 0.122 (11/90), worst
+ * wrong-card score 0.395.
+ *
+ * Previously (0.80, unstemmed, max-trigger): 0.778 / 0.078 / 0.144, coverage
+ * 0.111, worst wrong-card 0.7414.
  */
 export const DEFAULT_MATCH_CONFIG: MatchConfig = {
-  suppressThreshold: 0.8,
+  suppressThreshold: 0.7,
   renderThreshold: 0.25,
   margin: 0.02,
   recitationRatio: 1.3
@@ -359,11 +435,7 @@ export class CueMatcher {
     let runnerUp = 0
 
     for (const card of this.sheet.cards) {
-      let cardScore = 0
-      for (const trigger of card.triggers) {
-        const s = scoreAgainst(transcript, trigger, this.df, this.docCount)
-        if (s > cardScore) cardScore = s
-      }
+      const cardScore = this.scoreCard(transcript, card)
       if (cardScore > best.score) {
         runnerUp = best.score
         best = { cardId: card.id, score: cardScore }
@@ -378,6 +450,43 @@ export class CueMatcher {
       margin: best.score - runnerUp,
       recited: this.looksRecited(transcript, best.score)
     }
+  }
+
+  /**
+   * A card's score: its best trigger, tempered by its second best.
+   *
+   * The plain `max` this replaces asks "did ANY paraphrase land", which lets a
+   * single lucky trigger carry a card. But the triggers are ~8-15 phrasings of
+   * ONE question, so when a transcript really is that question, several of them
+   * should score — and when it is a different question that merely shares
+   * vocabulary with one stray paraphrase, only that one does. The second-best
+   * score is therefore the cheapest available evidence that the top score was
+   * about the card rather than about a coincidence.
+   *
+   * This is what separates the corpus's worst confusion: "saying no to a
+   * stakeholder who wanted something unreasonable" hits ONE pm-prioritize
+   * paraphrase hard and the rest not at all, while pm-stakeholder's list agrees
+   * with itself. Under `max` the wrong card won; under agreement it does not.
+   *
+   * A card with a single trigger keeps its raw top score. Blending in a
+   * structural zero would penalise it for its own sparseness rather than for
+   * any disagreement — the corpus cannot see this case (every card there has a
+   * full paraphrase list) but a hand-written sheet can.
+   */
+  private scoreCard(transcript: string, card: CueCard): number {
+    let top = 0
+    let second = 0
+    for (const trigger of card.triggers) {
+      const s = scoreAgainst(transcript, trigger, this.df, this.docCount)
+      if (s > top) {
+        second = top
+        top = s
+      } else if (s > second) {
+        second = s
+      }
+    }
+    if (card.triggers.length < 2) return top
+    return (1 - SECOND_BEST_BLEND) * top + SECOND_BEST_BLEND * second
   }
 
   /**
