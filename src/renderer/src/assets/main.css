@@ -191,105 +191,17 @@
   padding: 0 24px 12px;
 }
 
-/* ── Voice Orb ── */
-.orb-section {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 24px 0 16px;
-  flex-shrink: 0;
-}
-
-/*
- * The one place the aurora gradient is allowed. It stands for Hue's own
- * presence, so the orb carries it at rest and the state modifiers only change
- * the ring and the halo around it — never the fill, which would turn the
- * gradient into a status colour and cost it its meaning.
- */
-.voice-orb {
-  width: 96px;
-  height: 96px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  background: linear-gradient(
-    135deg,
-    var(--aurora-sky) 0%,
-    var(--aurora-lavender) 50%,
-    var(--aurora-peach) 100%
-  );
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* The aurora gradient is pastel and stays pastel — it is Hue's identity, not
-     a themed surface. So the icon on top of it must be the DARK colour, which
-     after the palette inversion is `--on-ink`, not `--ink`. Using `--ink` here
-     would put near-white on pale lavender and lose the icon entirely. */
-  color: var(--on-ink);
-  box-shadow: 0 6px 20px var(--aurora-shadow);
-  transition:
-    border-color 400ms,
-    box-shadow 400ms;
-}
-.voice-orb--connecting {
-  border-color: var(--indigo);
-  box-shadow: 0 6px 24px var(--indigo-glow);
-}
-.voice-orb--listening {
-  border-color: var(--green);
-  animation: pulse-green 1.8s ease-in-out infinite;
-}
-
-/* Spinner shown in the orb and the Start button while connecting. */
-.orb-spinner,
+/* Spinner shown in the Start button while connecting. */
 .btn-spinner {
   display: inline-block;
+  width: 15px;
+  height: 15px;
+  border-width: 2px;
   border-radius: 50%;
   border-style: solid;
   border-color: currentColor;
   border-top-color: transparent;
   animation: spin 0.7s linear infinite;
-}
-.orb-spinner {
-  width: 30px;
-  height: 30px;
-  border-width: 3px;
-}
-.btn-spinner {
-  width: 15px;
-  height: 15px;
-  border-width: 2px;
-}
-.voice-orb--transcribing {
-  border-color: var(--amber);
-  box-shadow: 0 6px 24px var(--amber-glow);
-}
-.voice-orb--thinking {
-  border-color: var(--indigo);
-  box-shadow: 0 6px 24px var(--indigo-glow);
-  animation: breathe 2.4s ease-in-out infinite;
-}
-.voice-orb--speaking {
-  border-color: var(--blue);
-  animation: pulse-blue 1s ease-in-out infinite;
-}
-
-.thinking-dots {
-  display: flex;
-  gap: 5px;
-  align-items: center;
-}
-.thinking-dots span {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: dot-bounce 1.4s ease-in-out infinite;
-}
-.thinking-dots span:nth-child(2) {
-  animation-delay: 0.2s;
-}
-.thinking-dots span:nth-child(3) {
-  animation-delay: 0.4s;
 }
 
 /* ── Transcript ── */
@@ -640,10 +552,113 @@
 
 .footer-meta {
   min-width: 140px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .footer-meta--right {
-  display: flex;
   justify-content: flex-end;
+}
+
+/* ── Voice Orb ──
+ *
+ * The one place the aurora gradient is allowed. It stands for Hue's own
+ * presence, so the orb carries it at rest and the state modifiers only change
+ * the ring and the halo around it — never the fill, which would turn the
+ * gradient into a status colour and cost it its meaning.
+ *
+ * 26px, on the footer rail. At 96px above the transcript it had to carry an
+ * icon to justify the space; at this size the shape *is* the message and an
+ * icon inside it would only be a smaller thing to squint at. State is the ring
+ * and the halo, which is all the eye reads from a status light anyway.
+ */
+.footer-orb {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  /* Always 2px, always present — a ring that only exists in some states would
+     change the orb's diameter as the pipeline moves, and a status light that
+     resizes is a status light the eye keeps re-finding. Transparent lets the
+     gradient beneath show through at rest. */
+  border: 2px solid transparent;
+  background: linear-gradient(
+    135deg,
+    var(--aurora-sky) 0%,
+    var(--aurora-lavender) 50%,
+    var(--aurora-peach) 100%
+  );
+  box-shadow: 0 2px 8px var(--aurora-shadow);
+  cursor: default;
+  transition:
+    border-color 240ms var(--ease-out),
+    box-shadow 240ms var(--ease-out);
+}
+.footer-orb--connecting {
+  border-color: var(--indigo);
+  box-shadow: 0 2px 10px var(--indigo-glow);
+}
+.footer-orb--listening {
+  border-color: var(--green);
+  animation: footer-pulse-green 1.8s ease-in-out infinite;
+}
+.footer-orb--transcribing {
+  border-color: var(--amber);
+  box-shadow: 0 2px 10px var(--amber-glow);
+}
+.footer-orb--thinking {
+  border-color: var(--indigo);
+  box-shadow: 0 2px 10px var(--indigo-glow);
+  animation: footer-breathe 2.4s ease-in-out infinite;
+}
+.footer-orb--speaking {
+  border-color: var(--blue);
+  animation: footer-pulse-blue 1s ease-in-out infinite;
+}
+
+/*
+ * Footer-sized versions of the pulses. The originals spread 14px and 10px,
+ * which was right under a 96px orb with the top of the card to itself; on a
+ * 10px-padded rail that halo crosses the footer's top border and washes over
+ * the latency badge beside it. Scaled to the surface, not copied to it.
+ *
+ * `breathe` is likewise rescaled: 1.06 on 96px is a 6px swell, on 26px it is
+ * 1.5px and reads as a flicker, so the small orb swells proportionally more.
+ */
+@keyframes footer-pulse-green {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 var(--green-glow),
+      0 2px 8px var(--green-glow);
+  }
+  50% {
+    box-shadow:
+      0 0 0 5px transparent,
+      0 2px 12px var(--green-glow);
+  }
+}
+@keyframes footer-pulse-blue {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 var(--blue-glow),
+      0 2px 8px var(--blue-glow);
+  }
+  50% {
+    box-shadow:
+      0 0 0 4px transparent,
+      0 2px 11px var(--blue-glow);
+  }
+}
+@keyframes footer-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.12);
+  }
 }
 
 /* Compact secondary action in the footer for taking a screen capture. */

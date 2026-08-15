@@ -199,57 +199,6 @@ function GearIcon(): React.JSX.Element {
   )
 }
 
-// ── Orb content by pipeline state ──
-
-function OrbInner({ state }: { state: PipelineState }): React.JSX.Element {
-  if (state === 'connecting') {
-    return <span className="orb-spinner" />
-  }
-  if (state === 'thinking') {
-    return (
-      <div className="thinking-dots">
-        <span />
-        <span />
-        <span />
-      </div>
-    )
-  }
-  if (state === 'speaking') {
-    return (
-      <svg
-        width="30"
-        height="30"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" fillOpacity="0.2" />
-        <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-        <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-      </svg>
-    )
-  }
-  if (state === 'transcribing') {
-    return (
-      <svg
-        width="28"
-        height="28"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-      >
-        <path d="M3 6h18M3 10h14M3 14h10M3 18h7" />
-      </svg>
-    )
-  }
-  return <MicIcon />
-}
-
 // ── Helpers ──
 
 const STATE_LABELS: Record<PipelineState, string> = {
@@ -1156,9 +1105,11 @@ export default function App(): React.JSX.Element {
       {glance ? (
         /*
          * Glance mode. One thing on screen, sized to be taken in with a look
-         * rather than read — the orb, the labels, the interviewer's turn and the
+         * rather than read — the labels, the interviewer's turn and the
          * conversation history all go, because every one of them is something
          * the eye has to skip past on the way to the sentence being spoken.
+         * (The footer orb goes too; it is switched off on the `glance` flag
+         * down in the footer rather than here.)
          *
          * The receipt is the one piece of chrome that survives, and it is
          * pinned rather than merely kept: an ungrounded answer is *more*
@@ -1204,8 +1155,7 @@ export default function App(): React.JSX.Element {
          * The review takes the whole main area rather than sitting beside the
          * transcript. It is read after the call, when nothing is live, and the
          * card is small enough that splitting it would leave two panes too short
-         * to read either — the orb in particular is a status light for a session
-         * that has just ended, so it has nothing left to say here.
+         * to read either.
          *
          * Deliberately inside the card and inside the existing layout: no second
          * window and no route, so Stop is still where it was and the way back to
@@ -1222,12 +1172,6 @@ export default function App(): React.JSX.Element {
         </main>
       ) : (
         <main className="app-main">
-          <div className="orb-section">
-            <div className={`voice-orb voice-orb--${voice.state}`}>
-              <OrbInner state={voice.state} />
-            </div>
-          </div>
-
           {/*
            * Transcript and cue sheet, side by side.
            *
@@ -1345,6 +1289,26 @@ export default function App(): React.JSX.Element {
             button is the only way out of a live session. It must not shift
             position when the mode toggles. */}
         <div className="footer-meta">
+          {/* The orb lives on the rail beside the button that changes its state,
+              not in the reading area. It used to sit above the transcript at
+              96px, where it was the largest thing on screen and said the least:
+              the header pill already names the state in words, so the orb was
+              spending the top of the card to repeat it. Down here it is what it
+              always was — a status light — and it is next to Start/Stop, which
+              is the control it reports on.
+
+              Hidden in glance mode for the same reason the latency badge is:
+              nothing that merely reflects state competes with the sentence
+              being read aloud. The header pill carries the state there. */}
+          {!glance && (
+            <div
+              className={`footer-orb footer-orb--${voice.state}`}
+              title={`Hue: ${STATE_LABELS[voice.state]}`}
+              /* The header state pill announces this in text already; a second
+                 announcement of the same state is noise to a screen reader. */
+              aria-hidden="true"
+            />
+          )}
           {!glance && voice.userTranscript && (
             <span className="latency-badge">
               {voice.userTranscript.tier} · {voice.userTranscript.latencyMs}ms
