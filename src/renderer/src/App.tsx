@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
 import { useVoiceMode } from './hooks/useVoiceMode'
 import type { PipelineState } from './lib/pipeline'
+import { isAtBottom } from './lib/stickToBottom'
 import type { VoiceTurn, CaptureTurn } from './hooks/useVoiceMode'
 import type { ScreenCapture } from '@shared/types'
 import { describeStory, type Grounding } from '@shared/grounding'
@@ -17,6 +18,7 @@ import {
 } from './lib/sessionHistory'
 import { Settings } from './components/Settings'
 import { CueSheetPanel } from './components/CueSheetPanel'
+import { UsagePanel } from './components/UsagePanel'
 
 // ── Icons ──
 
@@ -149,6 +151,32 @@ function ReviewIcon(): React.JSX.Element {
       <rect x="9" y="2" width="6" height="4" rx="1" />
       <path d="M9 12l2 2 4-4" />
       <path d="M9 17h6" />
+    </svg>
+  )
+}
+
+/**
+ * The usage toggle: a gauge, not a coin or a chart.
+ *
+ * What the panel is actually about is headroom — how much of a fixed allowance
+ * is left — and a gauge is the one glyph that says "remaining" without also
+ * promising billing (a coin would imply we know what it cost in money, which we
+ * do not) or history over time (a line chart, which the panel does not draw).
+ */
+function UsageIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="17"
+      height="17"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3.5 17a9 9 0 1 1 17 0" />
+      <path d="M12 17l4.5-4.5" />
     </svg>
   )
 }
@@ -610,6 +638,15 @@ export default function App(): React.JSX.Element {
   const voice = useVoiceMode()
   const [settingsOpen, setSettingsOpen] = useState(false)
   /**
+   * The usage panel, which takes the main area the way the review does.
+   *
+   * Not a drawer and not a Settings pane: quota is something you check *because*
+   * a session is behaving oddly, and burying it behind the gear would put it
+   * three clicks from the moment it is wanted. It is transient state for the
+   * same reason glance mode is — nobody wants to launch into a stats screen.
+   */
+  const [usageOpen, setUsageOpen] = useState(false)
+  /**
    * Glance mode: the card becomes a teleprompter for the current suggested
    * answer (see `.glance` in main.css for the type scale and why it exists).
    *
@@ -625,6 +662,13 @@ export default function App(): React.JSX.Element {
   const assistantLabel = companion ? 'Suggested answer' : 'Hue'
   const [messages, setMessages] = useState<Message[]>([])
   const transcriptRef = useRef<HTMLDivElement>(null)
+  /**
+   * Whether the transcript should keep following new text. A ref, not state:
+   * it is read by the scroll effect and written by the scroll handler, and
+   * re-rendering on every wheel tick to store it would be pure waste. Starts
+   * true so a fresh session follows from the first token.
+   */
+  const followTranscriptRef = useRef(true)
   /**
    * Where the transcript ends and the cue sheet begins, as a percentage of the
    * split row. Transient state like `glance`, and for the same reason: it is a
@@ -794,10 +838,32 @@ export default function App(): React.JSX.Element {
     })
   }, [voice.assistantResult])
 
+  /**
+   * Follow new text, but only for a reader who is already at the bottom.
+   *
+   * `messages` changes on every streamed token, so an unconditional jump here
+   * re-pins the pane dozens of times a second and scrolling up is undone in the
+   * frame it happens — the wheel reads as dead and nothing above the fold can be
+   * reached while Hue is answering. `followTranscriptRef` is maintained by the
+   * pane's own scroll handler, so leaving the bottom stops the chase and
+   * returning to it resumes.
+   */
   useEffect(() => {
     const el = transcriptRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (el && followTranscriptRef.current) el.scrollTop = el.scrollHeight
   }, [messages, voice.greetingText, voice.cueCard])
+
+  /**
+   * Re-arm auto-follow when the reader comes back to the bottom.
+   *
+   * Fires for programmatic scrolls too, including the effect above — which is
+   * harmless, because that one only ever lands at the bottom and so re-asserts
+   * the `true` it was gated on.
+   */
+  const onTranscriptScroll = useCallback(() => {
+    const el = transcriptRef.current
+    if (el) followTranscriptRef.current = isAtBottom(el)
+  }, [])
 
   /**
    * File the review when the session ends.
@@ -812,10 +878,15 @@ export default function App(): React.JSX.Element {
    * transition has been consumed, `wasActive` is false and every later run
    * returns immediately.
    *
+   * Filing is all this does — it deliberately does not open the panel. A review
+   * that appeared on its own took over the screen at the one moment the user is
+   * least ready for it: the call has just ended, they may still be on it saying
+   * goodbye, and the thing they were reading was replaced by a scorecard they
+   * did not ask for. Reading it is a decision, not a consequence of stopping, so
+   * it waits behind the header's review button until they choose to open it.
+   *
    * Nothing is shown or stored for a session with no receipts — see
-   * `isReviewable`. And the panel is opened even in glance mode: the glance
-   * branch never renders it, so what the user gets there is an unchanged live
-   * surface and a review waiting the moment they come back out.
+   * `isReviewable`.
    */
   useEffect(() => {
     const wasActive = prevActiveRef.current
@@ -839,7 +910,6 @@ export default function App(): React.JSX.Element {
     // value derived from state, so there is nothing to compute during render.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSessions(saveSession(createSession(turns)))
-    setReviewIndex(0)
   }, [voice.active, messages])
 
   // Reset the visible transcript and the underlying LLM history so the next turn
@@ -971,6 +1041,16 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [glance, reviewIndex])
 
+  // And out of usage, so "back" means the same thing in all three modes.
+  useEffect(() => {
+    if (glance || !usageOpen) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setUsageOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [glance, usageOpen])
+
   return (
     <div className={glance ? 'app app--glance' : 'app'}>
       <header className="app-header">
@@ -1009,7 +1089,13 @@ export default function App(): React.JSX.Element {
         {sessions.length > 0 && !glance && (
           <button
             className={reviewIndex !== null ? 'icon-btn icon-btn--on' : 'icon-btn'}
-            onClick={() => setReviewIndex((v) => (v === null ? 0 : null))}
+            onClick={() => {
+              // Review and usage both take the whole main area, so opening one
+              // has to close the other — leaving both flags set would make the
+              // hidden panel's button light up for a surface nobody can see.
+              setUsageOpen(false)
+              setReviewIndex((v) => (v === null ? 0 : null))
+            }}
             aria-pressed={reviewIndex !== null}
             title={
               reviewIndex !== null
@@ -1018,6 +1104,27 @@ export default function App(): React.JSX.Element {
             }
           >
             <ReviewIcon />
+          </button>
+        )}
+        {/* Usage. Always available, unlike the review, because there is a real
+            answer even before the first session ("nothing recorded yet") — but
+            hidden in glance mode, which must not gain a way to cover the answer
+            being read aloud. */}
+        {!glance && (
+          <button
+            className={usageOpen ? 'icon-btn icon-btn--on' : 'icon-btn'}
+            onClick={() => {
+              setReviewIndex(null)
+              setUsageOpen((v) => !v)
+            }}
+            aria-pressed={usageOpen}
+            title={
+              usageOpen
+                ? 'Close usage'
+                : 'Usage and quota — what Hue has spent, and what each provider says is left'
+            }
+          >
+            <UsageIcon />
           </button>
         )}
         {hasConversation && !glance && (
@@ -1086,6 +1193,12 @@ export default function App(): React.JSX.Element {
             )}
           </div>
         </main>
+      ) : usageOpen ? (
+        // Same slot and same reasoning as the review below: inside the card, no
+        // second window, and the way back is the button that opened it.
+        <main className="app-main">
+          <UsagePanel onClose={() => setUsageOpen(false)} />
+        </main>
       ) : reviewIndex !== null ? (
         /*
          * The review takes the whole main area rather than sitting beside the
@@ -1129,7 +1242,7 @@ export default function App(): React.JSX.Element {
               className="cuesheet-split-pane"
               style={visibleSheet ? { flex: `0 0 ${splitPct}%` } : { flex: '1 1 auto' }}
             >
-              <div className="transcript" ref={transcriptRef}>
+              <div className="transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
                 {voice.greetingText && (
                   <div className="bubble bubble--assistant">
                     <div className="bubble-label">Hue</div>

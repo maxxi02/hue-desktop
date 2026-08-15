@@ -1,6 +1,7 @@
 import type { WebContents } from 'electron'
 import { getSettings } from './settings'
 import { createStallGuard, fetchWithRetry } from './stream-resilience'
+import { record } from './usage-store'
 import type { LlmMessage, LlmStreamRequest } from '../shared/types'
 
 /**
@@ -150,7 +151,15 @@ export function startOllamaStream(
           buffer = lines.pop() ?? ''
           for (const line of lines) {
             if (!line.trim()) continue
-            let event: { message?: { content?: string }; done?: boolean }
+            // `prompt_eval_count` / `eval_count` ride on the final line. They
+            // were being parsed into `event` and then dropped on the floor by
+            // the `done` branch below — declaring them is the whole change.
+            let event: {
+              message?: { content?: string }
+              done?: boolean
+              prompt_eval_count?: number
+              eval_count?: number
+            }
             try {
               event = JSON.parse(line)
             } catch {
@@ -159,6 +168,17 @@ export function startOllamaStream(
             if (event.message?.content)
               send('hue:llm:delta', { streamId, text: event.message.content })
             if (event.done) {
+              // No `limit`: Ollama runs on this machine, so there is no account
+              // and no ceiling to report. The tally is still worth having — it
+              // is what makes "how much of this ran locally" answerable.
+              record({
+                at: Date.now(),
+                kind: 'llm',
+                provider: 'ollama',
+                model,
+                inputTokens: event.prompt_eval_count,
+                outputTokens: event.eval_count
+              })
               finishDone(false)
               return
             }

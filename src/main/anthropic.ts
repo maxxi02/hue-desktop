@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { WebContents } from 'electron'
 import { getSettings } from './settings'
+import { record } from './usage-store'
+import { parseRateLimitHeaders } from '../shared/usage'
 import type { LlmMessage, LlmStreamRequest } from '../shared/types'
 
 /** Block types this app actually sends; both accept cache_control. */
@@ -100,13 +102,49 @@ export function startLlmStream(sender: WebContents, streamId: string, req: LlmSt
     )
 
     stream.on('text', (delta) => send('hue:llm:delta', { streamId, text: delta }))
-    stream.on('end', () => finishDone(false))
+    stream.on('end', () => {
+      // Token counts only, never headroom: `messages.stream()` hands back an
+      // SDK stream rather than an HTTP response, so `anthropic-ratelimit-*`
+      // never reaches this code. Getting it would mean hand-driving the stream
+      // off `.withResponse()`, on the most latency-sensitive path in the app —
+      // not worth it for a number the panel can show a dash for. A 429 still
+      // reports headroom, because the SDK's error carries its headers.
+      try {
+        const usage = stream.receivedMessages[0]?.usage
+        if (usage) {
+          record({
+            at: Date.now(),
+            kind: 'llm',
+            provider: 'anthropic',
+            model,
+            inputTokens: usage.input_tokens,
+            outputTokens: usage.output_tokens,
+            cacheReadTokens: usage.cache_read_input_tokens ?? undefined,
+            cacheWriteTokens: usage.cache_creation_input_tokens ?? undefined
+          })
+        }
+      } catch (e) {
+        console.error('anthropic usage not recorded:', e)
+      }
+      finishDone(false)
+    })
     stream.on('abort', () => finishDone(true))
     stream.on('error', (err: unknown) => {
-      const e = err as { name?: string; message?: string }
+      const e = err as { name?: string; message?: string; headers?: Headers; status?: number }
       if (e?.name === 'APIUserAbortError' || aborter.signal.aborted) {
         finishDone(true)
         return
+      }
+      // The one path where Anthropic headroom is reachable: SDK errors carry
+      // the response headers the success path hides. A 429 here is also the
+      // moment the number matters most.
+      try {
+        if (e?.headers) {
+          const limit = parseRateLimitHeaders('anthropic', e.headers, Date.now())
+          if (limit) record({ at: Date.now(), kind: 'llm', provider: 'anthropic', model, limit })
+        }
+      } catch {
+        // Never let usage accounting turn a reportable error into a silent one.
       }
       finishError(e?.message ?? String(err))
     })

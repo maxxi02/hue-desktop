@@ -849,8 +849,16 @@
   gap: 12px;
 }
 
-/* HueType.overline — 11.5/700, +0.5 tracking, uppercase. */
+/* HueType.overline — 11.5/700, +0.5 tracking, uppercase.
+   A flex row so each section can carry a glyph beside its text: fourteen
+   headings in one uniform uppercase grey are hard to tell apart while
+   scrolling, and a distinct silhouette is what makes one findable at a
+   glance. The icon inherits `color` below, so `currentColor` covers both
+   themes with no second rule. */
 .settings-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -860,10 +868,98 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* A long heading must squash itself, never the glyph — a half-width icon is
+   worse than no icon, because it no longer reads as its own shape. */
+.settings-section-title svg {
+  flex-shrink: 0;
+}
+
+/* The quiet secondary action beside a primary one — Clear, Delete, Refresh.
+   The class was already used in five places in Settings.tsx but had no rule
+   anywhere, so every one of them rendered as a raw browser button: a grey
+   bevelled box sitting next to Hue's own styling. Reads as a link because
+   these are all destructive-or-cheap actions that must not compete with the
+   button they sit beside. */
+.link-btn {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color 200ms var(--ease-out);
+}
+
+.link-btn:hover {
+  color: var(--text);
+}
+
+.link-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  text-decoration: none;
+}
+
 .settings-field {
   display: flex;
   flex-direction: column;
   gap: 5px;
+}
+
+/* ── Gap interview ──
+   The questions are asked one at a time, so the pane has to answer "how much
+   of this is left" itself — a lone question with no end in sight is the thing
+   people abandon. The count says it exactly and the dots say it at a glance,
+   which is what makes the row worth two readings of the same number. */
+.gap-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gap-progress-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Wraps because the run length is whatever the résumé produced — twenty
+   questions must reflow rather than push the count off the panel. */
+.gap-dots {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.gap-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  transition:
+    background 200ms var(--ease-out),
+    border-color 200ms var(--ease-out);
+}
+
+/* Accent marks progress, the one thing on this row worth the ink. */
+.gap-dot-filled {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+/* Back and skip sit apart from the forward action: the two ways to leave a
+   question shouldn't sit under the thumb that's aiming for Next. */
+.gap-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .settings-label {
@@ -1345,6 +1441,71 @@ textarea.settings-input {
   font-size: 12px;
   line-height: 1.6;
   color: var(--text-muted);
+}
+
+/* ── Usage and quota ──
+   The same reading surface as the review above, and built from the same parts on
+   purpose: rows, count pills and the anchored bar all already mean what they need
+   to mean here. Only four things are new, and each is a shape the review never
+   had — a provider heading, the two group labels under it, the label-over-bar
+   meter, and the em-dash that stands in for a number nobody reported. */
+
+/* The provider's own name, and the loudest ink in the section — it is the thing
+   the eye scans for when the panel lists six of them. */
+.usage-provider {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  text-transform: capitalize;
+}
+
+/* "Left in your quota" / "Used by Hue". Two different kinds of number under one
+   provider, so the split has to be visible without being a second heading —
+   small caps on the muted step says "label" and nothing more. */
+.usage-subhead {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding-top: 3px;
+}
+
+/* Sentence over bar, not beside it: the sentence is the fact and the bar is only
+   its shape, so the bar gets the full width to be read as a proportion rather
+   than a sliver squeezed next to text. */
+.usage-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 13px;
+  border-radius: var(--r-card-s);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+
+/* The stand-in for a number the vendor never sent. Monospaced to match the count
+   pills, because it sits where a figure would and must read as "no value here",
+   never as punctuation in the sentence around it. */
+.usage-dash {
+  font-family: ui-monospace, monospace;
+  color: var(--text-muted);
+}
+
+/* The window toggle. `.review-chip` was written for a span, so the button needs
+   the inherited-font and cursor bits back; everything else it already has. */
+.usage-window .review-chip {
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    color 160ms var(--ease-out),
+    background 160ms var(--ease-out),
+    border-color 160ms var(--ease-out);
+}
+.usage-window .review-chip--quiet:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
 }
 
 /*

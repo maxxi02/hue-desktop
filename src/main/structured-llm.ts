@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { record } from './usage-store.ts'
 
 /**
  * The model boundary.
@@ -135,6 +136,27 @@ export function anthropicClient(opts: AnthropicOptions = {}): LlmClient {
 
     const message = (await stream.finalMessage()) as unknown as Anthropic.Message
 
+    // Ingest is where the token-heavy work happens — a whole résumé read in one
+    // call dwarfs any single interview turn — so leaving it out would make the
+    // panel's totals quietly wrong. Recorded before the `stop_reason` checks
+    // below, because a refused or truncated response was still generated and
+    // still billed.
+    // No `limit`: the SDK owns the HTTP response here, so its rate-limit
+    // headers never reach this code. Tokens without headroom, and honest about
+    // which is which.
+    if (message.usage) {
+      record({
+        at: Date.now(),
+        kind: 'llm',
+        provider: 'anthropic',
+        model,
+        inputTokens: message.usage.input_tokens,
+        outputTokens: message.usage.output_tokens,
+        cacheReadTokens: message.usage.cache_read_input_tokens ?? undefined,
+        cacheWriteTokens: message.usage.cache_creation_input_tokens ?? undefined
+      })
+    }
+
     if (message.stop_reason === 'refusal') {
       const details = (message as { stop_details?: { category?: string | null } }).stop_details
       throw new LlmRefusal(
@@ -198,23 +220,43 @@ export {
   DEFAULT_OPENAI_COMPAT_MODEL,
   GROQ_BASE_URL,
   OPENAI_BASE_URL,
+  DEEPSEEK_BASE_URL,
   type OpenAiCompatOptions
 } from './structured-llm-openai.ts'
 
 // --- Desktop wiring: which provider a workload runs on -----------------------
 
-import type { LlmProvider } from '../shared/types.ts'
+import type { LlmProvider, OpenAiCompatProvider } from '../shared/types.ts'
 // The re-export at the foot of this file makes `openAiCompatClient` part of
 // this module's public surface, but a re-export does not bind the name locally
 // — `clientForSettings` below calls it, so it needs a real import too.
 import { openAiCompatClient, ProviderError } from './structured-llm-openai.ts'
+import type { OpenAiCompatOptions } from './structured-llm-openai.ts'
 
-/** The OpenAI-compatible surfaces the app already speaks (see `openai-compat.ts`). */
-export const PROVIDER_BASE_URLS: Record<'google' | 'groq' | 'mistral' | 'cohere', string> = {
+/**
+ * The OpenAI-compatible surfaces the app already speaks (see `openai-compat.ts`).
+ *
+ * Keyed by `OpenAiCompatProvider` rather than by a hand-written union of the
+ * same four names. The union looked identical and behaved worse: adding a
+ * provider to the shared type left this map short an entry, `baseUrlFor` handed
+ * back `undefined`, and the failure surfaced as a fetch to "undefined/chat/
+ * completions" at ingest time. Typed against the source of truth, the same
+ * omission is a compile error.
+ *
+ * The URLs are spelled out as literals even though `structured-llm-openai.ts`
+ * exports `GROQ_BASE_URL` and `DEEPSEEK_BASE_URL` right there. That is
+ * load-bearing, not sloppy: the two modules are a cycle — the openai file
+ * imports `LlmRefusal` and `LlmClient` from this one — so when this initializer
+ * runs, that module's consts are still in their temporal dead zone and reading
+ * one throws `ReferenceError` at import time, taking every module that touches
+ * ingest down with it. Do not "tidy" these into imports.
+ */
+export const PROVIDER_BASE_URLS: Record<OpenAiCompatProvider, string> = {
   google: 'https://generativelanguage.googleapis.com/v1beta/openai',
   groq: 'https://api.groq.com/openai/v1',
   mistral: 'https://api.mistral.ai/v1',
-  cohere: 'https://api.cohere.ai/compatibility/v1'
+  cohere: 'https://api.cohere.ai/compatibility/v1',
+  deepseek: 'https://api.deepseek.com'
 }
 
 /**
@@ -280,9 +322,26 @@ export class MissingApiKey extends Error {
  *    of tokens until the window rolls over, and the provider tells us exactly
  *    when. Suggesting a different provider here would be wrong twice over: it
  *    implies the upload was faulty, and the same account may be fine in an hour.
+ *  - **Out of money** — a 402. Not a quota at all: the account's prepaid balance
+ *    is zero and no amount of waiting or resizing changes that.
  */
 export function quotaMessage(err: unknown): string | null {
   if (!(err instanceof ProviderError)) return null
+
+  // DeepSeek has no free tier — credit is bought up front — so an account that
+  // runs dry fails every request with 402 "Insufficient Balance". It must not
+  // borrow either of the messages below: "the document is too big" sends the
+  // user editing a résumé that was never the problem, and "try again shortly"
+  // sends them to wait for a reset that is never coming.
+  if (err.status === 402) {
+    return (
+      "This provider's account balance is empty, so it refused the request. " +
+      'Nothing is wrong with your document, and waiting will not clear it — DeepSeek ' +
+      'is prepaid with no free tier, so top the balance up at platform.deepseek.com ' +
+      '(Top up / Billing), or set a different Ingest provider in Settings.'
+    )
+  }
+
   if (err.status !== 429 && err.status !== 413) return null
 
   const body = String(err.body ?? '')
@@ -351,23 +410,30 @@ export async function clientForSettings(role: 'drafting' | 'ingest'): Promise<Ll
     // ingest. The compat client still wants a non-empty bearer.
     return openAiCompatClient({
       apiKey: 'ollama',
+      provider: 'ollama',
       baseUrl: baseUrlFor('ollama', s.ollamaBaseUrl),
       model: s.ollamaModel || undefined,
       timeoutMs: LOCAL_INGEST_TIMEOUT_MS
     })
   }
 
-  const keys: Record<'google' | 'groq' | 'mistral' | 'cohere', string> = {
+  // Keyed by `OpenAiCompatProvider`, like PROVIDER_BASE_URLS above and for the
+  // same reason: a provider added to the shared type but forgotten here should
+  // fail the build, not read `undefined` out of the map and report it to the
+  // user as a missing API key they have in fact already entered.
+  const keys: Record<OpenAiCompatProvider, string> = {
     google: s.googleApiKey,
     groq: s.groqApiKey,
     mistral: s.mistralApiKey,
-    cohere: s.cohereApiKey
+    cohere: s.cohereApiKey,
+    deepseek: s.deepseekApiKey
   }
-  const models: Record<'google' | 'groq' | 'mistral' | 'cohere', string> = {
+  const models: Record<OpenAiCompatProvider, string> = {
     google: s.googleModel,
     groq: s.groqModel,
     mistral: s.mistralModel,
-    cohere: s.cohereModel
+    cohere: s.cohereModel,
+    deepseek: s.deepseekModel
   }
 
   const apiKey = keys[provider]
@@ -375,9 +441,37 @@ export async function clientForSettings(role: 'drafting' | 'ingest'): Promise<Ll
 
   return openAiCompatClient({
     apiKey,
+    provider,
     baseUrl: baseUrlFor(provider, s.ollamaBaseUrl),
     // Empty means "auto-pick", which the compat client's default already does.
     model: models[provider] || undefined,
-    timeoutMs: CLOUD_INGEST_TIMEOUT_MS
+    timeoutMs: CLOUD_INGEST_TIMEOUT_MS,
+    ...deepseekQuirks(provider)
   })
+}
+
+/**
+ * The two DeepSeek settings that look wrong until you know why.
+ *
+ * **`strictSchema: false`.** DeepSeek supports `response_format: json_object`
+ * and nothing more; strict `json_schema` is rejected. Normally that is fine —
+ * the compat client tries strict, gets a 400, and downgrades once. It does not
+ * work here: `isSchemaRejection` decides by matching the response body against
+ * /json_schema|response_format|structured output|schema/i, and DeepSeek's body
+ * is the flat string "Invalid request body format", which matches none of them.
+ * The downgrade would never fire and every DeepSeek ingest would fail on the
+ * first call. Starting in `json_object` mode skips a negotiation whose answer we
+ * already know, rather than making the matcher guess at a message with no
+ * distinguishing content in it.
+ *
+ * **`thinking: disabled`.** Ingest sends `temperature: 0` so that extracting the
+ * same résumé twice yields byte-identical output and the content hash holds.
+ * DeepSeek *silently ignores* temperature while thinking is enabled — no error,
+ * just a run that varies. Turning thinking off is what gives that zero its
+ * meaning back. It also keeps the answer on `delta.content`, which is the same
+ * reason `openai-compat.ts` sets it on the drafting path.
+ */
+function deepseekQuirks(provider: OpenAiCompatProvider): Partial<OpenAiCompatOptions> {
+  if (provider !== 'deepseek') return {}
+  return { strictSchema: false, extraBody: { thinking: { type: 'disabled' } } }
 }

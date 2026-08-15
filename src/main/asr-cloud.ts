@@ -1,5 +1,7 @@
 import { getSettings } from './settings'
-import { fetchWithRetry } from './stream-resilience'
+import { fetchWithRetry, ProviderHttpError } from './stream-resilience'
+import { record } from './usage-store'
+import { parseRateLimitHeaders, type RateLimitSnapshot } from '../shared/usage'
 import type { CloudAsrResult } from '../shared/types'
 
 /**
@@ -19,20 +21,69 @@ const ASR_DEADLINE_MS = 20_000
 const ASR_POLL_DEADLINE_MS = 30_000
 
 /**
+ * One transcription attempt, carrying whatever the vendor said about quota.
+ *
+ * Threaded through explicitly rather than kept in a module-level variable
+ * because utterances can overlap — a slow AssemblyAI poll is still running when
+ * the next utterance starts — and a shared slot would credit one utterance's
+ * headroom to another.
+ */
+interface AsrCall {
+  provider: string
+  limit: RateLimitSnapshot | null
+}
+
+/**
+ * 16-bit mono @ 16 kHz: two bytes a sample, sixteen thousand samples a second.
+ * Seconds of audio, not bytes, is what every one of these vendors bills in.
+ */
+function audioSecondsOf(pcm16: ArrayBuffer): number {
+  return pcm16.byteLength / 32_000
+}
+
+/**
  * Tier 3 cloud ASR proxy. Runs in the main process so provider API keys
  * never reach the renderer. Receives raw 16-bit PCM mono @ 16 kHz.
  */
 export async function transcribeCloud(pcm16: ArrayBuffer): Promise<CloudAsrResult> {
   const s = getSettings()
-  switch (s.cloudAsrProvider) {
-    case 'deepgram':
-      return deepgram(pcm16, s.deepgramApiKey)
-    case 'groq':
-      return groq(pcm16, s.groqApiKey)
-    case 'assemblyai':
-      return assemblyai(pcm16, s.assemblyAiApiKey)
-    default:
-      throw new Error(`Cloud ASR provider "${s.cloudAsrProvider}" is not supported yet.`)
+  const provider = s.cloudAsrProvider
+  const call: AsrCall = { provider, limit: null }
+
+  try {
+    let result: CloudAsrResult
+    switch (provider) {
+      case 'deepgram':
+        result = await deepgram(pcm16, s.deepgramApiKey, call)
+        break
+      case 'groq':
+        result = await groq(pcm16, s.groqApiKey, call)
+        break
+      case 'assemblyai':
+        result = await assemblyai(pcm16, s.assemblyAiApiKey, call)
+        break
+      default:
+        throw new Error(`Cloud ASR provider "${provider}" is not supported yet.`)
+    }
+    record({
+      at: Date.now(),
+      kind: 'asr',
+      provider,
+      audioSeconds: audioSecondsOf(pcm16),
+      limit: call.limit ?? undefined
+    })
+    return result
+  } catch (err) {
+    // The utterance was lost, so no audio seconds — the vendor transcribed
+    // nothing and billed for nothing. The headroom is still worth keeping: a
+    // 429 is the most informative thing this app ever hears about quota, and
+    // it would be perverse to discard it precisely when the limit is binding.
+    const limit =
+      err instanceof ProviderHttpError
+        ? (parseRateLimitHeaders(provider, err.headers, Date.now()) ?? call.limit)
+        : call.limit
+    if (limit) record({ at: Date.now(), kind: 'asr', provider, limit })
+    throw err
   }
 }
 
@@ -45,10 +96,17 @@ async function asrFetch(
   url: string,
   init: RequestInit,
   label: string,
-  deadline: AbortSignal
+  deadline: AbortSignal,
+  call: AsrCall
 ): Promise<Response> {
   try {
-    return await fetchWithRetry(url, init, label, { signal: deadline })
+    const res = await fetchWithRetry(url, init, label, { signal: deadline })
+    // Every response is a fresh reading, so the last one wins — which for
+    // AssemblyAI means the final poll rather than the upload that preceded it.
+    // Only Groq fills these in; for Deepgram and AssemblyAI this stays null and
+    // the panel shows a dash rather than a fabricated zero.
+    call.limit = parseRateLimitHeaders(call.provider, res.headers, Date.now()) ?? call.limit
+    return res
   } catch (err) {
     const e = err as { name?: string }
     if (e?.name === 'AbortError' || e?.name === 'TimeoutError' || deadline.aborted) {
@@ -86,7 +144,11 @@ function pcm16ToWav(pcm16: ArrayBuffer, sampleRate = 16000): ArrayBuffer {
   return buffer
 }
 
-async function deepgram(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrResult> {
+async function deepgram(
+  pcm16: ArrayBuffer,
+  apiKey: string,
+  call: AsrCall
+): Promise<CloudAsrResult> {
   if (!apiKey) throw new Error('No Deepgram API key configured. Add one in Settings.')
 
   const params = new URLSearchParams({
@@ -109,7 +171,8 @@ async function deepgram(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrRes
       body: pcm16
     },
     'Deepgram',
-    AbortSignal.timeout(ASR_DEADLINE_MS)
+    AbortSignal.timeout(ASR_DEADLINE_MS),
+    call
   )
 
   const data = (await res.json()) as {
@@ -119,7 +182,11 @@ async function deepgram(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrRes
   return { text: text.trim(), provider: 'deepgram' }
 }
 
-async function groq(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrResult> {
+async function groq(
+  pcm16: ArrayBuffer,
+  apiKey: string,
+  call: AsrCall
+): Promise<CloudAsrResult> {
   if (!apiKey) throw new Error('No Groq API key configured. Add one in Settings.')
 
   const wav = pcm16ToWav(pcm16)
@@ -136,14 +203,19 @@ async function groq(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrResult>
       body: form
     },
     'Groq',
-    AbortSignal.timeout(ASR_DEADLINE_MS)
+    AbortSignal.timeout(ASR_DEADLINE_MS),
+    call
   )
 
   const data = (await res.json()) as { text?: string }
   return { text: (data.text ?? '').trim(), provider: 'groq' }
 }
 
-async function assemblyai(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrResult> {
+async function assemblyai(
+  pcm16: ArrayBuffer,
+  apiKey: string,
+  call: AsrCall
+): Promise<CloudAsrResult> {
   if (!apiKey) throw new Error('No AssemblyAI API key configured. Add one in Settings.')
 
   // One deadline for the whole upload → create → poll sequence, so a slow upload
@@ -159,7 +231,8 @@ async function assemblyai(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrR
       body: wav
     },
     'AssemblyAI upload',
-    deadline
+    deadline,
+    call
   )
   const { upload_url: audioUrl } = (await upload.json()) as { upload_url: string }
 
@@ -171,7 +244,8 @@ async function assemblyai(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrR
       body: JSON.stringify({ audio_url: audioUrl })
     },
     'AssemblyAI transcript',
-    deadline
+    deadline,
+    call
   )
   const { id } = (await create.json()) as { id: string }
 
@@ -184,7 +258,8 @@ async function assemblyai(pcm16: ArrayBuffer, apiKey: string): Promise<CloudAsrR
       `https://api.assemblyai.com/v2/transcript/${id}`,
       { headers: { authorization: apiKey } },
       'AssemblyAI poll',
-      deadline
+      deadline,
+      call
     )
     const data = (await poll.json()) as { status: string; text?: string; error?: string }
     if (data.status === 'completed') {

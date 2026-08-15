@@ -7,7 +7,8 @@ import {
   startOpenAiCompatStream,
   abortOpenAiCompatStream,
   fetchOpenAiModels,
-  isOpenAiCompatProvider
+  isOpenAiCompatProvider,
+  providerSupportsVision
 } from './openai-compat'
 import { transcribeCloud } from './asr-cloud'
 import { applyHotkeys } from './hotkeys'
@@ -26,8 +27,12 @@ import {
   skipProfileGap
 } from './ingest'
 import { ingestCueSheet } from './cuesheet-ingest'
+import { analyzeJobDescription } from './job-spec-ingest'
+import { JOB_DESCRIPTION_LIMIT } from '../shared/job-spec'
 import { listSheets, deleteSheet, sheetsDir, isValidSheetId } from './cuesheet-store'
 import { applyStealth, isStealthSupported } from './stealth'
+import { currentEvents, onRecorded } from './usage-store'
+import { summarize, type UsageSummary } from '../shared/usage'
 import { applyWindowAnchor } from './window-placement'
 import type {
   HueSettings,
@@ -111,6 +116,55 @@ export function registerIpc(): void {
   )
 
   ipcMain.handle('hue:asr:cloud', (_e, pcm: ArrayBuffer) => transcribeCloud(pcm))
+
+  // Usage. Summarised in the main process rather than shipping the raw event
+  // log to the renderer: a week of interviews is thousands of rows, and the
+  // panel only ever renders the totals.
+  ipcMain.handle('hue:usage:get', (): UsageSummary => {
+    const now = Date.now()
+    return summarize(currentEvents(now), now)
+  })
+
+  // Pushed so the panel is live while a session runs. Coalesced on a timer —
+  // an event fires per utterance and per model turn, and re-rendering a
+  // stats panel at that rate is pure overhead for numbers nobody reads that
+  // fast.
+  // One subscription per renderer, however many times it asks.
+  //
+  // The panel subscribes on mount, and closing it only removes the listener on
+  // the renderer's side — this one would survive. Opening and closing the panel
+  // ten times would then leave ten live subscriptions here, each re-summarising
+  // the entire event log on every utterance, for a panel nobody is looking at.
+  const usageSubscribers = new Map<number, () => void>()
+
+  ipcMain.on('hue:usage:subscribe', (event) => {
+    const id = event.sender.id
+    if (usageSubscribers.has(id)) return
+
+    let pending = false
+    const stop = onRecorded(() => {
+      // Coalesced: an event fires per utterance and per model turn, and
+      // re-rendering a stats panel at that rate is pure overhead for numbers
+      // nobody reads that fast.
+      if (pending) return
+      pending = true
+      setTimeout(() => {
+        pending = false
+        if (event.sender.isDestroyed()) return
+        const now = Date.now()
+        event.sender.send('hue:usage:changed', summarize(currentEvents(now), now))
+      }, 1_000).unref?.()
+    })
+
+    const release = (): void => {
+      stop()
+      usageSubscribers.delete(id)
+    }
+    usageSubscribers.set(id, release)
+    // A reloaded renderer would otherwise leave its listener behind for a
+    // WebContents that no longer exists.
+    event.sender.once('destroyed', release)
+  })
 
   // Phone mirror: the toggle persists the setting and starts/stops the server in
   // one step, so the QR code appears immediately without a separate Save.
@@ -209,6 +263,30 @@ export function registerIpc(): void {
     if (getSettings().selectedCueSheetId === id) updateSettings({ selectedCueSheetId: '' })
   })
 
+  // The job posting. Same progress-on-a-side-channel shape again, and for the
+  // same reason: the analysis is several model calls deep, and a Settings pane
+  // that shows nothing for that long is indistinguishable from a hang.
+  ipcMain.handle('hue:jobspec:analyze', async (event, text: string) => {
+    if (typeof text !== 'string') throw new Error('A job description is required.')
+    // Bounded because the payload crosses a process boundary and the posting is
+    // pasted straight into a prompt.
+    const bounded = String(text ?? '').slice(0, JOB_DESCRIPTION_LIMIT)
+    const spec = await analyzeJobDescription(bounded, (progress) => {
+      if (!event.sender.isDestroyed()) event.sender.send('hue:jobspec:progress', progress)
+    })
+    // Both fields in one write: the posting and its analysis are only ever read
+    // together, and two writes leave a window where a crash strands a spec whose
+    // source text is a different posting.
+    updateSettings({ jobDescription: bounded, jobSpecJson: JSON.stringify(spec) })
+    return spec
+  })
+  // A throw above persists nothing — deliberately, not by omission. Settings
+  // already saves the textarea through the ordinary settings path, so the raw
+  // posting survives a failed analysis without this handler writing it, and the
+  // error travels to the renderer to be shown.
+
+  ipcMain.handle('hue:jobspec:clear', () => updateSettings({ jobDescription: '', jobSpecJson: '' }))
+
   // Stealth status for the renderer: the setting alone doesn't tell the UI
   // whether the window is really hidden from capture, so the platform's verdict
   // travels with it. `effective` is what the header badge should trust.
@@ -229,6 +307,22 @@ export function registerIpc(): void {
   let captureInFlight: Promise<ScreenCapture> | null = null
 
   ipcMain.handle('hue:capture:screen', async (event) => {
+    // Refused here rather than in `hue:llm:start`, where the image block would
+    // also be visible: this is the earliest point in the flow, so a text-only
+    // provider costs the user nothing — no window hide/restore flicker, no
+    // multi-megabyte PNG, no wait — and the message can name the capture as the
+    // thing that failed instead of arriving as a failed answer mid-interview.
+    // DeepSeek has no `image_url` content part, so the alternative is a raw HTTP
+    // 400 from the vendor at the worst possible moment. Asked of the table in
+    // openai-compat rather than by name, so a new text-only provider is one
+    // entry, not another branch here.
+    const provider = getSettings().llmProvider
+    if (!providerSupportsVision(provider)) {
+      throw new Error(
+        `${provider} is text-only, so it can't read a screenshot. ` +
+          'Switch the AI provider in Settings to use screen capture.'
+      )
+    }
     if (captureInFlight) return captureInFlight
     const run = doCaptureScreen(event)
     captureInFlight = run

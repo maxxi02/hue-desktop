@@ -13,6 +13,7 @@ import type {
   ScreenCapture,
   StealthStatus
 } from '../shared/types'
+import type { UsageSummary } from '../shared/usage'
 import type {
   GapAnswerOutcome,
   IngestOutcome,
@@ -20,6 +21,7 @@ import type {
   ProfileBundle
 } from '../shared/profile'
 import type { CueSheet } from '../shared/cuesheet'
+import type { JobSpec } from '../shared/job-spec'
 
 function sub<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: IpcRendererEvent, payload: T): void => cb(payload)
@@ -75,6 +77,19 @@ const hue = {
     skipGap: (gapId: string): Promise<ProfileBundle> =>
       ipcRenderer.invoke('hue:profile:skip-gap', gapId)
   },
+  usage: {
+    /** Totals and remaining quota per provider, already summarised. */
+    get: (): Promise<UsageSummary> => ipcRenderer.invoke('hue:usage:get'),
+    /**
+     * Ask main to start pushing updates, then listen for them. Both halves are
+     * needed: the subscribe tells main which renderer to push to, and the
+     * returned unsubscribe drops the listener when the panel closes.
+     */
+    watch: (cb: (s: UsageSummary) => void): (() => void) => {
+      ipcRenderer.send('hue:usage:subscribe')
+      return sub('hue:usage:changed', cb)
+    }
+  },
   cueSheet: {
     /**
      * Upload a cue sheet document and wait for the parsed cards. Takes a while;
@@ -89,6 +104,14 @@ const hue = {
     delete: (id: string): Promise<void> => ipcRenderer.invoke('hue:cuesheet:delete', id),
     onProgress: (cb: (p: { phase: string; pct: number }) => void): (() => void) =>
       sub('hue:cuesheet:progress', cb)
+  },
+  jobSpec: {
+    /** Analyse the pasted posting into a JobSpec and persist it. Subscribe to onProgress first. */
+    analyze: (text: string): Promise<JobSpec> => ipcRenderer.invoke('hue:jobspec:analyze', text),
+    /** Clears both the pasted posting and its analysis. */
+    clear: (): Promise<HueSettings> => ipcRenderer.invoke('hue:jobspec:clear'),
+    onProgress: (cb: (p: { phase: string; pct: number }) => void): (() => void) =>
+      sub('hue:jobspec:progress', cb)
   },
   phone: {
     status: (): Promise<PhoneMirrorStatus> => ipcRenderer.invoke('hue:phone:status'),

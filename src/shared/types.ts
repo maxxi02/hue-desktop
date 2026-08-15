@@ -1,13 +1,25 @@
 // Shared types used by both the Electron main process and the renderer.
 
-export type LlmProvider = 'anthropic' | 'ollama' | 'google' | 'groq' | 'mistral' | 'cohere'
+export type LlmProvider =
+  | 'anthropic'
+  | 'ollama'
+  | 'google'
+  | 'groq'
+  | 'mistral'
+  | 'cohere'
+  | 'deepseek'
 
 /**
  * Providers that speak the OpenAI Chat Completions wire format (SSE streaming +
  * a /models listing endpoint). They differ only by base URL and API key, so the
  * main process drives them all through one generic client.
+ *
+ * "Compatible" is not "identical": DeepSeek needs an extra body field to stop it
+ * streaming its reasoning on a field the renderer does not read, and cannot take
+ * an image at all. Those differences live in the provider tables as data
+ * (`extraBody`, `vision`) rather than as name checks at the call sites.
  */
-export type OpenAiCompatProvider = 'google' | 'groq' | 'mistral' | 'cohere'
+export type OpenAiCompatProvider = 'google' | 'groq' | 'mistral' | 'cohere' | 'deepseek'
 
 export type AsrTier = 'auto' | 'on-device' | 'cloud'
 
@@ -92,12 +104,14 @@ export interface HueSettings {
   googleApiKey: string
   mistralApiKey: string
   cohereApiKey: string
+  deepseekApiKey: string
   /** Selected model per OpenAI-compatible provider. Empty = auto-pick the first
    *  model the provider lists, so nothing is hardcoded to a version. */
   googleModel: string
   groqModel: string
   mistralModel: string
   cohereModel: string
+  deepseekModel: string
   ttsVoice: string
   ttsSpeed: number
   /** Opacity of the floating window's background, 0.4–1. Lower = more see-through. */
@@ -148,6 +162,24 @@ export interface HueSettings {
    */
   profileBundleJson: string
   jobTitle: string
+  /**
+   * The job posting the user is interviewing against, pasted verbatim.
+   *
+   * Kept alongside the analysed `jobSpecJson` rather than replaced by it, for
+   * the same reason `resumeSummary` outlived the bundle: it is the fallback.
+   * Someone who pastes a posting sixty seconds before a call and never presses
+   * Analyse still gets most of the value, and an analysis that fails does not
+   * throw away what they pasted.
+   */
+  jobDescription: string
+  /**
+   * The structured `JobSpec` extracted from `jobDescription`, stored as JSON.
+   *
+   * Serialised for the same reason the profile bundle is: settings are a flat,
+   * hand-editable document, and a malformed spec must be recoverable by
+   * clearing one field rather than by repairing a nested object.
+   */
+  jobSpecJson: string
   interviewMode: InterviewMode
   /** Whether Hue acts as the interviewer or as a companion answering the interviewer. */
   hueMode: HueMode
@@ -230,10 +262,12 @@ export const DEFAULT_SETTINGS: HueSettings = {
   googleApiKey: '',
   mistralApiKey: '',
   cohereApiKey: '',
+  deepseekApiKey: '',
   googleModel: '',
   groqModel: '',
   mistralModel: '',
   cohereModel: '',
+  deepseekModel: '',
   ttsVoice: 'af_heart',
   ttsSpeed: 1.05,
   windowOpacity: 0.9,
@@ -243,6 +277,8 @@ export const DEFAULT_SETTINGS: HueSettings = {
   resumeSummary: '',
   profileBundleJson: '',
   jobTitle: '',
+  jobDescription: '',
+  jobSpecJson: '',
   interviewMode: 'practice',
   hueMode: 'companion',
   audioSource: 'microphone',
@@ -265,7 +301,8 @@ export const SECRET_SETTING_KEYS = [
   'groqApiKey',
   'googleApiKey',
   'mistralApiKey',
-  'cohereApiKey'
+  'cohereApiKey',
+  'deepseekApiKey'
 ] as const
 
 /** A plain-text part of a message. */

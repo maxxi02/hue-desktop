@@ -1,9 +1,18 @@
 import type { WebContents } from 'electron'
-import { getSettings } from './settings'
-import { createStallGuard, fetchWithRetry } from './stream-resilience'
+// Explicit `.ts`, unlike the rest of this file's siblings: Node's type stripping
+// resolves relative imports literally, and this module is now loadable under
+// `node --test` (see the deferred `./settings` import below) — which it is not
+// if this specifier needs a bundler to find its extension.
+import { createStallGuard, fetchWithRetry } from './stream-resilience.ts'
+// Safe to import at module load despite this file being loadable under
+// `node --test`: `usage-store` only reaches for Electron inside `usageDir()`,
+// and `record()` swallows the failure if it is not there.
+import { record } from './usage-store.ts'
+import { parseRateLimitHeaders } from '../shared/usage.ts'
 import type {
   HueSettings,
   LlmMessage,
+  LlmProvider,
   LlmStreamRequest,
   OpenAiCompatProvider
 } from '../shared/types'
@@ -29,10 +38,15 @@ function toOpenAiContent(content: LlmMessage['content']): OpenAiContent {
 }
 
 /**
- * Google Gemini, Groq, Mistral and Cohere all expose an OpenAI-compatible
- * surface (Bearer-auth, POST /chat/completions with SSE streaming, GET /models).
- * They differ only by base URL and which settings key holds the credential, so
- * one client serves all four. No vendor SDKs needed — plain fetch, like ollama.
+ * Google Gemini, Groq, Mistral, Cohere and DeepSeek all expose an
+ * OpenAI-compatible surface (Bearer-auth, POST /chat/completions with SSE
+ * streaming, GET /models). They differ only by base URL, which settings key
+ * holds the credential, and a couple of per-provider quirks, so one client
+ * serves them all. No vendor SDKs needed — plain fetch, like ollama.
+ *
+ * The quirks live here as data rather than as `provider === 'deepseek'` checks
+ * scattered through the streaming code: a name check at a call site is a fifth
+ * copy of the provider list, and the next provider added would silently miss it.
  */
 interface ProviderConfig {
   baseUrl: string
@@ -40,6 +54,13 @@ interface ProviderConfig {
   keyField: keyof HueSettings
   /** Which HueSettings field holds the selected model. */
   modelField: keyof HueSettings
+  /** Extra fields merged into the /chat/completions body for this provider. */
+  extraBody?: Record<string, unknown>
+  /**
+   * Whether the provider accepts `image_url` content parts. Absent means yes —
+   * every provider here but DeepSeek takes a screen capture.
+   */
+  vision?: boolean
 }
 
 const PROVIDERS: Record<OpenAiCompatProvider, ProviderConfig> = {
@@ -63,11 +84,78 @@ const PROVIDERS: Record<OpenAiCompatProvider, ProviderConfig> = {
     baseUrl: 'https://api.cohere.ai/compatibility/v1',
     keyField: 'cohereApiKey',
     modelField: 'cohereModel'
+  },
+  deepseek: {
+    // No `/v1` on this one — DeepSeek serves the compat surface at the root.
+    baseUrl: 'https://api.deepseek.com',
+    keyField: 'deepseekApiKey',
+    modelField: 'deepseekModel',
+    // Thinking is on by default on DeepSeek, and it streams the reasoning as
+    // `delta.reasoning_content` — a field this renderer never reads — before the
+    // first `delta.content` token arrives. Left on, the answer card sits empty
+    // for the whole reasoning phase, mid-interview, on the hot path: exactly the
+    // dead air this product exists to remove. A slightly weaker answer that
+    // starts immediately beats a better one that starts after the question has
+    // gone stale, so thinking is disabled rather than plumbed through.
+    extraBody: { thinking: { type: 'disabled' } },
+    // Text only: DeepSeek's chat API takes no `image_url` parts, so a screen
+    // capture would come back as a bare 400.
+    vision: false
   }
 }
 
+/**
+ * The compat providers, read off the table rather than listed again.
+ *
+ * Exported so `provider-tables.test.ts` can cross-check this table against
+ * `PROVIDER_BASE_URLS` in `structured-llm.ts` — half-adding a provider to one
+ * table and not the other is the failure mode this whole file is arranged to
+ * make impossible, and a test that hand-listed the providers would be one more
+ * copy of the list rather than a check on the copies that exist.
+ */
+export const OPENAI_COMPAT_PROVIDERS = Object.keys(PROVIDERS) as OpenAiCompatProvider[]
+
+/**
+ * Derived from PROVIDERS rather than a hand-written `p === 'google' || ...`
+ * chain.
+ *
+ * That chain was a fourth copy of the provider list (types, PROVIDERS,
+ * PROVIDER_BASE_URLS, this), and it was the only copy the compiler could not
+ * check — `false` is a perfectly valid answer for this function, so forgetting
+ * to extend it typechecks clean and then throws "called for non-compatible
+ * provider" at DRAFT time, mid-interview, on a provider the user configured
+ * exactly right. Reading the table means adding a provider in one place.
+ */
 export function isOpenAiCompatProvider(p: string): p is OpenAiCompatProvider {
-  return p === 'google' || p === 'groq' || p === 'mistral' || p === 'cohere'
+  return Object.hasOwn(PROVIDERS, p)
+}
+
+/**
+ * Whether a provider can take a screen capture.
+ *
+ * `ipc.ts` asks before sending one, so a capture on a text-only provider comes
+ * back as a sentence telling the user to switch providers rather than as a raw
+ * 400 from the vendor. Non-compat providers (anthropic, ollama's vision models)
+ * are not in the table and are assumed capable — the same default the table's
+ * absent `vision` field carries.
+ */
+export function providerSupportsVision(provider: LlmProvider): boolean {
+  if (!isOpenAiCompatProvider(provider)) return true
+  return PROVIDERS[provider].vision !== false
+}
+
+/**
+ * The order models are offered in — and, because `resolveModel` takes the first
+ * of them, which model an unconfigured provider auto-picks.
+ *
+ * Plain alphabetical, which is not as arbitrary as it looks: on DeepSeek it puts
+ * `deepseek-v4-flash` ahead of `deepseek-v4-pro`, and flash is the cheaper and
+ * faster of the pair — the right default on the drafting hot path, where a
+ * second of latency costs more than a shade of answer quality. Its own exported
+ * function so that property can be asserted without a network round trip.
+ */
+export function sortModelIds(ids: string[]): string[] {
+  return [...ids].sort()
 }
 
 function keyForProvider(provider: OpenAiCompatProvider, s: HueSettings): string {
@@ -88,10 +176,9 @@ export async function fetchOpenAiModels(
     })
     if (!res.ok) return []
     const data = (await res.json()) as { data?: { id?: string }[] }
-    return (data.data ?? [])
-      .map((m) => m.id)
-      .filter((id): id is string => Boolean(id))
-      .sort()
+    return sortModelIds(
+      (data.data ?? []).map((m) => m.id).filter((id): id is string => Boolean(id))
+    )
   } catch {
     return []
   }
@@ -151,10 +238,21 @@ export function startOpenAiCompatStream(
   // is an error the user needs to see.
   let stalled = false
 
+  // Named in the stall message below, which runs in a catch that must not go
+  // back to settings for it — see the lazy import inside the try.
+  let providerLabel = 'The provider'
+
   void (async () => {
     try {
+      // `./settings` is imported here rather than at module top level: it pulls
+      // in real Electron `app` and `safeStorage` bindings, and a static import
+      // drags Electron's runtime into every `node --test` run of this module —
+      // including the one that only wants to read the PROVIDERS table. Same
+      // reason `structured-llm.ts` defers its own settings import.
+      const { getSettings } = await import('./settings')
       const s = getSettings()
       const provider = s.llmProvider
+      providerLabel = provider
       if (!isOpenAiCompatProvider(provider)) {
         throw new Error(`startOpenAiCompatStream called for non-compatible provider: ${provider}`)
       }
@@ -182,7 +280,10 @@ export function startOpenAiCompatStream(
             model,
             messages,
             stream: true,
-            max_tokens: req.maxTokens ?? 300
+            max_tokens: req.maxTokens ?? 300,
+            // Provider-specific fields (see ProviderConfig.extraBody). Spread
+            // last so a provider quirk can override a default we set above.
+            ...(PROVIDERS[provider].extraBody ?? {})
           })
         },
         provider,
@@ -194,6 +295,19 @@ export function startOpenAiCompatStream(
             )
         }
       )
+
+      // Read before the body is touched. These headers are the only quota
+      // signal on the drafting path: without `stream_options: {include_usage}`
+      // these providers put no token counts in the stream at all, so the
+      // vendor's own "remaining" figure is all there is — and it is stated on
+      // every response, including this one.
+      record({
+        at: Date.now(),
+        kind: 'llm',
+        provider,
+        model,
+        limit: parseRateLimitHeaders(provider, response.headers, Date.now()) ?? undefined
+      })
 
       const reader = response.body?.getReader()
       if (!reader) throw new Error(`No response body from ${provider}`)
@@ -247,7 +361,7 @@ export function startOpenAiCompatStream(
       // and reporting a dead socket as a clean cancel is how the spinning card
       // stayed invisible in the first place.
       if (stalled) {
-        finishError(`${getSettings().llmProvider} stopped responding mid-answer.`)
+        finishError(`${providerLabel} stopped responding mid-answer.`)
         return
       }
       if (e?.name === 'AbortError' || aborter.signal.aborted) {

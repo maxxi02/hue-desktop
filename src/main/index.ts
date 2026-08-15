@@ -6,6 +6,7 @@ import { registerIpc } from './ipc'
 import { initHotkeys, summon, toggleSession, unregisterAllHotkeys } from './hotkeys'
 import { startPhoneMirror, stopPhoneMirror } from './phone-mirror'
 import { startRelay, stopRelay } from './relay-client'
+import { configureUsageStore, flush as flushUsage } from './usage-store'
 import { getSettings } from './settings'
 import { isPermissionAllowed } from './permissions'
 import { applyStealth } from './stealth'
@@ -232,6 +233,13 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  // Before `registerIpc`, which can serve a usage query as soon as it is
+  // registered. `userData` is only reliable once the app is ready, which is why
+  // this is here rather than at module load.
+  safeStep('configureUsageStore', () =>
+    configureUsageStore(join(app.getPath('userData'), 'usage'))
+  )
+
   safeStep('registerIpc', registerIpc)
 
   safeStep('createWindow', createWindow)
@@ -290,6 +298,11 @@ app.on('will-quit', () => {
   safeStep('unregisterAllHotkeys', unregisterAllHotkeys)
   safeStep('stopPhoneMirror', stopPhoneMirror)
   safeStep('stopRelay', stopRelay)
+  // Usage is buffered and written on a debounce to keep it off the interview
+  // hot path, so whatever happened in the last few seconds is still in memory
+  // at this point. Last chance to write it — and `safeStep` because losing
+  // usage data must never be the reason a quit hangs.
+  safeStep('flushUsage', flushUsage)
 })
 
 // In this file you can include the rest of your app's specific main process
