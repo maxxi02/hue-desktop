@@ -145,6 +145,37 @@ export function preloadOnDeviceModel(opts?: { preferWasm?: boolean }): void {
   getWorker().postMessage({ type: 'load', preferWasm })
 }
 
+/**
+ * Drop the resident ASR model and hand its memory back to the OS.
+ *
+ * Terminating the worker is the only way to actually release it: onnxruntime
+ * holds the weights in the worker's wasm heap (or in GPU buffers on the WebGPU
+ * path), and neither is reachable by the main thread's collector while the
+ * worker is alive. `getWorker()` builds a fresh one on the next call, so this is
+ * safe to call at any time — the cost of being wrong is a reload, not a failure.
+ *
+ * Called when a session ends on a memory-constrained machine (see
+ * `shared/memory-policy.ts`). On a roomy machine the model stays resident,
+ * because there the reload would be a cost with nothing bought.
+ */
+export function unloadOnDeviceModel(): void {
+  // Anything still in flight will never be answered once the worker is gone.
+  // Settle it as failed rather than leaving the caller's promise pending
+  // forever — the same contract `failAllPending` keeps for a worker crash.
+  for (const [, entry] of pending) entry.reject(new Error('The speech recogniser was unloaded.'))
+  pending.clear()
+  if (worker) {
+    worker.terminate()
+    worker = null
+  }
+  // Both must be cleared together: `preloadOnDeviceModel` no-ops when the state
+  // still says 'ready', and re-issues only when the preference changed. Leaving
+  // either behind means the next preload silently does nothing and the first
+  // transcription of the next session waits on a model nobody asked to load.
+  lastPreferWasm = null
+  setLoadState({ status: 'idle' })
+}
+
 /** On-device tier: Whisper-base.en running locally in a Web Worker. */
 export function transcribeOnDevice(audio: Float32Array): Promise<string> {
   const w = getWorker()

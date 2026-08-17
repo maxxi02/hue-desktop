@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { VoicePipeline, type PipelineState } from '../lib/pipeline'
-import { preloadOnDeviceModel } from '../lib/transcription'
-import { preloadTtsModel } from '../lib/streamingTTS'
+import { preloadOnDeviceModel, unloadOnDeviceModel } from '../lib/transcription'
+import { preloadTtsModel, unloadTtsModel } from '../lib/streamingTTS'
 import { isLlmConfigured, playGreeting } from '../lib/greeting'
 import type { AudioSource, HueMode, ResolvedTier, ScreenCapture } from '@shared/types'
 import type { Grounding } from '@shared/grounding'
@@ -105,6 +105,13 @@ export function useVoiceMode(): UseVoiceMode {
   /** A stop that arrived mid-start, to be honoured once start() finishes. */
   const stopRequestedRef = useRef(false)
   const [greetingText, setGreetingText] = useState('')
+  /**
+   * Whether to hand the models back when this session ends, captured at start()
+   * from the memory policy. A ref rather than state because `stop()` reads it
+   * and must not be rebuilt (and re-registered on the toggle hotkey) every time
+   * the policy is re-read.
+   */
+  const unloadOnIdleRef = useRef(false)
   const greetedRef = useRef(false)
   const cancelGreetingRef = useRef<(() => void) | null>(null)
 
@@ -125,10 +132,21 @@ export function useVoiceMode(): UseVoiceMode {
       // same companion rules as start() below; skipped while a session is
       // running so a mid-session settings save can't move Whisper across
       // devices under a live call (start() already loaded the right config).
+      //
+      // Skipped entirely on a machine without the memory to spare. Warming here
+      // means holding ~400-700 MB resident from launch for a session the user
+      // may not start for an hour, and on a constrained machine that is what
+      // pushes free memory to zero and starts the OS paging — which is felt as
+      // the whole PC slowing down, not as Hue being slow. There the models load
+      // at start() instead: a visible delay on the first turn, attributable to
+      // the thing that caused it.
       if (!pipelineRef.current) {
-        const companion = s.hueMode === 'companion'
-        preloadOnDeviceModel({ preferWasm: companion })
-        if (!companion) preloadTtsModel()
+        void window.hue.system.memory().then((policy) => {
+          if (!policy.preloadModels || pipelineRef.current) return
+          const companion = s.hueMode === 'companion'
+          preloadOnDeviceModel({ preferWasm: companion || policy.preferWasm })
+          if (!companion) preloadTtsModel()
+        })
       }
       // Greet once, the first time a usable LLM config is seen (on launch or
       // right after the user saves a key). A successful streamed reply confirms
@@ -173,7 +191,14 @@ export function useVoiceMode(): UseVoiceMode {
     //   - ASR (Whisper) still runs, but is pinned to the wasm/CPU path so it
     //     never competes with the call for the GPU.
     const companion = settings.hueMode === 'companion'
-    preloadOnDeviceModel({ preferWasm: companion })
+    // `preferWasm` now has a second reason beyond companion mode: a constrained
+    // machine or an integrated GPU, where fp32-on-WebGPU is both the larger
+    // resident footprint and an allocation out of the same system RAM the
+    // desktop compositor is using. `unloadOnIdle` is captured here so stop()
+    // uses the policy this session was started under.
+    const policy = await window.hue.system.memory()
+    unloadOnIdleRef.current = policy.unloadOnIdle
+    preloadOnDeviceModel({ preferWasm: companion || policy.preferWasm })
     if (!companion) preloadTtsModel()
     // Each UI update is also mirrored to the phone page (no-op while the
     // phone-mirror server is off — the main process just drops the event).
@@ -248,6 +273,15 @@ export function useVoiceMode(): UseVoiceMode {
     if (!pipeline) return
     pipelineRef.current = null
     await pipeline.stop()
+    // On a constrained machine the models come down with the session. Holding
+    // them between sessions is what turns "Hue is open" into "the PC is
+    // paging" — the user is not talking to it, but it is still occupying the
+    // memory everything else needs. After the pipeline has stopped, so the VAD
+    // and the TTS queue have already released their own handles.
+    if (unloadOnIdleRef.current) {
+      unloadOnDeviceModel()
+      unloadTtsModel()
+    }
   }, [])
 
   const captureScreen = useCallback(async (): Promise<void> => {

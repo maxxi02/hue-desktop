@@ -22,6 +22,7 @@ import type {
 } from '../shared/profile'
 import type { CueSheet } from '../shared/cuesheet'
 import type { JobSpec } from '../shared/job-spec'
+import type { MemoryPolicy, MemorySnapshot } from '../shared/memory-policy'
 
 function sub<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: IpcRendererEvent, payload: T): void => cb(payload)
@@ -32,6 +33,17 @@ function sub<T>(channel: string, cb: (payload: T) => void): () => void {
 const hue = {
   /** The running build's version, for the label in Settings. */
   version: (): Promise<string> => ipcRenderer.invoke('hue:app:version'),
+  system: {
+    /**
+     * How much of itself Hue may keep resident here — whether to warm the models
+     * before a session, which Whisper device to use, and whether to hand the
+     * memory back when a session ends. Measured in main (the renderer cannot see
+     * free physical memory) and re-read per call, since that is the number that
+     * moves while the app is open.
+     */
+    memory: (): Promise<MemoryPolicy & { snapshot: MemorySnapshot }> =>
+      ipcRenderer.invoke('hue:system:memory')
+  },
   settings: {
     get: (): Promise<HueSettings> => ipcRenderer.invoke('hue:settings:get'),
     set: (partial: Partial<HueSettings>): Promise<HueSettings> =>

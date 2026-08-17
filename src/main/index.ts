@@ -11,6 +11,7 @@ import { getSettings } from './settings'
 import { isPermissionAllowed } from './permissions'
 import { applyStealth } from './stealth'
 import { applyWindowAnchor, trackWindowPlacement, watchDisplayChanges } from './window-placement'
+import { probeGpu } from './system-memory'
 
 // Last-resort net. Node's default for an unhandled rejection is to terminate the
 // process, and in Electron that takes the whole app down — from a live interview
@@ -239,6 +240,12 @@ app.whenReady().then(() => {
   safeStep('configureUsageStore', () =>
     configureUsageStore(join(app.getPath('userData'), 'usage'))
   )
+
+  // Fire-and-forget: the answer only sharpens the memory policy (integrated GPUs
+  // pay for WebGPU out of system RAM), and the renderer reads that policy well
+  // after this resolves. Nothing waits on it, and a failure leaves the safe
+  // default rather than blocking startup.
+  safeStep('probeGpu', () => void probeGpu())
 
   safeStep('registerIpc', registerIpc)
 

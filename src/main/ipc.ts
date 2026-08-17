@@ -34,6 +34,7 @@ import { applyStealth, isStealthSupported } from './stealth'
 import { currentEvents, onRecorded } from './usage-store'
 import { summarize, type UsageSummary } from '../shared/usage'
 import { applyWindowAnchor } from './window-placement'
+import { currentPolicy } from './system-memory'
 import type {
   HueSettings,
   LlmStreamRequest,
@@ -60,6 +61,12 @@ export function registerIpc(): void {
   // I on' is otherwise unanswerable from inside the app, and a stale install
   // looks identical to a bug in the current one.
   ipcMain.handle('hue:app:version', () => app.getVersion())
+
+  // How much of itself Hue may keep resident on this machine. Read fresh on each
+  // call rather than cached at startup: free memory is exactly the thing that
+  // moves while the app is open, and a session started at hour three should be
+  // judged on what is free then, not on what was free at launch.
+  ipcMain.handle('hue:system:memory', () => currentPolicy())
 
   ipcMain.handle('hue:settings:get', () => getSettings())
   ipcMain.handle('hue:settings:set', (event, partial: Partial<HueSettings>) => {

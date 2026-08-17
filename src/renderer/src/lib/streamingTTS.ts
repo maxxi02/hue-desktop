@@ -80,6 +80,30 @@ export function preloadTtsModel(): void {
   }
 }
 
+/**
+ * Drop the resident TTS model and hand its memory back to the OS.
+ *
+ * Same reasoning as `unloadOnDeviceModel`: Kokoro's weights live in the worker's
+ * wasm heap and only terminating the worker releases them. See
+ * `shared/memory-policy.ts` for when this is worth the reload.
+ *
+ * Any queue still holding an id is dropped with it — callers are expected to
+ * `dispose()` their `StreamingTTSQueue` first, which is what `VoicePipeline.stop`
+ * does. Clearing `streams` here rather than trusting that keeps a stale entry
+ * from routing a message to a queue that no longer has an AudioContext.
+ */
+export function unloadTtsModel(): void {
+  streams.clear()
+  if (worker) {
+    worker.terminate()
+    worker = null
+  }
+  // `preloadTtsModel` only acts when the state is 'idle' or 'error', so leaving
+  // it on 'ready' would make the next preload a silent no-op against a worker
+  // that no longer exists.
+  setLoadState({ status: 'idle' })
+}
+
 export interface StreamingTTSQueueOptions {
   voice?: string
   speed?: number

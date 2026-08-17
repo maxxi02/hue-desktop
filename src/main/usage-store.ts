@@ -149,7 +149,15 @@ export function currentEvents(now: number): UsageEvent[] {
 export function flush(): void {
   if (buffer === null || dir === null) return
   try {
-    writeEvents(dir, buffer, Date.now())
+    const now = Date.now()
+    writeEvents(dir, buffer, now)
+    // Prune the in-memory copy to match what was just written. `writeEvents`
+    // prunes on the way to disk, so the file stayed bounded, but the buffer it
+    // was written from did not: it held every event since launch for the whole
+    // life of the process, and `currentEvents` re-pruned that growing array on
+    // every read. Small next to the models, but it is unbounded growth in a
+    // process that is expected to stay open all day.
+    buffer = pruneEvents(buffer, now, RETENTION_DAYS)
   } catch (e) {
     console.error('usage not written:', e)
   }
