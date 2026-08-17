@@ -153,6 +153,25 @@ test('a latched final trades the commit for a card-aware regeneration', () => {
   )
 })
 
+// Regression guard. Adopting the draft here instead of regenerating removes the
+// matched card from the prompt that produces the answer, and the card is the
+// only place the user's own prepared SCRIPT appears (`cueSheetPromptBlock`
+// withholds it). The result is an answer that no longer reflects what they
+// prepared — reported as "Hue stopped referencing my prepared answers".
+test('a latched final does not adopt the card-blind draft, however tempting the latency saving', () => {
+  const state = newLatchState()
+  const out = gateCommands([{ kind: 'commit', specId: 7 }], state, {
+    suppress: false,
+    latch: 'c-support',
+    isFinal: true
+  })
+  assert.equal(
+    out.commands.some((c) => c.kind === 'commit'),
+    false,
+    'the draft predates the card and must not become the answer shown beside it'
+  )
+})
+
 test('regenerateForLatch is false when no card matched the final', () => {
   const state = newLatchState()
   const out = gateCommands([{ kind: 'commit', specId: 7 }], state, {
@@ -341,7 +360,6 @@ test('a latched final lets the endpoint fire through', () => {
     'the generation is no longer a competitor to the card — it is the answer that accompanies it'
   )
   assert.equal(out.resetScheduler, false)
-  assert.equal(out.regenerateForLatch, false)
 })
 
 test('a final with no latch still lets the endpoint fire through (recovery must not regress)', () => {

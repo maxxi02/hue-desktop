@@ -733,6 +733,11 @@ export class VoicePipeline {
       // this card was known, so it was generated card-blind, and `gateCommands`
       // has already asked (via `regenerateForLatch`) for a fresh one that knows
       // what the user is about to read aloud.
+      //
+      // Adopting the draft here instead — to save the round-trip — was tried and
+      // reverted: the matched card is the only part of the prompt carrying the
+      // user's prepared SCRIPT, so a card-blind answer stops reflecting their own
+      // wording. See the note above `gateCommands`.
       this.abortSpeculation()
       this.specId = null
       this.callbacks.onCueCard?.(this.matcher?.card(decision.latch) ?? null)

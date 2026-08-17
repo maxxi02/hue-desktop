@@ -583,6 +583,16 @@ export interface GateDecision {
  * scheduler's `draft`, and left alone that phantom draft blocks the scheduler
  * from firing on the next question ("one in flight, ever").
  *
+ * ## Why the draft is not simply adopted to save the round-trip
+ *
+ * Tried, and reverted. Adopting the card-blind draft does make the answer appear
+ * the moment the transcript closes, but the matched card is the only part of the
+ * prompt carrying the user's own prepared SCRIPT — `cueSheetPromptBlock` lists
+ * the prepared questions and their cues and deliberately withholds the script.
+ * An answer generated without it stops reflecting the user's prepared wording,
+ * which is the whole point of having prepared it. The round-trip is the price of
+ * an answer that knows what the user is about to say.
+ *
  * ## Suppression recovery
  *
  * When a speculative fire is suppressed mid-question, the scheduler believes a
