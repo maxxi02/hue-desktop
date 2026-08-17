@@ -1124,7 +1124,11 @@ export function cueSheetPromptBlock(sheet: CueSheet, budgetChars = 4000): string
   let included = 0
   for (const card of usable) {
     const cues = card.cues.map(stripEmphasis).filter(Boolean).join('; ')
-    const entry = `- ${stripEmphasis(card.heading)}${cues ? ` — ${cues}` : ''}`
+    // Colon rather than a dash: this block is prompt text the model reads on
+    // every turn, and punctuation it sees repeatedly is punctuation it imitates.
+    // The answer is spoken aloud, where a dash has no sound. See the dash rule
+    // in HUMAN_VOICE_GUIDANCE.
+    const entry = `- ${stripEmphasis(card.heading)}${cues ? `: ${cues}` : ''}`
     if (used + entry.length > budgetChars && included > 0) break
     lines.push(entry)
     used += entry.length
@@ -1137,7 +1141,7 @@ export function cueSheetPromptBlock(sheet: CueSheet, budgetChars = 4000): string
     '',
     'These are points the user has already written for this interview, in their own words.',
     'When the question is close to one of these, build the answer from the user’s points and',
-    'their vocabulary rather than inventing a different take — they intend to say these things,',
+    'their vocabulary rather than inventing a different take. They intend to say these things,',
     'and an answer that contradicts them is worse than no answer. Do not claim to be quoting them',
     'verbatim; these are summaries, and the full text is shown separately when a question matches',
     'one exactly. If the question is unrelated to all of them, ignore this section entirely.',
@@ -1184,7 +1188,7 @@ export function cueCardPromptBlock(card: CueCard): string {
     script ? `What they are about to say, in their own words:\n"""\n${script}\n"""` : '',
     '',
     'This card is already on screen and the user is reading it aloud. Do NOT restate it,',
-    'summarise it, or rephrase it — repeating what they are already saying is worse than',
+    'summarise it, or rephrase it. Repeating what they are already saying is worse than',
     'saying nothing. Give them what the card leaves out: the supporting detail, a concrete',
     'example or number that backs the same claim, and the follow-up question this answer',
     'invites. Stay consistent with the card — never contradict or soften it. Keep it short',

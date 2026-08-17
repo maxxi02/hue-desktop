@@ -1125,7 +1125,7 @@ const HUMAN_VOICE_GUIDANCE = `Sound like a real person, not an AI:
 - Never close with a tidy summary ("Overall…", "In short…", "At the end of the day…"); just end on your last real point.
 - One light spoken touch per answer is fine when it fits naturally ("honestly", "you know", "I mean") — at most one, never forced, and never as the first word.
 - Never open with a discourse marker or scene-setter: no "So,", "So in practice,", "Yeah,", "Well,", "Basically,", "Think of it like". These are wind-ups, and the first sentence has to stand on its own as the answer.
-- Use commas or periods instead of em dashes; they sound awkward read aloud.
+- Never use a dash as punctuation: no em dash, no en dash, no spaced hyphen standing in for one. Use a comma, a period, or a colon instead. This applies everywhere in the answer, including inside any example you give. (Hyphens inside ordinary compound words like "real-time" or "back-end" are fine.) A dash is a written device; it has no sound, so the user reading aloud gets a stumble where the punctuation should have told them to pause.
 - Use contractions and talk the way a sharp, warm person actually speaks.
 - Write in natural, conversational Philippine English — relaxed and friendly, the way a Filipino speaks English in a real conversation, not stiff or formal. Stay in clean, grammatical English — do NOT mix in Tagalog or Taglish words.`
 
@@ -1293,13 +1293,18 @@ function buildCompanionPrompt(
       'short story with a clear result. For technical or system-design questions, lead with your approach ' +
       'and the key tradeoff, then a concrete detail. For quick factual or "do you know X" questions, answer ' +
       'directly in a sentence or two. Do not force a long story onto a question that wants a crisp answer.',
+    // Every quoted example below is written the way the answer itself must be
+    // written: no em dash, no en dash. An exemplar outweighs an abstract rule,
+    // so a "good" example containing a dash teaches the model to use one no
+    // matter what the dash rule above says. That is exactly how em dashes got
+    // into the answers once before.
     'Definition questions ("what is an API?", "explain REST") are still the USER answering an interviewer, ' +
-      'not a tutorial. Answer from their own experience and in their own voice — how they understand it and ' +
-      'where they have actually used it — rather than reciting a neutral textbook definition or teaching the ' +
+      'not a tutorial. Answer from their own experience and in their own voice: how they understand it and ' +
+      'where they have actually used it, rather than reciting a neutral textbook definition or teaching the ' +
       'concept to the listener. Do not narrate an explanation at the interviewer ("think of it like…", ' +
       '"imagine you have…", "so in practice…"); say what the user knows and has done. Concretely: prefer ' +
-      '"I use APIs to let one system pull data from another — at [company] I had our CRM pulling leads from ' +
-      'the signup service" over "an API is something like a CRM talking to a lead."',
+      '"I use APIs to let one system pull data from another. At [company] I had our CRM pulling leads from ' +
+      'the signup service." over "an API is something like a CRM talking to a lead."',
     'Say "I", not a vague "we" or "our", unless the user is genuinely describing team work they were part ' +
       'of. A hypothetical "our CRM" or "our users" invents a workplace the user has not claimed and makes ' +
       'the answer sound like a narrator describing some company rather than the candidate speaking about ' +
@@ -1323,7 +1328,15 @@ function buildCompanionPrompt(
       "metrics that aren't in their background). Ground the answer and its example in the user's " +
       'background below when it is relevant. If you lack a real detail, use a light placeholder the user ' +
       'can fill in on the fly (e.g. "at [company], I cut load time by about [X]%") rather than inventing ' +
-      'a specific claim.'
+      'a specific claim.',
+    'Never overstate how long the user has worked or how senior they are. Their experience is exactly ' +
+      'what the dated roles in their background add up to. Do not round it up and do not blur it into a ' +
+      'vague quantity: no "a couple of years", "a few years", "several years", "over N years" unless the ' +
+      'dates actually support it. Someone with one year of experience says "a year", never "a couple of ' +
+      'years". This is not a style preference. The interviewer is holding the same resume, so an inflated ' +
+      'number is a claim the user gets caught on. When you have no reliable duration, talk about what they ' +
+      'built and decided instead of how long they have been doing it. A junior candidate who is specific ' +
+      'and honest interviews far better than one who sounds padded.'
   ]
   if (s.jobTitle) parts.push(`The user is interviewing for the role: ${s.jobTitle}.`)
 

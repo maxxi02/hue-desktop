@@ -88,6 +88,33 @@ test('the prompt block names every story id and forbids inventing one', () => {
   assert.match(block, /Citable metrics/)
 })
 
+// Tenure is the number the model inflates when nothing governs it: it is not an
+// absent field, so "never infer an unknown field" does not cover it, and it is
+// not a citable metric either. Left ungoverned it turned one year of experience
+// into "a couple of years" — a claim the interviewer can check against the same
+// resume, and one the candidate rather than the assistant gets caught on.
+test('the prompt block governs tenure, not just fields and metrics', () => {
+  const block = profilePromptBlock(bundle())
+  assert.match(block, /couple of years/, 'the inflating phrase has to be named to be banned')
+  assert.match(block, /rounding DOWN/)
+})
+
+test('the prompt block uses no dash PUNCTUATION, which has no sound read aloud', () => {
+  // This text is prompt input the model reads every turn, and punctuation it
+  // sees repeatedly is punctuation it imitates into answers that get spoken.
+  //
+  // Date ranges are the deliberate exception: "(2018 – present)" is data, not
+  // prose, the en dash there is correct typography, and the format is shared
+  // with hue-mobile's renderer. So the rule is checked per line, and only lines
+  // that are not a parenthesised range have to be clean.
+  const block = profilePromptBlock(bundle())
+  assert.doesNotMatch(block, /—/, 'em dashes have no place in prompt prose')
+  const offenders = block
+    .split('\n')
+    .filter((line) => line.includes('–') && !/\([^)]*–[^)]*\)/.test(line))
+  assert.deepEqual(offenders, [], 'en dashes are only allowed inside a date range')
+})
+
 test('the prompt block is byte-stable, so the edge cache key describes what was sent', () => {
   const b = bundle()
   assert.equal(profilePromptBlock(b), profilePromptBlock(b))

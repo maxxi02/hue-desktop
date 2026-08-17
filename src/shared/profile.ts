@@ -270,10 +270,14 @@ function dateRange(role: ProfileRole): string | null {
 /**
  * Renders the bundle as the grounding block that goes in the system prompt.
  *
- * Byte-identical for a given bundle, and identical to what hue-ingest and the
- * Android client render. That matters beyond tidiness: `hue-edge` caches this
- * block against the bundle's content hash, so a desktop that rendered it
- * differently would produce a cache key describing text nobody sent.
+ * Byte-identical for a given bundle, which is what matters for any caller that
+ * keys a cache on the bundle's content hash.
+ *
+ * It used to be identical to what hue-ingest and the Android client render, for
+ * `hue-edge`'s content-hash cache. hue-edge and hue-ingest are both archived, so
+ * that half of the contract is gone. hue-mobile still renders its own copy in
+ * `profile/ProfileBundle.kt`, and the two have now DIVERGED: the tenure rules
+ * below live here only. Port them before relying on desktop/mobile parity.
  */
 export function profilePromptBlock(bundle: ProfileBundle): string {
   const lines: string[] = []
@@ -295,12 +299,29 @@ export function profilePromptBlock(bundle: ProfileBundle): string {
     if (role.stack.length) lines.push(`  stack: ${role.stack.join(', ')}`)
     if (role.summary) lines.push(`  ${role.summary}`)
   }
+  // Tenure is the one number the model reliably inflates, and the rules above do
+  // not catch it: it is not an absent FIELD (so "never infer an unknown field"
+  // does not bite) and it is not a citable metric. It is DERIVED from the dates
+  // just listed, and left ungoverned the model rounds a single year up into "a
+  // couple of years". In an interview that is not a stylistic slip. It is a
+  // claim about the candidate that the interviewer can check against the same
+  // resume, and it is the candidate who gets caught, not the assistant.
+  lines.push('')
+  lines.push('### How long the candidate has worked')
+  lines.push('Their experience is exactly what the dated roles above add up to, and no more.')
+  lines.push('Never round tenure up, and never soften it into a vague quantity. Do not say')
+  lines.push('"a couple of years", "a few years", "several years", "over N years", "nearly N')
+  lines.push('years", or "N-plus years" unless the dates literally support it. One year is')
+  lines.push('"a year", never "a couple of years". When the dates are unclear or absent, name')
+  lines.push('the role and what was done in it instead of estimating a duration. If asked')
+  lines.push('directly how much experience they have, answer from these dates, rounding DOWN,')
+  lines.push('and never claim seniority the dates do not show.')
   if (p.education.length) {
     lines.push('')
     lines.push('## Education')
     for (const e of p.education) {
       const credential = [e.credential, e.field].filter(Boolean).join(' ')
-      lines.push(`- ${credential} — ${e.institution}${e.end ? `, ${e.end}` : ''}`)
+      lines.push(`- ${credential}, ${e.institution}${e.end ? `, ${e.end}` : ''}`)
     }
   }
   if (p.skills.length) {
@@ -312,7 +333,7 @@ export function profilePromptBlock(bundle: ProfileBundle): string {
     lines.push('')
     lines.push('## Citable metrics')
     lines.push('These figures are verified. Any other figure must not be stated.')
-    for (const m of p.metrics) lines.push(`- ${m.value} — ${m.claim}`)
+    for (const m of p.metrics) lines.push(`- ${m.value}: ${m.claim}`)
   }
   lines.push('')
   lines.push('## Story bank')
