@@ -563,6 +563,26 @@ export interface GateDecision {
  * Returns the commands to actually perform, plus whether the caller must call
  * `scheduler.reset()` afterwards when a mid-question fire is suppressed.
  *
+ * ## A matched card no longer cancels the answer
+ *
+ * This gate used to drop every generating command at a latched final — fire,
+ * regenerate and commit alike — so a matched question produced the card and
+ * nothing else. That treated the card and a generated answer as competitors
+ * for one surface. They are not: the card is what the user SAYS, and the
+ * generated answer is the depth behind it (the detail they did not write down,
+ * the follow-up they will be asked next). Both are wanted, so `fire` and
+ * `regenerate` now pass through at a latched final and generate normally.
+ *
+ * `commit` is the exception, and for a reason that is about freshness rather
+ * than competition. A draft was fired MID-question, before any card had
+ * latched, so it was generated without the card in its prompt — adopting it
+ * would put a card-blind answer under the card. It is dropped, and
+ * `regenerateForLatch` asks the caller to generate again with the matched card
+ * in the system prompt (see `cueCardPromptBlock`). The dropped commit carries
+ * the usual `resetScheduler` obligation: `onFinal` has already set the
+ * scheduler's `draft`, and left alone that phantom draft blocks the scheduler
+ * from firing on the next question ("one in flight, ever").
+ *
  * ## Suppression recovery
  *
  * When a speculative fire is suppressed mid-question, the scheduler believes a
@@ -570,16 +590,10 @@ export interface GateDecision {
  * the scheduler's `accepts(specId)` will reject the deltas we *do* want, and
  * later when the final arrives, `onFinal` emits a fire for endpoint-then-generate.
  *
- * At the final, a fire is the only possible recovery when NO card matched —
- * suppressing that endpoint fire leaves the question blank, the worst outcome
- * this feature exists to prevent. But when a card DID match this final
- * (`decision.latch !== null`), the fire is not a recovery at all: it is the
- * ordinary endpoint-then-generate path about to start a competing model
- * generation alongside the user's own prepared card. That fire is dropped
- * too, with the same `resetScheduler` obligation — `onFinal`'s `fireCommand()`
- * has already set the scheduler's `draft`, and left alone that phantom draft
- * blocks the scheduler from firing on the next question ("one in flight,
- * ever").
+ * Mid-question suppression is KEPT: it saves exactly the speculative stream
+ * that a latching final would otherwise discard as card-blind, and its
+ * calibration (`suppressThreshold`) keeps its meaning. At the final a fire
+ * always passes — with or without a card, the question gets an answer.
  *
  * ## The latch is a per-question boundary
  *
@@ -595,8 +609,14 @@ export function gateCommands(
   commands: Command[],
   state: LatchState,
   decision: GateDecision
-): { commands: Command[]; resetScheduler: boolean; latchCleared: boolean } {
+): {
+  commands: Command[]
+  resetScheduler: boolean
+  latchCleared: boolean
+  regenerateForLatch: boolean
+} {
   let resetScheduler = false
+  let regenerateForLatch = false
   const out: Command[] = []
   const previousLatch = state.cardId
 
@@ -605,33 +625,31 @@ export function gateCommands(
   for (const command of commands) {
     switch (command.kind) {
       case 'fire':
-        // A mid-question fire can be suppressed if a cue card matched.
+        // A mid-question fire can be suppressed if a cue card matched: that
+        // draft is card-blind and a latching final would only discard it.
         if (decision.suppress && !decision.isFinal) {
           resetScheduler = true
           continue
         }
-        // At the final, a fire is normally the endpoint-then-generate
-        // recovery and must pass through. But if a card matched THIS final,
-        // the fire is a competing generation, not a recovery — drop it too.
-        if (decision.isFinal && decision.latch !== null) {
-          resetScheduler = true
-          continue
-        }
+        // At the final a fire always passes, latch or no latch. Without a card
+        // it is the endpoint-then-generate recovery and the only thing standing
+        // between the user and a blank screen; with a card it is the answer
+        // that accompanies the card, generated from the real final text — which
+        // by then the caller builds with the matched card in the prompt.
         out.push(command)
         break
 
       case 'regenerate':
-        // A latched card is the answer. While it is on screen, regenerating over
-        // it would replace the user's own prepared words with the model's, which is
-        // the whole thing this feature exists to avoid. A new question (reset)
-        // clears the latch, so the next question generates normally.
+        // At a final, a regenerate belongs to the question that just closed and
+        // generates the answer shown beside whatever card latched.
         //
-        // Dropping it carries the same `resetScheduler` obligation as dropping
-        // a fire, and for the same reason: `onFinal` set the scheduler's
-        // `draft` before handing this command over, so left alone that phantom
-        // draft makes `maybeFire`'s "one in flight, ever" check block
-        // speculation for the whole of the NEXT question.
-        if (state.cardId !== null) {
+        // Outside a final it is a stray: `state.cardId` is then a card from an
+        // EARLIER question, and regenerating against it would answer the wrong
+        // question. Dropping it carries the usual `resetScheduler` obligation —
+        // `onFinal` set the scheduler's `draft` before handing this command
+        // over, so left alone that phantom draft makes `maybeFire`'s "one in
+        // flight, ever" check block speculation for the whole next question.
+        if (!decision.isFinal && state.cardId !== null) {
           resetScheduler = true
           continue
         }
@@ -639,16 +657,15 @@ export function gateCommands(
         break
 
       case 'commit':
-        // A commit adopts an in-flight draft as the turn's answer. At a latched
-        // final there is no draft left to adopt: the caller aborts speculation
-        // the moment a card latches, so by the time the commit is handled the
-        // stream id is null and `commitSpeculation` takes its "generate for
-        // real rather than adopt an empty answer" branch — putting a full
-        // model generation on screen UNDERNEATH the user's own cue card, which
-        // is precisely the outcome the fire and regenerate cases above exist to
-        // prevent. Dropped with the same scheduler-reset obligation.
+        // A commit adopts an in-flight draft as the turn's answer. That draft
+        // was fired mid-question, before this final's card was known, so it was
+        // generated without the card in its prompt. Adopting it would put a
+        // card-blind answer under the card; instead it is dropped and the
+        // caller is asked to generate again, card-aware. Same scheduler-reset
+        // obligation as any other drop.
         if (decision.isFinal && decision.latch !== null) {
           resetScheduler = true
+          regenerateForLatch = true
           continue
         }
         out.push(command)
@@ -675,7 +692,8 @@ export function gateCommands(
     // A `reset` mid-question clears the latch without the caller ever seeing a
     // final, so the caller has no other way to learn the card came down. See
     // the `latchCleared` note above `LatchState`.
-    latchCleared: previousLatch !== null && state.cardId === null
+    latchCleared: previousLatch !== null && state.cardId === null,
+    regenerateForLatch
   }
 }
 
@@ -1105,7 +1123,7 @@ export function cueSheetPromptBlock(sheet: CueSheet, budgetChars = 4000): string
 
   const dropped = usable.length - included
   return [
-    '## The user’s own prepared answers',
+    '## The user’s own prepared answers (sheet-wide)',
     '',
     'These are points the user has already written for this interview, in their own words.',
     'When the question is close to one of these, build the answer from the user’s points and',
@@ -1116,6 +1134,51 @@ export function cueSheetPromptBlock(sheet: CueSheet, budgetChars = 4000): string
     '',
     ...lines,
     dropped > 0 ? `\n(${dropped} further prepared answers not listed here.)` : ''
+  ]
+    .filter((l) => l !== '')
+    .join('\n')
+}
+
+/**
+ * The ONE card that matched this question, as material for the answer shown
+ * beside it.
+ *
+ * Unlike `cueSheetPromptBlock` above, this hands over the full script, and the
+ * departure is deliberate. That block withholds scripts for two reasons —
+ * paraphrase risk and size — and neither applies here. Size: this is one card
+ * on the one turn where it matched, not 23 cards on every turn. Paraphrase: the
+ * model is given the script precisely so it does NOT repeat it. The user is
+ * about to read those exact words aloud off the card; an answer that says the
+ * same thing again in different words is the one useless thing this generation
+ * could produce.
+ *
+ * So the instruction is subtractive: know what they will say, then supply what
+ * the card leaves out. Emitted INSTEAD of the sheet-wide block on a matched
+ * turn — the matched card is the relevant preparation, and swapping rather than
+ * stacking keeps the turn's token cost roughly flat.
+ *
+ * Returns '' for a card with nothing usable on it, so the caller can fall back
+ * to the sheet-wide block rather than emit an empty heading.
+ */
+export function cueCardPromptBlock(card: CueCard): string {
+  const heading = stripEmphasis(card.heading).trim()
+  const cues = card.cues.map((c) => stripEmphasis(c).trim()).filter(Boolean)
+  const script = stripEmphasis(card.script).trim()
+  if (!heading && cues.length === 0 && !script) return ''
+
+  return [
+    '## The answer the user has prepared for THIS question',
+    '',
+    heading ? `Their heading for it: ${heading}` : '',
+    cues.length > 0 ? `Their key points: ${cues.join('; ')}` : '',
+    script ? `What they are about to say, in their own words:\n"""\n${script}\n"""` : '',
+    '',
+    'This card is already on screen and the user is reading it aloud. Do NOT restate it,',
+    'summarise it, or rephrase it — repeating what they are already saying is worse than',
+    'saying nothing. Give them what the card leaves out: the supporting detail, a concrete',
+    'example or number that backs the same claim, and the follow-up question this answer',
+    'invites. Stay consistent with the card — never contradict or soften it. Keep it short',
+    'enough to take in at a glance while speaking.'
   ]
     .filter((l) => l !== '')
     .join('\n')

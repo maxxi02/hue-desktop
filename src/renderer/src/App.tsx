@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
+import { Fragment, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
 import { useVoiceMode } from './hooks/useVoiceMode'
 import type { PipelineState } from './lib/pipeline'
 import { isAtBottom } from './lib/stickToBottom'
@@ -894,6 +894,38 @@ export default function App(): React.JSX.Element {
   }, [messages])
 
   /**
+   * Where a latched cue card belongs in the transcript: directly after the
+   * question that matched it, and therefore ABOVE the answer Hue generates to
+   * accompany it.
+   *
+   * Anchoring to the last USER turn rather than to the last assistant turn is
+   * what makes both moments read correctly. While Hue is still thinking there
+   * is no assistant bubble yet and the card must land at the end; once the
+   * answer streams in, the card must stay put and let the answer appear beneath
+   * it rather than jumping below it. Anchoring to the question does both,
+   * because the question is fixed for the whole turn.
+   *
+   * -1 on an empty transcript, which puts the card at the end — the same place
+   * it went before.
+   */
+  const lastQuestionIndex = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === 'user') return i
+    }
+    return -1
+  }, [messages])
+
+  /**
+   * Built once and rendered in one of two places (see `lastQuestionIndex`), so
+   * the card cannot end up drawn twice or drift between the two branches.
+   */
+  const cueCardBubble = voice.cueCard ? (
+    <div className="bubble bubble--assistant bubble--cue">
+      <CueCardBody key={voice.cueCard.id} card={voice.cueCard} textClass="bubble-text" />
+    </div>
+  ) : null
+
+  /**
    * Scroll discipline for the reader.
    *
    * The transcript chases the newest line, and glance mode must not: an answer
@@ -1121,23 +1153,43 @@ export default function App(): React.JSX.Element {
          */
         <main className="app-main app-main--glance">
           <div className="glance" ref={glanceRef}>
-            {voice.cueCard ? (
-              // The user's own prepared answer takes the whole surface — never
-              // alongside a generated one, see CueCardBody's doc comment.
+            {/* The prepared card first, then Hue's answer beneath it. The card
+                is what the user SAYS and so it owns the top of the surface,
+                where the eye lands; the generated answer is the supporting
+                detail behind it and can be reached by reading on. Both are
+                shown — a matched question no longer cancels the generation. */}
+            {voice.cueCard && (
               <CueCardBody key={voice.cueCard.id} card={voice.cueCard} textClass="glance-text" />
-            ) : latestAnswer ? (
-              <div className="glance-text">{latestAnswer.text}</div>
+            )}
+            {latestAnswer ? (
+              voice.cueCard ? (
+                // Labelled, and the label is not decoration: under a prepared
+                // card the user must never be in doubt about which of the two
+                // blocks is their own wording and which is Hue's.
+                <>
+                  <div className="bubble-label glance-aside-label">Hue’s take</div>
+                  <div className="glance-text glance-text--aside">{latestAnswer.text}</div>
+                </>
+              ) : (
+                <div className="glance-text">{latestAnswer.text}</div>
+              )
             ) : (
-              <div className="glance-text glance-text--waiting">
-                {voice.active
-                  ? 'Hue’s suggestion will appear here.'
-                  : 'Start a session — Hue’s suggestion will appear here.'}
-              </div>
+              // Never a waiting line under a card: the card is already an
+              // answer, so "Hue's suggestion will appear here" would read as if
+              // nothing had arrived.
+              !voice.cueCard && (
+                <div className="glance-text glance-text--waiting">
+                  {voice.active
+                    ? 'Hue’s suggestion will appear here.'
+                    : 'Start a session — Hue’s suggestion will appear here.'}
+                </div>
+              )
             )}
             {voice.error && <div className="error-msg">{voice.error}</div>}
-            {/* No receipt for a cue card: it is the user's own prepared answer,
-                not a generated one, so there is nothing to ground. */}
-            {!voice.cueCard && latestAnswer?.grounding && (
+            {/* The receipt grounds the GENERATED answer, which now exists even
+                when a card is showing. The card itself needs none — it is the
+                user's own prepared words — so this keys off the answer alone. */}
+            {latestAnswer?.grounding && (
               <div className="glance-receipt">
                 <Receipt grounding={latestAnswer.grounding} />
               </div>
@@ -1207,41 +1259,36 @@ export default function App(): React.JSX.Element {
                   </div>
                 ) : (
                   messages.map((msg, i) => (
-                    <div key={i} className={`bubble bubble--${msg.role}`}>
-                      <div className="bubble-label">
-                        {msg.role === 'user' ? userLabel : assistantLabel}
-                      </div>
-                      {msg.image ? (
-                        <img
-                          className="bubble-capture"
-                          src={`data:${msg.image.mediaType};base64,${msg.image.dataBase64}`}
-                          alt="Captured screen sent to Hue"
-                        />
-                      ) : (
-                        <div className="bubble-text">{msg.text}</div>
-                      )}
-                      {msg.grounding && <Receipt grounding={msg.grounding} />}
-                      {msg.role === 'user' && msg.tier && (
-                        <div className="bubble-meta">
-                          {msg.tier} · {msg.latencyMs}ms
+                    <Fragment key={i}>
+                      {voice.cueCard && i === lastQuestionIndex + 1 && cueCardBubble}
+                      <div className={`bubble bubble--${msg.role}`}>
+                        <div className="bubble-label">
+                          {msg.role === 'user' ? userLabel : assistantLabel}
                         </div>
-                      )}
-                    </div>
+                        {msg.image ? (
+                          <img
+                            className="bubble-capture"
+                            src={`data:${msg.image.mediaType};base64,${msg.image.dataBase64}`}
+                            alt="Captured screen sent to Hue"
+                          />
+                        ) : (
+                          <div className="bubble-text">{msg.text}</div>
+                        )}
+                        {msg.grounding && <Receipt grounding={msg.grounding} />}
+                        {msg.role === 'user' && msg.tier && (
+                          <div className="bubble-meta">
+                            {msg.tier} · {msg.latencyMs}ms
+                          </div>
+                        )}
+                      </div>
+                    </Fragment>
                   ))
                 )}
-                {/* The prepared answer for the question just asked. There is never
-                a generated bubble to sit beside — the pipeline aborts
-                generation the moment a card latches — so this simply appears
-                where that bubble would otherwise have gone. */}
-                {voice.cueCard && (
-                  <div className="bubble bubble--assistant">
-                    <CueCardBody
-                      key={voice.cueCard.id}
-                      card={voice.cueCard}
-                      textClass="bubble-text"
-                    />
-                  </div>
-                )}
+                {/* The question was the last thing said — Hue is still drafting
+                the answer that will follow the card, or the transcript is
+                empty. Either way the card goes here; once the answer arrives it
+                appears beneath the card via the branch inside the map. */}
+                {voice.cueCard && lastQuestionIndex === messages.length - 1 && cueCardBubble}
                 {voice.error && <div className="error-msg">{voice.error}</div>}
               </div>
             </div>

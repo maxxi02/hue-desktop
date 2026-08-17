@@ -12,6 +12,7 @@ import {
 import {
   CueMatcher,
   cueSheetPromptBlock,
+  cueCardPromptBlock,
   gateCommands,
   newLatchState,
   type CueSheet,
@@ -727,9 +728,11 @@ export class VoicePipeline {
     commands = gated.commands
 
     if (decision.latch !== null) {
-      // The card is the answer now. Any in-flight generation is money spent on
-      // something nobody will read, and it can still win a race and overwrite
-      // the card.
+      // The card goes up, and an answer is generated to sit beside it. Any draft
+      // still in flight is discarded rather than adopted: it was fired before
+      // this card was known, so it was generated card-blind, and `gateCommands`
+      // has already asked (via `regenerateForLatch`) for a fresh one that knows
+      // what the user is about to read aloud.
       this.abortSpeculation()
       this.specId = null
       this.callbacks.onCueCard?.(this.matcher?.card(decision.latch) ?? null)
@@ -768,6 +771,17 @@ export class VoicePipeline {
           this.discardSpeculation()
           break
       }
+    }
+
+    // The commit the gate withheld because its draft was card-blind. Same work
+    // the `fire`/`regenerate` branch above does — the question goes into
+    // history and an answer is generated — except this one is built with the
+    // matched card in the system prompt (see `buildCompanionPrompt`).
+    if (gated.regenerateForLatch) {
+      this.abortSpeculation()
+      this.scheduler?.reset()
+      this.messages.push({ role: 'user', content: finalText })
+      this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
     }
   }
 
@@ -893,6 +907,20 @@ export class VoicePipeline {
     this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
   }
 
+  /**
+   * The card standing on this question, if any — the one thing the answer being
+   * generated must not simply repeat.
+   *
+   * Only ever non-null on a turn whose FINAL latched a card: interims never
+   * latch (see `decide`), and every path that starts something new resets the
+   * latch. So an ordinary turn, a screen capture and an interviewer kickoff all
+   * read null here and build exactly the prompt they built before.
+   */
+  private latchedCard(): CueCard | null {
+    if (this.latch.cardId === null) return null
+    return this.matcher?.card(this.latch.cardId) ?? null
+  }
+
   private startResponse(opts: { speak: boolean; maxTokens: number }): void {
     this.setState('thinking')
     this.assistantText = ''
@@ -901,7 +929,7 @@ export class VoicePipeline {
     this.currentStreamId = streamId
     void window.hue.llm.start(streamId, {
       messages: this.messages,
-      system: buildSystemPrompt(this.settings, this.armedSheet),
+      system: buildSystemPrompt(this.settings, this.armedSheet, this.latchedCard()),
       maxTokens: opts.maxTokens
     })
   }
@@ -1174,12 +1202,18 @@ function jobContext(s: HueSettings): string | null {
   return null
 }
 
-function buildSystemPrompt(s: HueSettings, cueSheet: CueSheet | null = null): string {
+function buildSystemPrompt(
+  s: HueSettings,
+  cueSheet: CueSheet | null = null,
+  latchedCard: CueCard | null = null
+): string {
   // Prepared answers go only to the companion prompt. In interviewer mode Hue
   // is asking the questions, and handing it the user's own answers would let it
   // ask precisely what they have already rehearsed — which makes the practice
   // worthless.
-  return s.hueMode === 'interviewer' ? buildInterviewerPrompt(s) : buildCompanionPrompt(s, cueSheet)
+  return s.hueMode === 'interviewer'
+    ? buildInterviewerPrompt(s)
+    : buildCompanionPrompt(s, cueSheet, latchedCard)
 }
 
 /** Hue plays the interviewer, asking the user questions one at a time (spoken). */
@@ -1222,7 +1256,11 @@ function buildInterviewerPrompt(s: HueSettings): string {
 }
 
 /** Hue assists the user: incoming text is the interviewer's question; Hue drafts the answer. */
-function buildCompanionPrompt(s: HueSettings, cueSheet: CueSheet | null = null): string {
+function buildCompanionPrompt(
+  s: HueSettings,
+  cueSheet: CueSheet | null = null,
+  latchedCard: CueCard | null = null
+): string {
   const parts: string[] = [
     'You are Hue, a real-time interview companion helping the user during a live interview. ' +
       "The user message you receive is the INTERVIEWER'S question (transcribed from the call). " +
@@ -1320,13 +1358,23 @@ function buildCompanionPrompt(s: HueSettings, cueSheet: CueSheet | null = null):
   }
   // The prepared answers, as material rather than as a replacement.
   //
-  // An exact match never reaches here — the pipeline latches the card and
-  // aborts generation, so the user's verbatim answer is shown untouched. This
-  // covers the case that used to fall through the gap: a question close to
-  // something they prepared, but not close enough to latch, which would
-  // otherwise be answered from the résumé alone while their own better wording
-  // sat unused on screen beside it.
-  const cueBlock = cueSheet ? cueSheetPromptBlock(cueSheet) : ''
+  // Two shapes, and a matched card wins. When a card latched this question, the
+  // model is told exactly what the user is about to read aloud so it can supply
+  // what the card leaves out instead of echoing it — the card and this answer
+  // now appear together on screen, so an answer that restates the card wastes
+  // the only surface the user can glance at. With no match, the sheet-wide
+  // block covers the near-miss: a question close to something they prepared but
+  // not close enough to latch, which would otherwise be answered from the
+  // résumé alone while their own better wording sat unused beside it.
+  //
+  // Swapped rather than stacked: the matched card IS the relevant preparation,
+  // and sending both would pay for the whole sheet twice over on the one turn
+  // where it matters least.
+  const cueBlock = latchedCard
+    ? cueCardPromptBlock(latchedCard) || (cueSheet ? cueSheetPromptBlock(cueSheet) : '')
+    : cueSheet
+      ? cueSheetPromptBlock(cueSheet)
+      : ''
   if (cueBlock) parts.push(cueBlock)
 
   switch (s.interviewMode) {

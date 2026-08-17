@@ -281,6 +281,20 @@
   border-radius: var(--r-card-s) var(--r-card-s) var(--r-card-s) 4px;
 }
 
+/*
+ * The prepared card, which now sits directly above Hue's generated bubble
+ * rather than in place of it. Two assistant-side bubbles in a row have to be
+ * told apart at a glance, so the card takes the accent — the system's mark for
+ * the user's OWN material — and Hue's answer keeps the plain card surface.
+ */
+.bubble--cue .bubble-text {
+  background: var(--accent-tint);
+  border-color: var(--accent-border);
+}
+.bubble--cue .bubble-label {
+  color: var(--accent);
+}
+
 .bubble-meta {
   font-size: 10px;
   font-family: ui-monospace, monospace;
@@ -484,6 +498,28 @@
    panel does not resize the instant the first token lands. */
 .glance-text--waiting {
   color: var(--text-muted);
+}
+
+/*
+ * Hue's generated answer, when it sits UNDER a matched cue card.
+ *
+ * A matched question now produces both: the card, which is what the user says,
+ * and a generated answer carrying the detail the card leaves out. Two blocks at
+ * the same weight would make the user choose which to read while someone is
+ * waiting on them, so this one is deliberately demoted — smaller, lighter, and
+ * behind a hairline. The card keeps the top of the surface and the full glance
+ * size; this is what you read on to if you have a moment, never instead.
+ */
+.glance-text--aside {
+  font-size: calc(var(--glance-size) * 0.68);
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.glance-aside-label {
+  color: var(--text-muted);
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
 /*

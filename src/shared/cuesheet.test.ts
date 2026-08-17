@@ -5,6 +5,7 @@ import {
   stripEmphasis,
   type CueCard,
   cueSheetPromptBlock,
+  cueCardPromptBlock,
   cueTokens,
   buildDf,
   scoreAgainst,
@@ -128,7 +129,7 @@ test('abort, commit and reset always pass through', () => {
   assert.deepEqual(out.commands, cmds)
 })
 
-test('a latched final drops the commit that would generate underneath the card', () => {
+test('a latched final trades the commit for a card-aware regeneration', () => {
   const state = newLatchState()
   const out = gateCommands([{ kind: 'commit', specId: 7 }], state, {
     suppress: false,
@@ -138,12 +139,31 @@ test('a latched final drops the commit that would generate underneath the card',
   assert.deepEqual(
     out.commands,
     [],
-    'the caller aborts speculation when a card latches, so this commit finds no draft and generates a full answer under the card'
+    'the draft was fired before the card was known, so it cannot be the card-aware answer'
+  )
+  assert.equal(
+    out.regenerateForLatch,
+    true,
+    'the caller must still produce an answer — now with the matched card in the prompt'
   )
   assert.equal(
     out.resetScheduler,
     true,
     'a dropped commit leaves the same phantom draft a dropped fire does'
+  )
+})
+
+test('regenerateForLatch is false when no card matched the final', () => {
+  const state = newLatchState()
+  const out = gateCommands([{ kind: 'commit', specId: 7 }], state, {
+    suppress: false,
+    latch: null,
+    isFinal: true
+  })
+  assert.equal(
+    out.regenerateForLatch,
+    false,
+    'the commit passed through; asking for a second generation would double-answer the turn'
   )
 })
 
@@ -205,18 +225,28 @@ test('latchCleared is false when a final replaces one latch with another', () =>
   )
 })
 
-test('a dropped regenerate asks for a scheduler reset', () => {
+test('a latched final lets the regenerate through, so the card gets an answer beside it', () => {
+  const cmds: Command[] = [{ kind: 'regenerate', specId: 6, text: 'q' }]
   const state = newLatchState()
-  const out = gateCommands([{ kind: 'regenerate', specId: 6, text: 'q' }], state, {
+  const out = gateCommands(cmds, state, {
     suppress: false,
     latch: 'c-support',
     isFinal: true
   })
-  assert.deepEqual(out.commands, [])
+  assert.deepEqual(
+    out.commands,
+    cmds,
+    'the card is the script; the generation is the depth behind it'
+  )
+  assert.equal(
+    out.regenerateForLatch,
+    false,
+    'the regenerate itself is the generation; do not ask for a second'
+  )
   assert.equal(
     out.resetScheduler,
-    true,
-    'speculation.ts sets its draft before returning regenerate; without a reset that phantom draft blocks maybeFire for the whole next question'
+    false,
+    'nothing was dropped, so there is no phantom draft to clear'
   )
 })
 
@@ -265,14 +295,15 @@ test('suppression at the final never drops the endpoint fire', () => {
   assert.equal(gated.resetScheduler, false, 'endpoint fire does not trigger scheduler reset')
 })
 
-test('a latch drops the regenerate that would overwrite it', () => {
+test('a latch still records the card even though the regenerate now passes', () => {
+  const cmds: Command[] = [{ kind: 'regenerate', specId: 2, text: 'q' }]
   const state = newLatchState()
-  const out = gateCommands([{ kind: 'regenerate', specId: 2, text: 'q' }], state, {
+  const out = gateCommands(cmds, state, {
     suppress: false,
     latch: 'c-support',
     isFinal: true
   })
-  assert.deepEqual(out.commands, [])
+  assert.deepEqual(out.commands, cmds)
   assert.equal(state.cardId, 'c-support')
 })
 
@@ -300,20 +331,17 @@ test('a standing latch from a prior call still blocks a later regenerate', () =>
   assert.deepEqual(out.commands, [], 'standing latch must still block the regenerate')
 })
 
-test('a latched final drops the endpoint fire and asks for a scheduler reset', () => {
+test('a latched final lets the endpoint fire through', () => {
   const state = newLatchState()
   const fire: Command[] = [{ kind: 'fire', specId: 3, text: 'why do you want this role' }]
   const out = gateCommands(fire, state, { suppress: false, latch: 'c-support', isFinal: true })
   assert.deepEqual(
     out.commands,
-    [],
-    'a card matched this final; the endpoint fire must not start a competing generation'
+    fire,
+    'the generation is no longer a competitor to the card — it is the answer that accompanies it'
   )
-  assert.equal(
-    out.resetScheduler,
-    true,
-    'dropping the fire without a reset leaves a phantom draft blocking the next question'
-  )
+  assert.equal(out.resetScheduler, false)
+  assert.equal(out.regenerateForLatch, false)
 })
 
 test('a final with no latch still lets the endpoint fire through (recovery must not regress)', () => {
@@ -696,6 +724,30 @@ test('the block is bounded and says how many it dropped', () => {
 test('an empty sheet contributes nothing rather than an empty heading', () => {
   assert.equal(
     cueSheetPromptBlock({ id: 's', label: 'L', sourceHash: 'h', createdAt: '', cards: [] }),
+    ''
+  )
+})
+
+test('the matched-card block carries the script the sheet-wide block withholds', () => {
+  const card: CueCard = {
+    id: 'c1',
+    heading: '**Why support instead of development?**',
+    cues: ['**Not switching away**', 'Same core skills'],
+    script: 'I see it less as switching away from development.',
+    triggers: ['why support']
+  }
+  const block = cueCardPromptBlock(card)
+  assert.match(block, /Why support instead of development\?/)
+  assert.match(block, /Not switching away/)
+  // Unlike the sheet-wide block, the verbatim script IS handed over — the model
+  // has to know exactly what the user is about to say in order not to repeat it.
+  assert.match(block, /I see it less as switching away from development\./)
+  assert.doesNotMatch(block, /\*\*/)
+})
+
+test('a matched card with nothing prepared contributes nothing', () => {
+  assert.equal(
+    cueCardPromptBlock({ id: 'c', heading: '   ', cues: [], script: '', triggers: [] }),
     ''
   )
 })
