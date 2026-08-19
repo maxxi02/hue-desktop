@@ -4,6 +4,7 @@ import { StreamingTTSQueue } from './streamingTTS'
 import { parseProfileBundle, profilePromptBlock } from '../../../shared/profile'
 import { groundResponse, stripStreamingCitation, type Grounding } from '../../../shared/grounding'
 import { parseJobSpec, jobSpecPromptBlock, rawJobDescriptionBlock } from '../../../shared/job-spec'
+import { answerShapeFor } from '../../../shared/answer-shape'
 import {
   SpeculationScheduler,
   type Command as SpeculationCommand,
@@ -1061,10 +1062,10 @@ function buildCompanionPrompt(s: HueSettings): string {
       "punctuation, or the user's own voice mixed in. Infer the interviewer's actual intent and answer that. " +
       'If the text is only a fragment or too garbled to read confidently, answer the most likely intended ' +
       "question rather than asking for clarification — the user can't relay a clarifying question mid-call.",
-    'Write the answer as a single, natural paragraph the user can say start to finish — no headings, ' +
-      'no labels, no "Example:" prefix, no bullet points. Weave one concrete, real-life example directly ' +
-      'into the answer so it backs up the point as part of the flow, the way a person naturally drops in ' +
-      'a specific moment while speaking.',
+    'Write the answer as plain speakable prose the user can say start to finish: no headings, no ' +
+      'labels, no "Example:" prefix, no bullet points, no numbering. Weave one concrete, real-life ' +
+      'example directly into the answer so it backs up the point as part of the flow, the way a ' +
+      'person naturally drops in a specific moment while speaking.',
     'Make it sound like the user thinking out loud mid-conversation, not reciting a prepared statement: ' +
       'an occasional small aside ("which, honestly, was the hard part"), a real number or name where an ' +
       'adjective would go, slightly uneven rhythm. An essay-perfect paragraph reads as scripted — leave ' +
@@ -1167,17 +1168,6 @@ function buildCompanionPrompt(s: HueSettings): string {
     )
     parts.push(job)
   }
-  switch (s.interviewMode) {
-    case 'star':
-      parts.push('Structure the answer using the STAR method (Situation, Task, Action, Result).')
-      break
-    case 'live':
-      parts.push(
-        'Give a tight, direct answer the user can say immediately. Brevity over completeness.'
-      )
-      break
-    default:
-      parts.push('Give a strong, complete answer the user can adapt in their own words.')
-  }
+  parts.push(answerShapeFor(s.interviewMode))
   return `${parts.join(' ')}\n\n${HUMAN_VOICE_GUIDANCE}`
 }
