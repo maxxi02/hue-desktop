@@ -39,23 +39,27 @@ import type { InterviewMode } from './types.ts'
  * the exact failure the grounding rules exist to prevent.
  */
 export const LABELLED_SHAPE =
-  'Write the answer in labelled sections. Each section begins with a marker alone on its own ' +
-  'line: "## what", "## why", "## how", "## when", or "## scenario". Use only those five ' +
-  'markers, and choose the two or three that genuinely fit the question rather than using all ' +
-  'of them. ' +
-  'Under each marker write one or two sentences of plain speakable prose in the first person. ' +
-  'The app strips the markers before the user sees the answer, so never mention them in the ' +
-  'prose, and never write a heading, a label, a number, or a bullet of your own. ' +
-  'The first section must stand alone as a complete answer if the user says nothing else. ' +
-  'Close with "## scenario": one real, specific moment from the background below, named ' +
-  'concretely rather than described in general terms. Size the answer so the scenario is about ' +
-  'half of it and the sections above are the other half. ' +
-  'If no story in the background genuinely fits the question, omit the "## scenario" section ' +
-  'entirely and let the answer be the sections above. Never invent a scenario to fill the ' +
-  'space, and never bend a story that does not apply. ' +
-  'Keep the whole answer under about 90 words, which is roughly 40 seconds said out loud. ' +
-  'The user has to speak the whole thing in a live interview while reading it at a glance, so a ' +
-  'longer answer is one they lose their place in. Shorter is always fine.'
+  'Write the response in two parts. Each part begins with a marker alone on its own line. ' +
+  'PART ONE is the answer the user speaks. Begin it with "## what", "## why", "## how", or ' +
+  '"## when", whichever genuinely fits the question, and use at most two of them. This part ' +
+  'must fully answer the question on its own: the approach taken, the tradeoff behind it, and ' +
+  'enough of the reasoning that the interviewer hears how the user thinks. Someone who reads ' +
+  'only this part and then stops speaking has given a complete, strong answer. Keep part one ' +
+  'under about 70 words, which is roughly 30 seconds said out loud. ' +
+  'PART TWO is optional and begins with "## scenario". It holds one real, specific moment from ' +
+  'the background below, kept in reserve in case the interviewer asks for an example. It is ' +
+  'never needed to complete the answer. Part one must never depend on it, refer to it, or trail ' +
+  'off into it, because the user may choose not to say it at all. Keep part two under about 30 ' +
+  'words, naming the situation and what came of it. ' +
+  'Do not put a worked example inside part one. A specific number or name in passing is fine, ' +
+  'but the story itself belongs in part two or nowhere. ' +
+  'If no story in the background genuinely fits the question, omit "## scenario" entirely and ' +
+  'let the response be part one alone. Never invent one, and never bend a story that does not ' +
+  'apply: this part exists to be volunteered, so anything in it is a claim the user has chosen ' +
+  'to make. ' +
+  'Under each marker write plain speakable prose in the first person. The app strips the ' +
+  'markers before the user sees them, so never mention them in the prose, and never write a ' +
+  'heading, a label, a number, or a bullet of your own.'
 
 /**
  * Behavioural mode, and the longest of the three on purpose.

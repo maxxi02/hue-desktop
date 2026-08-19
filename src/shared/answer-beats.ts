@@ -43,6 +43,27 @@ export interface Beat {
   text: string
 }
 
+/**
+ * What the margin tag actually reads on screen.
+ *
+ * Separate from the marker vocabulary because the two answer different
+ * questions. The marker is what the model writes; the tag is what the user
+ * needs to know at a glance, mid-interview.
+ *
+ * `scenario` is the one that differs, and the difference is the whole point of
+ * the block. The story is optional to say: it exists in case the interviewer
+ * asks for an example, and the answer above is complete without it. Labelling it
+ * "scenario" says what it is; labelling it "if they ask" says what to do with
+ * it, which is the only thing worth reading under pressure.
+ */
+export const BEAT_LABEL_TEXT: Record<BeatLabel, string> = {
+  what: 'what',
+  why: 'why',
+  how: 'how',
+  when: 'when',
+  scenario: 'if they ask'
+}
+
 /** A marker: one or two hashes, one word, nothing else on the line. */
 const MARKER = /^#{1,2}[ \t]*([a-z]+)[ \t]*$/i
 

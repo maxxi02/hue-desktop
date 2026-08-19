@@ -35,8 +35,10 @@ test('live is the shortest, practice the middle, star the longest', () => {
     assert.ok(match, `${mode} states no word cap`)
     return Number(match[1])
   }
+  // practice reads 70: its first cap is the spoken answer. The optional story
+  // carries its own, smaller one and is not part of what the user says by default.
   assert.equal(wordCap('live'), 40)
-  assert.equal(wordCap('practice'), 90)
+  assert.equal(wordCap('practice'), 70)
   assert.equal(wordCap('star'), 150)
   assert.ok(wordCap('live') < wordCap('practice'))
   assert.ok(wordCap('practice') < wordCap('star'))
@@ -72,13 +74,6 @@ test('the shape names every marker the parser accepts', () => {
   }
 })
 
-// The scenario half must be optional in the prompt itself, or a model with an
-// empty story bank is under standing instructions to invent one to fill it.
-test('the shape permits omitting the scenario when no story fits', () => {
-  assert.match(LABELLED_SHAPE, /omit the "## scenario" section/)
-  assert.match(LABELLED_SHAPE, /[Nn]ever invent a scenario/)
-})
-
 // The markers are app chrome. If the model believes they are spoken, the user
 // reads "hash hash what" to an interviewer.
 test('the shape says the markers are stripped and never spoken', () => {
@@ -87,8 +82,9 @@ test('the shape says the markers are stripped and never spoken', () => {
 
 // The screenshots that motivated this shape ran to roughly 230 words in one
 // block. A cap the model can act on is the only thing that was missing.
-test('the shape caps the length, because the surface is read at a glance', () => {
-  assert.match(LABELLED_SHAPE, /90 words/)
+test('the answer and the optional story are capped separately', () => {
+  assert.match(LABELLED_SHAPE, /about 70 words/)
+  assert.match(LABELLED_SHAPE, /about 30 words/)
 })
 
 // The cap is stated in seconds as well as words. The number is what the model
@@ -96,4 +92,30 @@ test('the shape caps the length, because the surface is read at a glance', () =>
 // carrying its own purpose survives a long prompt better than a bare figure.
 test('the cap says what it is for, not just how many words', () => {
   assert.match(LABELLED_SHAPE, /seconds/)
+})
+
+/**
+ * The complaint this shape was rewritten to fix: the card "jumps to the story
+ * bank instead of answering the question straightly".
+ *
+ * The cause was a fixed 50/50 split, which handed half the answer to a story
+ * even on a technical question, while the voice rule that says not to force a
+ * story onto a crisp question was overridden by it. The answer now has to stand
+ * complete on its own, and the story is something held in reserve.
+ */
+test('part one must answer the question without the story', () => {
+  assert.match(LABELLED_SHAPE, /fully answer the question on its own/)
+  assert.match(LABELLED_SHAPE, /reads only this part/)
+})
+
+test('the story is optional, and never something part one leans on', () => {
+  assert.match(LABELLED_SHAPE, /optional/)
+  assert.match(LABELLED_SHAPE, /never needed to complete the answer/)
+})
+
+// An optional extra is exactly the thing that must never be improvised: it is
+// volunteered on purpose, so an invented one is a claim the user chose to make.
+test('an unfitting story is omitted rather than bent', () => {
+  assert.match(LABELLED_SHAPE, /omit "## scenario" entirely/)
+  assert.match(LABELLED_SHAPE, /[Nn]ever invent one/)
 })

@@ -544,14 +544,26 @@
 }
 
 /*
- * The scenario is the other half of the answer, so it gets a rule above it
- * rather than only a wider gap. This is the seam the eye jumps to when the
- * direct answer is done and the story is what is wanted next.
+ * The story is held in reserve, not part of the answer.
+ *
+ * The answer above it is complete on its own; this block exists in case the
+ * interviewer asks for an example. So it is set apart by a rule and then
+ * deliberately quietened: the eye should reach the end of the answer and stop
+ * there, and only come down here when there is a reason to.
+ *
+ * Dimming it is doing real work rather than decorating. A block that looked
+ * equal in weight is exactly what produced the complaint that Hue "jumps to the
+ * story bank instead of answering the question", because a card with two equal
+ * halves reads as one answer in two parts.
  */
 .beat--scenario {
   margin-top: calc(var(--glance-size) * var(--glance-leading) * 0.8);
   padding-top: calc(var(--glance-size) * var(--glance-leading) * 0.5);
   border-top: 1px solid var(--border);
+  /* Smaller and dimmer than the answer. Still comfortably readable at a glance,
+     because the moment it IS wanted the user is reading it live. */
+  font-size: 0.82em;
+  color: var(--text-muted);
 }
 
 /* Same treatment in the transcript, at that pane's own rhythm. */

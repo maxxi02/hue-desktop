@@ -3,7 +3,7 @@ import { useVoiceMode } from './hooks/useVoiceMode'
 import type { PipelineState } from './lib/pipeline'
 import { isAtBottom } from './lib/stickToBottom'
 import { paragraphs } from './lib/paragraphs'
-import { parseBeats } from '@shared/answer-beats'
+import { parseBeats, BEAT_LABEL_TEXT } from '@shared/answer-beats'
 import type { VoiceTurn, CaptureTurn } from './hooks/useVoiceMode'
 import type { ScreenCapture } from '@shared/types'
 import { describeStory, type Grounding } from '@shared/grounding'
@@ -981,7 +981,9 @@ export default function App(): React.JSX.Element {
                     className={beat.label === 'scenario' ? 'beat beat--scenario' : 'beat'}
                     key={i}
                   >
-                    {beat.label && <span className="beat-label">{beat.label}</span>}
+                    {beat.label && (
+                      <span className="beat-label">{BEAT_LABEL_TEXT[beat.label]}</span>
+                    )}
                     <p>{beat.text}</p>
                   </div>
                 ))}

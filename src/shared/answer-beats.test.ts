@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseBeats, BEAT_LABELS } from './answer-beats.ts'
+import { parseBeats, BEAT_LABELS, BEAT_LABEL_TEXT } from './answer-beats.ts'
 
 test('labelled sections become labelled beats', () => {
   const answer = '## what\nI own the deploy pipeline.\n\n## why\nWe lost a day a week.'
@@ -82,4 +82,19 @@ test('a marker with no body yet emits nothing', () => {
 
 test('the vocabulary is exactly the five the prompt names', () => {
   assert.deepEqual([...BEAT_LABELS], ['what', 'why', 'how', 'when', 'scenario'])
+})
+
+// The margin tag is what the user reads mid-interview, and for the story it has
+// to say what to DO with the block rather than what the block is. The answer
+// above is complete on its own; this part is only volunteered if asked.
+test('the story tag tells the user it is optional', () => {
+  assert.equal(BEAT_LABEL_TEXT.scenario, 'if they ask')
+})
+
+// Every marker the parser accepts must have a tag, or a beat renders with an
+// empty margin and the column silently misaligns.
+test('every label has display text', () => {
+  for (const label of BEAT_LABELS) {
+    assert.ok(BEAT_LABEL_TEXT[label]?.length > 0, `${label} has no display text`)
+  }
 })
