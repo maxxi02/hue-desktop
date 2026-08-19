@@ -108,22 +108,6 @@ const MAX_HISTORY_MESSAGES = 24
 const SPECULATION_TICK_MS = 150
 
 /**
- * Output ceiling for a companion answer.
- *
- * `SPOKEN_LENGTH_CAP` asks for about 70 words, which is roughly 95 tokens of
- * prose plus the section markers and the citation line. This sits well above
- * that on purpose: `max_tokens` truncates, it does not shape. A ceiling set near
- * the target would cut a slightly long answer off mid-word, and the person
- * reading it is doing so out loud, live, to an interviewer. The headroom is what
- * lets an overlong answer finish its sentence while still bounding worst-case
- * generation time.
- *
- * Screen-capture answers keep their own, larger ceiling: they are read rather
- * than spoken, so the spoken-length cap does not apply to them.
- */
-const ANSWER_MAX_TOKENS = 300
-
-/**
  * Orchestrates the full voice loop: VAD detects an utterance -> ASR transcribes
  * it -> Claude streams a reply -> reply is spoken via streaming TTS. Speaking
  * while the assistant talks barges in (aborts the reply and stops audio).
@@ -580,7 +564,7 @@ export class VoicePipeline {
     }
 
     this.messages.push({ role: 'user', content: text })
-    this.startResponse({ speak: this.speakResponses, maxTokens: ANSWER_MAX_TOKENS })
+    this.startResponse({ speak: this.speakResponses, maxTokens: 700 })
   }
 
   // ── Speculation ─────────────────────────────────────────────────────────
@@ -735,7 +719,7 @@ export class VoicePipeline {
           this.abortSpeculation()
           this.scheduler?.reset()
           this.messages.push({ role: 'user', content: finalText })
-          this.startResponse({ speak: this.speakResponses, maxTokens: ANSWER_MAX_TOKENS })
+          this.startResponse({ speak: this.speakResponses, maxTokens: 700 })
           break
         case 'abort':
           this.abortSpeculation()
@@ -765,7 +749,7 @@ export class VoicePipeline {
     void window.hue.llm.start(streamId, {
       messages: [...this.messages, { role: 'user', content: text }],
       system: buildSystemPrompt(this.settings),
-      maxTokens: ANSWER_MAX_TOKENS
+      maxTokens: 700
     })
   }
 
@@ -813,7 +797,7 @@ export class VoicePipeline {
       // Generate for real rather than adopting an empty answer, which would
       // leave the turn with nothing on screen and no completion to come.
       this.messages.push({ role: 'user', content: finalText })
-      this.startResponse({ speak: this.speakResponses, maxTokens: ANSWER_MAX_TOKENS })
+      this.startResponse({ speak: this.speakResponses, maxTokens: 700 })
       return
     }
 
@@ -866,7 +850,7 @@ export class VoicePipeline {
       role: 'user',
       content: 'Please begin the interview with your first question.'
     })
-    this.startResponse({ speak: this.speakResponses, maxTokens: ANSWER_MAX_TOKENS })
+    this.startResponse({ speak: this.speakResponses, maxTokens: 700 })
   }
 
   private startResponse(opts: { speak: boolean; maxTokens: number }): void {
