@@ -395,6 +395,21 @@ export class VoicePipeline {
     this.endSegment()
     this.clearHoldTimer()
     this.endpoint?.reset()
+    // Session-end metrics.
+    //
+    // `hitRate` is computed on every fire and has never been read. Its own
+    // comment says to tune the trigger against this number rather than against
+    // intuition, and speculation now ships on by default, so the number has to
+    // be visible before anyone touches `minWords` or `stableMs`. Below ~55% the
+    // trigger is too eager and margin is burning for nothing.
+    if (this.scheduler) {
+      const m = this.scheduler.metrics
+      console.info(
+        `[speculation] questions=${m.questions} fired=${m.fired} committed=${m.committed} ` +
+          `aborted=${m.aborted} hitRate=${(m.hitRate * 100).toFixed(0)}% ` +
+          `firesPerQuestion=${m.firesPerQuestion.toFixed(2)}`
+      )
+    }
     this.scheduler?.reset()
     if (this.vad) {
       await this.vad.destroy()
@@ -988,7 +1003,21 @@ export class VoicePipeline {
       // is scaffolding on screen either way.
       return { answer: stripStreamingCitation(raw).trim(), grounding: null }
     }
-    return groundResponse(raw, bundle)
+    const resolved = groundResponse(raw, bundle)
+    // Why the "not anchored" chip fired on an answer drawn from real history.
+    //
+    // Reaching here at all means a bundle is installed, so the two remaining
+    // causes are distinguishable and want different fixes: `claimedId: null` is
+    // the model omitting the citation line, which is an output-contract problem,
+    // while a non-null id that did not resolve is the model inventing or
+    // mangling one, which is a prompt-vocabulary problem.
+    if (resolved.grounding.kind === 'ungrounded') {
+      console.info(
+        `[grounding] ungrounded: stories=${bundle.stories.length} ` +
+          `claimedId=${resolved.grounding.claimedId ?? 'none (no citation line written)'}`
+      )
+    }
+    return resolved
   }
 
   private onLlmError(e: LlmErrorEvent): void {
