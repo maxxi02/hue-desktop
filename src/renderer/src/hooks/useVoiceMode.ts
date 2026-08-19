@@ -5,7 +5,6 @@ import { preloadTtsModel, unloadTtsModel } from '../lib/streamingTTS'
 import { isLlmConfigured, playGreeting } from '../lib/greeting'
 import type { AudioSource, HueMode, ResolvedTier, ScreenCapture } from '@shared/types'
 import type { Grounding } from '@shared/grounding'
-import type { CueCard, CueSheet } from '@shared/cuesheet'
 
 export interface VoiceTurn {
   text: string
@@ -53,21 +52,6 @@ export interface UseVoiceMode {
   assistantText: string
   /** The last completed assistant turn, carrying its grounding receipt. */
   assistantResult: AssistantResult | null
-  /**
-   * The prepared cue card latched onto the current question, or null when
-   * nothing is latched. Mirrors `onCueCard` exactly — the pipeline is the
-   * source of truth for when a card appears and when it clears (a new
-   * question, a barge-in, or the session tearing down).
-   */
-  cueCard: CueCard | null
-  /**
-   * The whole armed cue sheet for the running session, or null when none is
-   * armed. Set once at session start and held for the session, so the document
-   * panel can be read between questions rather than only at the moment a card
-   * latches — `cueCard` says *where you are* in this sheet, this says *what the
-   * sheet is*.
-   */
-  cueSheet: CueSheet | null
   /** LLM-generated launch greeting from Hue (streamed). Empty until Hue has greeted. */
   greetingText: string
   error: string | null
@@ -90,8 +74,6 @@ export function useVoiceMode(): UseVoiceMode {
   const [capture, setCapture] = useState<CaptureTurn | null>(null)
   const [assistantText, setAssistantText] = useState('')
   const [assistantResult, setAssistantResult] = useState<AssistantResult | null>(null)
-  const [cueCard, setCueCard] = useState<CueCard | null>(null)
-  const [cueSheet, setCueSheet] = useState<CueSheet | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<HueMode>('companion')
   const [audioSource, setAudioSource] = useState<AudioSource>('microphone')
@@ -116,13 +98,6 @@ export function useVoiceMode(): UseVoiceMode {
   const cancelGreetingRef = useRef<(() => void) | null>(null)
 
   const reloadConfig = useCallback((): void => {
-    // Re-arm the cue sheet against a session that is already running. Arming a
-    // sheet mid-call used to leave the matcher untouched until the next
-    // session, so prepared answers were silently not used while the panel
-    // displayed them — the worst version of this failure, because the sheet
-    // being on screen is exactly what tells the user it is in play.
-    void pipelineRef.current?.armCueSheet()
-
     void window.hue.settings.get().then((s) => {
       setMode(s.hueMode)
       setAudioSource(s.audioSource)
@@ -236,9 +211,7 @@ export function useVoiceMode(): UseVoiceMode {
         // last delta that never made it there cannot leave the two out of sync.
         window.hue.phone.event({ type: 'answer', text })
       },
-      onError: setError,
-      onCueCard: setCueCard,
-      onCueSheet: setCueSheet
+      onError: setError
     })
     pipelineRef.current = pipeline
     try {
@@ -330,8 +303,6 @@ export function useVoiceMode(): UseVoiceMode {
     capture,
     assistantText,
     assistantResult,
-    cueCard,
-    cueSheet,
     greetingText,
     error,
     mode,
