@@ -12,8 +12,7 @@ import type { UsageEvent } from '../shared/usage.ts'
  * your usage history, never your session. Most of these tests are about the
  * file being wrong in some way and the app carrying on regardless.
  *
- * `dir` is a parameter here for the same reason it is in `cuesheet-store.ts` —
- * it lets this run without Electron.
+ * `dir` is a parameter here so this can run without Electron.
  */
 
 function tempDir(): string {

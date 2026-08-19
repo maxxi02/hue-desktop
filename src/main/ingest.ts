@@ -17,7 +17,7 @@ import {
  * bytes, poll a job, download the bundle. All of that is gone. The pipeline runs
  * here, which is what makes Hue a single app with nothing to start alongside it.
  *
- * It also buys the same privacy property `cuesheet-ingest.ts` already had: a
+ * It also buys the privacy property that matters most here: a
  * resume reaches the configured model provider and nowhere else — never Hue's
  * own infrastructure, because there is none. With Ollama selected it does not
  * leave the machine at all.

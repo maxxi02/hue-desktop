@@ -392,7 +392,7 @@ const LOCAL_INGEST_TIMEOUT_MS = 10 * 60 * 1000
  * Async because `./settings` is imported lazily: it pulls in real Electron
  * `app` and `safeStorage` bindings, and a static import would drag Electron's
  * runtime into every `node --test` run of this module. Same reason
- * `cuesheet-ingest.ts` defers its own imports.
+ * `job-spec-ingest.ts` defers its own imports.
  */
 export async function clientForSettings(role: 'drafting' | 'ingest'): Promise<LlmClient> {
   const { getSettings } = await import('./settings')

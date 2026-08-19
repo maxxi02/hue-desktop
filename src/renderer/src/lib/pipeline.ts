@@ -840,7 +840,7 @@ export class VoicePipeline {
    *
    * The oldest turns are the ones to lose. What Hue needs is the thread of the
    * last few exchanges; the substance an answer is built from comes from the
-   * profile bundle and the cue sheet, which are re-sent in the system prompt on
+   * profile bundle and the job posting, which are re-sent in the system prompt on
    * every turn and are unaffected by this.
    */
   private trimHistory(): void {
@@ -1024,12 +1024,9 @@ function buildInterviewerPrompt(s: HueSettings): string {
   // the companion: it names what exists rather than implying everything does.
   const background = candidateBackground(s)
   if (background) parts.push(`The candidate's background:\n\n${background}`)
-  // The posting goes to BOTH modes, unlike the cue sheet withheld above. The
-  // reason the cue sheet is withheld does not apply here: it is the user's own
-  // rehearsed answers, so giving it to the interviewer persona would let Hue ask
-  // exactly what has already been practised. A posting is the employer's
-  // document, not the user's answers — knowing it makes the practice
-  // role-specific rather than easier. It goes after the background so that
+  // The posting goes to BOTH modes. It is the employer's document, not the
+  // user's answers — knowing it makes the practice role-specific rather than
+  // easier. It goes after the background so that
   // "above" in the never-claim rule still resolves to the candidate.
   const job = jobContext(s)
   if (job) {
@@ -1151,8 +1148,8 @@ function buildCompanionPrompt(s: HueSettings): string {
     // scan, so it keeps the older, weaker guarantee.
     parts.push(`The user's background (draw on this): ${s.resumeSummary}`)
   }
-  // The posting, after the background and before the cue sheet — and the order
-  // is load-bearing, not tidiness. The never-claim rule inside the block says a
+  // The posting, after the background — and the order is load-bearing, not
+  // tidiness. The never-claim rule inside the block says a
   // requirement may only be spoken as experience "if it also appears in the
   // candidate's background above"; placed first, "above" would resolve to
   // nothing and the guard would be decoration on a list of skills the user may

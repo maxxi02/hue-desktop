@@ -1,8 +1,8 @@
 /**
  * The usage log on disk, plus the buffer that keeps it off the hot path.
  *
- * Deliberately not in `hue-settings.json`, for the same reason cue sheets are
- * not: `settings.ts` rewrites that file whole on every update, and this records
+ * Deliberately not in `hue-settings.json`: `settings.ts` rewrites that file
+ * whole on every update, and this records
  * an event per utterance and per model turn. Folding it in would rewrite every
  * API key and the résumé bundle several times a minute during an interview —
  * and would put that write on the path of the thing the app exists to do.
@@ -13,7 +13,7 @@
  * nothing here is allowed to throw into a caller that is mid-session.
  *
  * `dir` is a parameter rather than read from `app` so this module tests without
- * Electron — the same arrangement as `cuesheet-store.ts`.
+ * Electron.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -32,10 +32,10 @@ const FLUSH_DEBOUNCE_MS = 5_000
 /**
  * Where the log lives, handed in at startup rather than read from `app` here.
  *
- * `cuesheet-store.ts` reaches for Electron through a lazy `require` to stay
- * loadable under `node --test`; this module does not need to, because the buffer
- * is the only part that wants a default directory and startup can simply tell it
- * one. That keeps Electron out of the module altogether — no lazy require, no
+ * A module that needs `app` here would have to reach for Electron through a
+ * lazy `require` to stay loadable under `node --test`; this one does not, because
+ * the buffer is the only part that wants a default directory and startup can
+ * simply tell it one. That keeps Electron out of the module altogether — no
  * lint exception, and the tests exercise the same code path the app does.
  */
 let dir: string | null = null

@@ -9,8 +9,8 @@
  *
  *   HUE_EVAL=1 ANTHROPIC_API_KEY=... npm run eval:resume
  *
- * Gated behind `HUE_EVAL=1` exactly like `cuesheet-eval.test.ts`, so a plain
- * `npm test` stays offline, free, and needs no key.
+ * Gated behind `HUE_EVAL=1` so a plain `npm test` stays offline, free, and
+ * needs no key.
  *
  * The bar is absolute: **zero hallucinated employers, titles, institutions, or
  * metrics.** `pruneUngrounded` would silently drop those in production, so the

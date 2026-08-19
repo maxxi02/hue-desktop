@@ -10,7 +10,7 @@ import mammoth from 'mammoth'
  *
  * This replaces `hue-ingest`'s hand-rolled PDF and DOCX readers. Those existed
  * to satisfy the services' zero-runtime-dependency rule, which does not apply
- * inside Electron — `unpdf` and `mammoth` are already bundled for cue sheets.
+ * inside Electron — `unpdf` and `mammoth` are already bundled.
  * What is kept is the part that actually protects the product: the validation
  * that turns an unreadable document into a refusal rather than into confident,
  * fabricated output.

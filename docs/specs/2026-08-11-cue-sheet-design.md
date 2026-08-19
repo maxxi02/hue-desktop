@@ -1,5 +1,7 @@
 # Cue Sheet — design
 
+> **Removed 2026-08-19.** This feature no longer exists. See [Remove prepared answers](./2026-08-19-remove-prepared-answers-design.md).
+
 **Date:** 2026-08-11
 **Scope:** `hue-desktop` only. Mobile is explicitly deferred; see [Deferred: mobile](#deferred-mobile).
 

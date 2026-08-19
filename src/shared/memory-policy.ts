@@ -3,7 +3,7 @@
  * left.
  *
  * Pure TypeScript — no Electron, no `os`, no I/O. The caller measures; this only
- * decides. Same discipline as `speculation.ts` and `cuesheet.ts`, for the same
+ * decides. Same discipline as `speculation.ts`, for the same
  * reason: the interesting part is a policy matrix, and a policy matrix belongs
  * in fast unit tests rather than in a machine you have to run out of memory to
  * observe.

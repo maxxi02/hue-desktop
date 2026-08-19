@@ -24,7 +24,6 @@
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux",
     "test": "node --test src/**/*.test.ts",
-    "eval:cuesheet": "HUE_EVAL=1 node --test src/main/cuesheet-eval.test.ts",
     "eval:resume": "HUE_EVAL=1 node --test src/main/resume-eval.test.ts"
   },
   "dependencies": {
