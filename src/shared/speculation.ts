@@ -405,10 +405,33 @@ export class SpeculationScheduler {
  * Everything else is judged on F1, which is what the threshold is for: telling a
  * re-worded version of the same question from a different one.
  */
+/**
+ * How much longer than the fire text a prefix-extended final may be and still
+ * commit.
+ *
+ * The prefix rule below exists because token F1 penalises a final that merely
+ * got longer: "tell me about a time you disagreed with your manager" extended by
+ * two words scores 0.84 and would be thrown away though the draft answers it
+ * perfectly. That reasoning holds for a few trailing words and collapses at
+ * scale. A draft fired on the opening clause of a question is a clean prefix of
+ * the whole question and answers something quite different from it.
+ *
+ * The case is not hypothetical: `endpointing.ts` joins the segments of a
+ * question split by a mid-sentence pause, so a final arriving at three times the
+ * length of what was fired on is now an ordinary event rather than a freak one.
+ *
+ * Beyond this ratio the pair falls through to F1, which refuses and regenerates.
+ */
+export const MAX_PREFIX_GROWTH = 1.75
+
 function commits(firedOn: string, final: string, threshold: number): boolean {
   const fired = tokens(firedOn)
   const ended = tokens(final)
-  if (fired.length > 0 && ended.length >= fired.length) {
+  if (
+    fired.length > 0 &&
+    ended.length >= fired.length &&
+    ended.length <= fired.length * MAX_PREFIX_GROWTH
+  ) {
     let prefix = true
     for (let i = 0; i < fired.length; i++) {
       if (ended[i] !== fired[i]) {

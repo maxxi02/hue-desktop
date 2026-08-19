@@ -1,6 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { SpeculationScheduler, type Command, type Speaker } from './speculation.ts'
+import {
+  MAX_PREFIX_GROWTH,
+  SpeculationScheduler,
+  type Command,
+  type Speaker
+} from './speculation.ts'
 
 /**
  * The scheduler behaviour matrix, ported from the Kotlin suite it mirrors.
@@ -467,4 +472,62 @@ test('a whitespace-only final commits the draft rather than regenerating on noth
   const committed = only(final('   '), 'commit')
   assert.equal(committed.specId, fire.specId)
   assert.equal(scheduler.metrics.fired, 1, 'a second generation was fired on nothing')
+})
+
+// ── The prefix growth ceiling ──────────────────────────────────────────────
+
+/**
+ * The case `endpointing.ts` creates. A draft fires on the first clause of a
+ * question, the interviewer pauses, and the held segments join into something
+ * three times longer. The draft is still a clean prefix of the final, so without
+ * a ceiling it commits and Hue answers the opening clause of a question nobody
+ * finished asking.
+ */
+test('a prefix that tripled in length regenerates rather than committing', () => {
+  const { interim, final, settle } = harness()
+  interim('so tell me about a time you disagreed')
+  const fire = only(settle(), 'fire')
+  assert.equal(fire.text, 'so tell me about a time you disagreed')
+
+  const regenerate = only(
+    final(
+      'so tell me about a time you disagreed with your manager and how you handled ' +
+        'the conversation afterwards and what you learned from it'
+    ),
+    'regenerate'
+  )
+  assert.notEqual(regenerate.specId, fire.specId)
+})
+
+// The regression the prefix rule was written to prevent must stay prevented:
+// token F1 scores this pair 0.84 purely because the final is longer, which is a
+// length penalty dressed up as a similarity score.
+test('a prefix that added a few trailing words still commits', () => {
+  const { interim, final, settle } = harness()
+  interim('so tell me about a time you disagreed')
+  const fire = only(settle(), 'fire')
+
+  const commit = only(final('so tell me about a time you disagreed with your manager'), 'commit')
+  assert.equal(commit.specId, fire.specId)
+})
+
+// 8 tokens fired, so 14 is the last length that may commit on the prefix rule.
+// Pinned because the boundary is where a ratio change would silently go unnoticed.
+test('the ceiling admits a final exactly at the limit and refuses the next word', () => {
+  const fired = 'so tell me about a time you disagreed'
+  assert.equal(Math.floor(fired.split(' ').length * MAX_PREFIX_GROWTH), 14)
+
+  const atLimit = harness()
+  atLimit.interim(fired)
+  atLimit.settle()
+  only(atLimit.final(`${fired} with your manager about something big`), 'commit')
+
+  const pastLimit = harness()
+  pastLimit.interim(fired)
+  pastLimit.settle()
+  only(pastLimit.final(`${fired} with your manager about something big indeed`), 'regenerate')
+})
+
+test('the growth ceiling is the documented one', () => {
+  assert.equal(MAX_PREFIX_GROWTH, 1.75)
 })
