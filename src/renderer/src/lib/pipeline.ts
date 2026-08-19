@@ -5,6 +5,7 @@ import { parseProfileBundle, profilePromptBlock } from '../../../shared/profile'
 import { groundResponse, stripStreamingCitation, type Grounding } from '../../../shared/grounding'
 import { parseJobSpec, jobSpecPromptBlock, rawJobDescriptionBlock } from '../../../shared/job-spec'
 import { answerShapeFor } from '../../../shared/answer-shape'
+import { isFillerOnly } from '../../../shared/filler'
 import {
   SpeculationScheduler,
   type Command as SpeculationCommand,
@@ -422,6 +423,30 @@ export class VoicePipeline {
     }
 
     if (!text) {
+      this.setState('listening')
+      return
+    }
+
+    // A hesitation is not a question.
+    //
+    // The VAD segments on silence, so an interviewer pausing to think produces
+    // a complete segment reading "um" and nothing else. The transcript callback
+    // above has already run, so the utterance still appears on screen — the
+    // user can see what the mic heard — but nothing is generated for it.
+    //
+    // This sits BEFORE the scheduler, not inside `onFinal`, and both halves of
+    // that matter. An empty return from `onFinal` already means "declined the
+    // turn" and is deliberately answered anyway by the fall-through below, so a
+    // filler signalled that way would still reach the model. And gating here
+    // covers the unspeculated path too, which does not consult the scheduler at
+    // all.
+    //
+    // Leaving the scheduler untouched is correct rather than merely convenient:
+    // an "um" in the middle of a question does not end the question, so the
+    // draft in flight (if any) should survive it and be resolved by the real
+    // final that follows. A filler segment can never have fired a draft of its
+    // own — `maybeFire` requires `minWords` of them.
+    if (isFillerOnly(text)) {
       this.setState('listening')
       return
     }
