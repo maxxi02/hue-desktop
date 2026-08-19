@@ -468,7 +468,7 @@ export class VoicePipeline {
     this.setState('transcribing')
     let text: string
     try {
-      const res = await transcribe(audio)
+      const res = await transcribe(audio, this.settings)
       text = res.text
       if (text) this.callbacks.onUserTranscript?.(text, res.tier, res.latencyMs)
     } catch (e) {
@@ -549,7 +549,7 @@ export class VoicePipeline {
     }
 
     this.messages.push({ role: 'user', content: text })
-    this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
+    this.startResponse({ speak: this.speakResponses, maxTokens: 700 })
   }
 
   // ── Speculation ─────────────────────────────────────────────────────────
@@ -704,7 +704,7 @@ export class VoicePipeline {
           this.abortSpeculation()
           this.scheduler?.reset()
           this.messages.push({ role: 'user', content: finalText })
-          this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
+          this.startResponse({ speak: this.speakResponses, maxTokens: 700 })
           break
         case 'abort':
           this.abortSpeculation()
@@ -734,7 +734,7 @@ export class VoicePipeline {
     void window.hue.llm.start(streamId, {
       messages: [...this.messages, { role: 'user', content: text }],
       system: buildSystemPrompt(this.settings),
-      maxTokens: 500
+      maxTokens: 700
     })
   }
 
@@ -782,7 +782,7 @@ export class VoicePipeline {
       // Generate for real rather than adopting an empty answer, which would
       // leave the turn with nothing on screen and no completion to come.
       this.messages.push({ role: 'user', content: finalText })
-      this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
+      this.startResponse({ speak: this.speakResponses, maxTokens: 700 })
       return
     }
 
@@ -835,7 +835,7 @@ export class VoicePipeline {
       role: 'user',
       content: 'Please begin the interview with your first question.'
     })
-    this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
+    this.startResponse({ speak: this.speakResponses, maxTokens: 700 })
   }
 
   private startResponse(opts: { speak: boolean; maxTokens: number }): void {

@@ -47,3 +47,47 @@ test('a settings file carrying a selected cue sheet loads without it', () => {
   const migrated = migrateSettings(stale) as unknown as Record<string, unknown>
   assert.equal('selectedCueSheetId' in migrated, false)
 })
+
+// ── Speculation opt-in ─────────────────────────────────────────────────────
+
+/**
+ * Flipping the default is not enough on its own. `settings.ts` merges a saved
+ * file *over* DEFAULT_SETTINGS, so an install that already has one would keep
+ * speculation off forever and never get the latency the whole scheduler exists
+ * to buy. Same reasoning the retired-keys migration above is built on.
+ */
+test('an existing install is opted into speculative drafting once', () => {
+  const before = {
+    ...DEFAULT_SETTINGS,
+    speculativeDrafting: false,
+    speculationOptInApplied: false
+  }
+  const after = migrateSettings(before)
+  assert.equal(after.speculativeDrafting, true)
+  assert.equal(after.speculationOptInApplied, true)
+})
+
+// A user who turns it back off must stay off. Without the marker key the
+// migration would overrule them on every launch.
+test('a user who turned speculation off is not re-flipped', () => {
+  const before = {
+    ...DEFAULT_SETTINGS,
+    speculativeDrafting: false,
+    speculationOptInApplied: true
+  }
+  assert.equal(migrateSettings(before).speculativeDrafting, false)
+})
+
+// The opt-in has to run whether or not there were retired keys to clean up.
+// The migration used to return early when nothing was stale.
+test('the opt-in runs even when there are no retired keys to drop', () => {
+  const clean = { ...DEFAULT_SETTINGS, speculationOptInApplied: false }
+  assert.equal(migrateSettings(clean).speculativeDrafting, true)
+})
+
+// The model default is deliberately NOT migrated: swapping the model behind a
+// user who chose one is a quality change made without their consent.
+test('an existing install keeps whatever model it had', () => {
+  const before = { ...DEFAULT_SETTINGS, model: 'claude-opus-4-8' }
+  assert.equal(migrateSettings(before).model, 'claude-opus-4-8')
+})

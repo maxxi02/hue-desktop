@@ -24,9 +24,28 @@ export const RETIRED_SETTING_KEYS = [
 export function migrateSettings(settings: HueSettings): HueSettings {
   const record = settings as unknown as Record<string, unknown>
   const stale = RETIRED_SETTING_KEYS.filter((key) => key in record)
-  if (stale.length === 0) return settings
+  const needsOptIn = record.speculationOptInApplied !== true
+  // Identity when there is nothing to do, or every launch rewrites the file.
+  if (stale.length === 0 && !needsOptIn) return settings
 
   const next = { ...record }
   for (const key of stale) delete next[key]
+
+  // One-time speculative-drafting opt-in.
+  //
+  // Flipping the default in DEFAULT_SETTINGS reaches new installs only: a saved
+  // file wins on merge (see `settings.ts`), so an existing install would keep
+  // speculation off forever. The marker key is what keeps this a one-time
+  // change rather than a setting the app re-imposes on every launch, which is
+  // the difference between an opt-in and overruling the user.
+  //
+  // The model default is deliberately NOT migrated alongside it. Speculation is
+  // a strict improvement; a different model is a quality tradeoff, and making
+  // that choice on someone's behalf is not this function's business.
+  if (needsOptIn) {
+    next.speculativeDrafting = true
+    next.speculationOptInApplied = true
+  }
+
   return next as unknown as HueSettings
 }

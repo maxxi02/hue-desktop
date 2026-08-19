@@ -244,21 +244,47 @@ export interface HueSettings {
    * transcript, while the interviewer is still speaking, and commit that draft
    * when the final transcript agrees with what it was drafted from.
    *
-   * Off by default. It removes most of the LLM's generation time from the
-   * critical path, but it pays for that with extra output tokens on every draft
-   * that turns out to be wrong — so it stays opt-in until its hit rate has been
-   * measured on real sessions. Companion mode only: in interviewer mode the
-   * incoming voice is the *user's*, and drafting an answer to it is precisely
-   * the failure the scheduler's `self` speaker guard exists to prevent.
+   * On by default. It removes most of the LLM's generation time from the
+   * critical path, and it pays for that with extra output tokens on every draft
+   * that turns out to be wrong (the per-question fire cap bounds that).
+   *
+   * It was opt-in until its hit rate had been measured. What changed is that
+   * `endpointing.ts` now holds a finished segment to see whether the question
+   * continues, and that hold is only free while a draft is already in flight.
+   * Speculation stopped being purely a latency win and became what buys the
+   * budget to endpoint accurately, which is worth more than the tokens.
+   *
+   * The measurement still matters and still has not happened: the session-end
+   * metrics line in `pipeline.ts` is the instrument, and `minWords`/`stableMs`
+   * should not be tuned until it has reported a real hit rate. Below ~55% the
+   * trigger is too eager. See `SpeculationMetrics`.
+   *
+   * Companion mode only: in interviewer mode the incoming voice is the *user's*,
+   * and drafting an answer to it is precisely the failure the scheduler's `self`
+   * speaker guard exists to prevent.
    */
   speculativeDrafting: boolean
+
+  /**
+   * Whether the one-time speculative-drafting opt-in has run.
+   *
+   * A default cannot reach an install that already has a settings file:
+   * `settings.ts` merges the saved file over `DEFAULT_SETTINGS`. The migration
+   * flips speculation on once and records that here, so a user who then turns it
+   * back off is not overruled on the next launch.
+   */
+  speculationOptInApplied: boolean
 }
 
 export const DEFAULT_SETTINGS: HueSettings = {
   llmProvider: 'anthropic',
   ingestProvider: '',
   anthropicApiKey: '',
-  model: 'claude-opus-4-8',
+  // Sonnet rather than Opus on the companion path, where time-to-first-token is
+  // the product. New installs only: `migrateSettings` deliberately does not
+  // touch a saved model, because swapping the model behind a user who chose one
+  // is a quality change made without their consent.
+  model: 'claude-sonnet-5',
   ollamaBaseUrl: 'http://localhost:11434',
   ollamaModel: 'llama3.2',
   asrTier: 'auto',
@@ -297,7 +323,10 @@ export const DEFAULT_SETTINGS: HueSettings = {
   relayEnabled: false,
   relayBaseUrl: 'http://localhost:8787',
   stealthMode: false,
-  speculativeDrafting: false,
+  speculativeDrafting: true,
+  // True for a fresh install: there is no saved file to opt in, so the one-time
+  // opt-in is already spent.
+  speculationOptInApplied: true,
 }
 
 /** Keys that are sensitive and stored encrypted at rest via Electron safeStorage. */

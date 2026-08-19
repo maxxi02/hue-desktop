@@ -285,9 +285,16 @@ function resolveTier(s: HueSettings): ResolvedTier {
 
 /**
  * Unified entry point. Picks the best available ASR tier and transcribes.
+ *
+ * Settings are passed in rather than fetched. This runs the instant the
+ * interviewer stops talking, which is the most latency-sensitive moment in the
+ * product, and the IPC round trip this used to make bought nothing: the caller
+ * already holds the same object in `this.settings`.
  */
-export async function transcribe(audio: Float32Array): Promise<TranscriptionResult> {
-  const settings = await window.hue.settings.get()
+export async function transcribe(
+  audio: Float32Array,
+  settings: HueSettings
+): Promise<TranscriptionResult> {
   const tier = resolveTier(settings)
   const t0 = performance.now()
   const text = tier === 'cloud' ? await transcribeCloud(audio) : await transcribeOnDevice(audio)
