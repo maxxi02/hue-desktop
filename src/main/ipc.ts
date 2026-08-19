@@ -28,6 +28,7 @@ import {
 } from './ingest'
 import { analyzeJobDescription } from './job-spec-ingest'
 import { JOB_DESCRIPTION_LIMIT } from '../shared/job-spec'
+import { parseProfileBundle } from '../shared/profile'
 import { applyStealth, isStealthSupported } from './stealth'
 import { currentEvents, onRecorded } from './usage-store'
 import { summarize, type UsageSummary } from '../shared/usage'
@@ -254,10 +255,42 @@ export function registerIpc(): void {
     const spec = await analyzeJobDescription(bounded, (progress) => {
       if (!event.sender.isDestroyed()) event.sender.send('hue:jobspec:progress', progress)
     })
-    // Both fields in one write: the posting and its analysis are only ever read
-    // together, and two writes leave a window where a crash strands a spec whose
-    // source text is a different posting.
-    updateSettings({ jobDescription: bounded, jobSpecJson: JSON.stringify(spec) })
+    // The brief: the questions this posting implies, each pointed at the story
+    // in the user's own bank that answers it. It needs the bank, so an install
+    // with no résumé analysed simply gets no brief — there is nothing for the
+    // questions to point at.
+    //
+    // Failure here is not failure of the analysis. The spec is the thing the
+    // user pressed the button for and it is already built; losing the brief
+    // costs some context on later answers, while throwing would lose the spec
+    // too and make a working analysis look broken.
+    let briefJson = ''
+    const bundle = parseProfileBundle(getSettings().profileBundleJson)
+    if (bundle && bundle.stories.length > 0) {
+      try {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('hue:jobspec:progress', {
+            phase: 'Anticipating their questions',
+            pct: 85
+          })
+        }
+        const { jobDescriptionBrief } = await import('./resume-pipeline.ts')
+        const { clientForSettings } = await import('./structured-llm.ts')
+        const brief = await jobDescriptionBrief(bundle, bounded, await clientForSettings('ingest'))
+        briefJson = JSON.stringify(brief)
+      } catch (e) {
+        console.error('the job brief could not be generated; the analysis stands:', e)
+      }
+    }
+
+    // All three fields in one write: the posting, its analysis, and its brief
+    // are only ever read together, and separate writes leave a window where a
+    // crash strands an analysis whose source text is a different posting.
+    updateSettings({
+      jobDescription: bounded,
+      jobSpecJson: JSON.stringify(spec),
+      jobBriefJson: briefJson
+    })
     return spec
   })
   // A throw above persists nothing — deliberately, not by omission. Settings

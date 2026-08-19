@@ -6,6 +6,7 @@ import { groundResponse, stripStreamingCitation, type Grounding } from '../../..
 import { parseJobSpec, jobSpecPromptBlock, rawJobDescriptionBlock } from '../../../shared/job-spec'
 import { answerShapeFor } from '../../../shared/answer-shape'
 import { isFillerOnly } from '../../../shared/filler'
+import { parseJobBrief, jobBriefPromptBlock } from '../../../shared/job-brief'
 import {
   SpeculationScheduler,
   type Command as SpeculationCommand,
@@ -1193,6 +1194,24 @@ function buildCompanionPrompt(s: HueSettings): string {
     )
     parts.push(job)
   }
+
+  // The brief, last of the context blocks and after the posting deliberately.
+  //
+  // It names stories by the ids defined in the profile block above, so that
+  // block has to have been placed already or the ids point at nothing. And it
+  // is the most specific context here — the actual questions this posting
+  // implies — so it reads as a refinement of the posting rather than as a
+  // competing source.
+  //
+  // Empty when no posting has been analysed, or when it was analysed before a
+  // résumé existed. `jobBriefPromptBlock` returns '' in that case, so an
+  // install without one pays nothing for this.
+  const brief = parseJobBrief(s.jobBriefJson)
+  if (brief) {
+    const briefBlock = jobBriefPromptBlock(brief)
+    if (briefBlock) parts.push(briefBlock)
+  }
+
   parts.push(answerShapeFor(s.interviewMode))
   return `${parts.join(' ')}\n\n${HUMAN_VOICE_GUIDANCE}`
 }

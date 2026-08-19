@@ -21,6 +21,7 @@ import {
   JOB_DESCRIPTION_LIMIT,
   type JobSpec
 } from '../../../shared/job-spec'
+import { parseJobBrief } from '../../../shared/job-brief'
 import { clampCursor, nextAfterAnswered, stepCursor } from '../lib/gapCursor'
 import { SectionIcon } from './SectionIcon'
 
@@ -613,6 +614,12 @@ export function Settings({
   // than mirrored into its own state, so the pane and the prompt builder read
   // the identical source.
   const jobSpec: JobSpec | null = s ? parseJobSpec(s.jobSpecJson) : null
+  // The anticipated questions, and how many of them the user's own stories can
+  // actually answer. The second number is the useful one: it is the difference
+  // between "Hue knows what is coming" and "Hue knows what is coming and has
+  // something of yours to say about it".
+  const jobBrief = s ? parseJobBrief(s.jobBriefJson) : null
+  const briefMatched = jobBrief?.likelyQuestions.filter((q) => q.storyId !== null).length ?? 0
   const jobSpecStale = analysedText !== null && analysedText !== (s?.jobDescription ?? '').trim()
 
   // Groq's free tier caps a single request at 8,000 tokens; story mining asks
@@ -1702,6 +1709,13 @@ export function Settings({
                               </span>
                             )}
                           </div>
+                        </div>
+                      )}
+                      {jobBrief && jobBrief.likelyQuestions.length > 0 && (
+                        <div style={{ marginTop: 10, color: 'var(--text-muted)', fontSize: 12 }}>
+                          {jobBrief.likelyQuestions.length} anticipated question
+                          {jobBrief.likelyQuestions.length === 1 ? '' : 's'}, {briefMatched} matched
+                          to your stories. Hue carries these into every answer.
                         </div>
                       )}
                       {jobSpec.likelyQuestions.length > 0 && (

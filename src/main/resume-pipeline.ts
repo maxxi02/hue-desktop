@@ -1,5 +1,6 @@
 import { checkBundle, pruneUngrounded, type GroundingIssue } from './resume-grounding.ts'
 import type { LlmClient } from './structured-llm.ts'
+import type { JobBrief } from '../shared/job-brief.ts'
 // Sealing and token estimation live in main, not in `shared/`: they need
 // `node:crypto`, which the renderer bundle cannot have.
 import { estimateTokens, sealBundle } from './resume-profile.ts'
@@ -592,9 +593,26 @@ export async function answerGap(
   }
 }
 
-export interface JobDescriptionBrief {
-  likelyQuestions: { question: string; storyId: string | null; competency: Competency }[]
-  uncoveredRequirements: { requirement: string; note: string }[]
+/**
+ * Defined in `shared/job-brief.ts` so the renderer can carry it into the
+ * prompt. Aliased rather than re-declared: two structurally identical types
+ * drift the moment one of them gains a field.
+ */
+export type JobDescriptionBrief = JobBrief
+
+/**
+ * Just the part of a bundle this pass reads.
+ *
+ * There are two parallel `ProfileBundle` types — the main-process one in
+ * `resume-types.ts` and the wider one in `shared/profile.ts` the settings blob
+ * parses into — and they differ only in how tightly `competencies` is typed.
+ * This pass reads three fields and writes none, so naming those three lets both
+ * satisfy it structurally and avoids the unsafe cast `answerGap` needs (see
+ * ingest.ts). Asking for less is what makes the caller's choice of bundle
+ * irrelevant.
+ */
+interface StoryBankView {
+  stories: { id: string; competencies: readonly string[]; situation: string }[]
 }
 
 /**
@@ -604,7 +622,7 @@ export interface JobDescriptionBrief {
  * before an interview rather than during one.
  */
 export async function jobDescriptionBrief(
-  bundle: ProfileBundle,
+  bundle: StoryBankView,
   jobDescription: string,
   llm: LlmClient
 ): Promise<JobDescriptionBrief> {

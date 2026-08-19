@@ -180,6 +180,15 @@ export interface HueSettings {
    * clearing one field rather than by repairing a nested object.
    */
   jobSpecJson: string
+  /**
+   * The `JobBrief` for this posting, stored as JSON. Empty until a posting is
+   * analysed while a profile bundle exists.
+   *
+   * Written in the same update as `jobSpecJson`, never separately: the two are
+   * derived from one posting and only ever read together, so a split write
+   * leaves a window where a crash strands a brief describing a different job.
+   */
+  jobBriefJson: string
   interviewMode: InterviewMode
   /** Whether Hue acts as the interviewer or as a companion answering the interviewer. */
   hueMode: HueMode
@@ -277,6 +286,7 @@ export const DEFAULT_SETTINGS: HueSettings = {
   jobTitle: '',
   jobDescription: '',
   jobSpecJson: '',
+  jobBriefJson: '',
   interviewMode: 'practice',
   hueMode: 'companion',
   audioSource: 'microphone',
