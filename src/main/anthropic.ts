@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { WebContents } from 'electron'
 import { getSettings } from './settings'
+import { createStallGuard } from './stream-resilience.ts'
 import { record } from './usage-store'
 import { parseRateLimitHeaders } from '../shared/usage'
 import type { LlmMessage, LlmStreamRequest } from '../shared/types'
@@ -67,15 +68,22 @@ export function startLlmStream(sender: WebContents, streamId: string, req: LlmSt
   }
 
   let finished = false
+  // Assigned once the stream (and its stall guard) exist. Held here so both
+  // finishers can stop the watchdog: they are the funnel every terminal path
+  // goes through, and a timer left armed past the end of a turn would abort the
+  // *next* one.
+  let clearStall: () => void = () => {}
   const finishDone = (aborted: boolean): void => {
     if (finished) return
     finished = true
+    clearStall()
     active.delete(streamId)
     send('hue:llm:done', { streamId, aborted })
   }
   const finishError = (message: string): void => {
     if (finished) return
     finished = true
+    clearStall()
     active.delete(streamId)
     send('hue:llm:error', { streamId, message })
   }
@@ -85,6 +93,22 @@ export function startLlmStream(sender: WebContents, streamId: string, req: LlmSt
     const { model } = getSettings()
     const aborter = new AbortController()
     active.set(streamId, { abort: () => aborter.abort() })
+
+    /**
+     * Watchdog for a socket that goes quiet without closing.
+     *
+     * The SDK's stream reports 'text', 'end', 'abort' and 'error', and a dead
+     * connection produces none of them: no delta, no done, no error. The
+     * renderer then holds `currentStreamId` forever, the state never leaves
+     * 'speaking', and the answer card sits truncated mid-sentence for the rest
+     * of the interview. That is not hypothetical, it is what happened.
+     *
+     * Aborting turns the hang into an ordinary aborted turn, which the pipeline
+     * already knows how to recover from. `openai-compat.ts` has carried this
+     * same guard for the same reason; this path was simply missed.
+     */
+    const guard = createStallGuard(() => aborter.abort())
+    clearStall = guard.clear
 
     const stream = anthropic.messages.stream(
       {
@@ -101,7 +125,12 @@ export function startLlmStream(sender: WebContents, streamId: string, req: LlmSt
       { signal: aborter.signal }
     )
 
-    stream.on('text', (delta) => send('hue:llm:delta', { streamId, text: delta }))
+    stream.on('text', (delta) => {
+      // Every token is proof the socket is alive. Re-arm before forwarding, so a
+      // slow-but-flowing stream is never mistaken for a dead one.
+      guard.beat()
+      send('hue:llm:delta', { streamId, text: delta })
+    })
     stream.on('end', () => {
       // Token counts only, never headroom: `messages.stream()` hands back an
       // SDK stream rather than an HTTP response, so `anthropic-ratelimit-*`
