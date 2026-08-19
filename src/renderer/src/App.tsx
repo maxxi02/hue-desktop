@@ -2,6 +2,7 @@ import { Fragment, useState, useEffect, useLayoutEffect, useRef, useCallback, us
 import { useVoiceMode } from './hooks/useVoiceMode'
 import type { PipelineState } from './lib/pipeline'
 import { isAtBottom } from './lib/stickToBottom'
+import { paragraphs } from './lib/paragraphs'
 import type { VoiceTurn, CaptureTurn } from './hooks/useVoiceMode'
 import type { ScreenCapture } from '@shared/types'
 import { describeStory, type Grounding } from '@shared/grounding'
@@ -969,7 +970,15 @@ export default function App(): React.JSX.Element {
         <main className="app-main app-main--glance">
           <div className="glance" ref={glanceRef}>
             {latestAnswer ? (
-              <div className="glance-text">{latestAnswer.text}</div>
+              <div className="glance-text">
+                {/* Index keys, deliberately. A key derived from the text would
+                    change on every streamed token and re-mount the whole answer
+                    dozens of times a second; see the note on .glance-text in
+                    main.css. The list only ever grows at its end. */}
+                {paragraphs(latestAnswer.text).map((beat, i) => (
+                  <p key={i}>{beat}</p>
+                ))}
+              </div>
             ) : (
               <div className="glance-text glance-text--waiting">
                 {voice.active
@@ -1046,7 +1055,13 @@ export default function App(): React.JSX.Element {
                         alt="Captured screen sent to Hue"
                       />
                     ) : (
-                      <div className="bubble-text">{msg.text}</div>
+                      <div className="bubble-text">
+                        {msg.role === 'assistant' ? (
+                          paragraphs(msg.text).map((beat, i) => <p key={i}>{beat}</p>)
+                        ) : (
+                          <>{msg.text}</>
+                        )}
+                      </div>
                     )}
                     {msg.grounding && <Receipt grounding={msg.grounding} />}
                     {msg.role === 'user' && msg.tier && (

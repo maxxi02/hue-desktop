@@ -479,6 +479,35 @@
   user-select: text;
 }
 
+/*
+ * The beats of an answer.
+ *
+ * The answer arrives as three or four short blocks rather than one paragraph,
+ * because this surface is read aloud: the user looks down for a fraction of a
+ * second between spoken sentences and has to find their place again. An
+ * unbroken block gives the eye nothing to land on.
+ *
+ * Margin between blocks only, never before the first or after the last. The
+ * grounding receipt overlaps into the padding under the final line, and a
+ * trailing margin here would push it out of place.
+ */
+.glance-text p {
+  margin: 0;
+}
+
+.glance-text p + p {
+  margin-top: calc(var(--glance-size) * var(--glance-leading) * 0.55);
+}
+
+/* Same treatment in the transcript, at that pane's own rhythm. */
+.bubble-text p {
+  margin: 0;
+}
+
+.bubble-text p + p {
+  margin-top: 0.7em;
+}
+
 /* Waiting is a placeholder, not content — muted, and at the same size so the
    panel does not resize the instant the first token lands. */
 .glance-text--waiting {
