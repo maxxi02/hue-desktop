@@ -806,7 +806,9 @@ export class VoicePipeline {
     // Companion mode never speaks its answers aloud; speculation is companion-only.
     this.currentSpeak = false
     this.currentStreamId = finished ? null : streamId
-    this.setState(text ? 'speaking' : 'thinking')
+    // Never 'speaking' here: currentSpeak was just set false two lines up, and
+    // speculation is companion-only, which never speaks aloud.
+    this.setState('thinking')
     if (text) this.callbacks.onAssistantText?.(stripStreamingCitation(text))
     if (finished) this.completeTurn()
   }
@@ -896,7 +898,12 @@ export class VoicePipeline {
       return
     }
     if (e.streamId !== this.currentStreamId) return
-    if (this.state !== 'speaking') this.setState('speaking')
+    // 'speaking' means audio is actually playing, not merely that a response is
+    // streaming. Companion mode never speaks (see speakResponses), so entering
+    // it there put SPEAKING on the badge of an app whose whole promise is that
+    // it stays silent during a live call. A silent turn stays 'thinking' until
+    // it completes.
+    this.setState(this.currentSpeak ? 'speaking' : 'thinking')
     this.assistantText += e.text
     if (this.currentSpeak) this.tts.appendText(e.text)
     // Display text only: the citation line is scaffolding the user must never be
