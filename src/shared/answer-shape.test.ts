@@ -21,6 +21,38 @@ test('live mode stays terse and never mentions the markers', () => {
   assert.doesNotMatch(shape, /##/)
 })
 
+/**
+ * Each mode gets the length its purpose calls for, rather than one number
+ * imposed on all three.
+ *
+ * A real interviewer expects roughly a minute for "tell me about a time", and
+ * fifteen seconds for "do you know X". A single cap serves one of those well and
+ * the other badly, which is why the shared cap tried earlier was reverted.
+ */
+test('live is the shortest, practice the middle, star the longest', () => {
+  const wordCap = (mode: 'practice' | 'star' | 'live'): number => {
+    const match = /about (\d+) words/.exec(answerShapeFor(mode))
+    assert.ok(match, `${mode} states no word cap`)
+    return Number(match[1])
+  }
+  assert.equal(wordCap('live'), 40)
+  assert.equal(wordCap('practice'), 90)
+  assert.equal(wordCap('star'), 150)
+  assert.ok(wordCap('live') < wordCap('practice'))
+  assert.ok(wordCap('practice') < wordCap('star'))
+})
+
+// Drift guard, in the spirit of provider-tables.test.ts: a fourth mode must not
+// be able to ship with no length rule at all. star and live carried none for
+// months, which is how an answer ran to 230 words in one block.
+test('every mode states a cap in both words and seconds', () => {
+  for (const mode of ['practice', 'star', 'live'] as const) {
+    const shape = answerShapeFor(mode)
+    assert.match(shape, /about \d+ words/, `${mode} has no word cap`)
+    assert.match(shape, /second|minute/, `${mode} does not say what the cap is for`)
+  }
+})
+
 // HUMAN_VOICE_GUIDANCE forbids dashes in Hue's output, and a dash anywhere in
 // the instruction teaches the model to use one no matter what the abstract rule
 // says. That is how em dashes got into the answers once before, so it is pinned
