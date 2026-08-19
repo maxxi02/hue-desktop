@@ -20,7 +20,6 @@ import type {
   IngestProgress,
   ProfileBundle
 } from '../shared/profile'
-import type { CueSheet } from '../shared/cuesheet'
 import type { JobSpec } from '../shared/job-spec'
 import type { MemoryPolicy, MemorySnapshot } from '../shared/memory-policy'
 
@@ -101,21 +100,6 @@ const hue = {
       ipcRenderer.send('hue:usage:subscribe')
       return sub('hue:usage:changed', cb)
     }
-  },
-  cueSheet: {
-    /**
-     * Upload a cue sheet document and wait for the parsed cards. Takes a while;
-     * subscribe to `onProgress` first or the pane looks frozen.
-     */
-    ingest: (bytes: ArrayBuffer, filename: string, label: string): Promise<CueSheet> =>
-      ipcRenderer.invoke('hue:cuesheet:ingest', bytes, filename, label),
-    list: (): Promise<CueSheet[]> => ipcRenderer.invoke('hue:cuesheet:list'),
-    /** Arms the given sheet id as `selectedCueSheetId`. */
-    select: (id: string): Promise<HueSettings> => ipcRenderer.invoke('hue:cuesheet:select', id),
-    /** Deletes the sheet; clears the selection if it was the one selected. */
-    delete: (id: string): Promise<void> => ipcRenderer.invoke('hue:cuesheet:delete', id),
-    onProgress: (cb: (p: { phase: string; pct: number }) => void): (() => void) =>
-      sub('hue:cuesheet:progress', cb)
   },
   jobSpec: {
     /** Analyse the pasted posting into a JobSpec and persist it. Subscribe to onProgress first. */

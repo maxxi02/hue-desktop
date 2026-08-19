@@ -15,7 +15,9 @@ import type { HueSettings } from '../shared/types.ts'
 export const RETIRED_SETTING_KEYS = [
   'ingestBaseUrl',
   'ingestAccountId',
-  'ingestAccountToken'
+  'ingestAccountToken',
+  // The cue sheet feature, removed 2026-08-19.
+  'selectedCueSheetId'
 ] as const
 
 /** Heal settings read from disk, dropping keys no build can use any more. */

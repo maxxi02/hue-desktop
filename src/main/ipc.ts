@@ -26,10 +26,8 @@ import {
   refreshBundle,
   skipProfileGap
 } from './ingest'
-import { ingestCueSheet } from './cuesheet-ingest'
 import { analyzeJobDescription } from './job-spec-ingest'
 import { JOB_DESCRIPTION_LIMIT } from '../shared/job-spec'
-import { listSheets, deleteSheet, sheetsDir, isValidSheetId } from './cuesheet-store'
 import { applyStealth, isStealthSupported } from './stealth'
 import { currentEvents, onRecorded } from './usage-store'
 import { summarize, type UsageSummary } from '../shared/usage'
@@ -243,31 +241,6 @@ export function registerIpc(): void {
   ipcMain.handle('hue:profile:skip-gap', async (_e, gapId: string) => {
     if (typeof gapId !== 'string' || !gapId) throw new Error('A gap id is required.')
     return skipProfileGap(gapId)
-  })
-
-  // Cue sheets. Same progress-on-a-side-channel shape as profile ingest: the
-  // call takes long enough that a pane showing nothing is indistinguishable
-  // from a hang.
-  ipcMain.handle(
-    'hue:cuesheet:ingest',
-    async (event, bytes: ArrayBuffer, filename: string, label: string) => {
-      return ingestCueSheet(new Uint8Array(bytes), filename, label, (progress) => {
-        if (!event.sender.isDestroyed()) event.sender.send('hue:cuesheet:progress', progress)
-      })
-    }
-  )
-
-  ipcMain.handle('hue:cuesheet:list', () => listSheets(sheetsDir()))
-  // '' is the "no sheet armed" sentinel the radio group sends; anything else
-  // has to be a well-formed id, or a malformed one gets persisted here and
-  // throws much later out of `fileFor` when the user tries to delete it.
-  ipcMain.handle('hue:cuesheet:select', (_e, id: string) => {
-    if (id !== '' && !isValidSheetId(id)) throw new Error(`Invalid cue sheet id: ${id}`)
-    return updateSettings({ selectedCueSheetId: id })
-  })
-  ipcMain.handle('hue:cuesheet:delete', (_e, id: string) => {
-    deleteSheet(sheetsDir(), id)
-    if (getSettings().selectedCueSheetId === id) updateSettings({ selectedCueSheetId: '' })
   })
 
   // The job posting. Same progress-on-a-side-channel shape again, and for the

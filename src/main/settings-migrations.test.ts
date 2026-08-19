@@ -35,3 +35,15 @@ test('settings with nothing retired are returned unchanged, or every launch chur
   const clean = { ...DEFAULT_SETTINGS }
   assert.equal(migrateSettings(clean), clean)
 })
+
+// The cue sheet feature was removed on 2026-08-19. `selectedCueSheetId` named
+// a sheet on disk that nothing reads any more, and without retiring it the key
+// survives the merge in `readFromDisk` and is re-persisted on every write.
+test('a settings file carrying a selected cue sheet loads without it', () => {
+  const stale = {
+    ...DEFAULT_SETTINGS,
+    selectedCueSheetId: 'sheet-abc123'
+  } as unknown as typeof DEFAULT_SETTINGS
+  const migrated = migrateSettings(stale) as unknown as Record<string, unknown>
+  assert.equal('selectedCueSheetId' in migrated, false)
+})
