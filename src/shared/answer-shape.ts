@@ -53,8 +53,9 @@ export const LABELLED_SHAPE =
   'If no story in the background genuinely fits the question, omit the "## scenario" section ' +
   'entirely and let the answer be the sections above. Never invent a scenario to fill the ' +
   'space, and never bend a story that does not apply. ' +
-  'Keep the whole answer under about 120 words. It is read aloud at a glance, and a longer ' +
-  'answer is one the user cannot find their place in.'
+  'Keep the whole answer under about 90 words, which is roughly 40 seconds said out loud. ' +
+  'The user has to speak the whole thing in a live interview while reading it at a glance, so a ' +
+  'longer answer is one they lose their place in. Shorter is always fine.'
 
 const STAR_SHAPE = 'Structure the answer using the STAR method (Situation, Task, Action, Result).'
 

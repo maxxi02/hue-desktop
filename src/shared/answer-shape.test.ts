@@ -56,5 +56,12 @@ test('the shape says the markers are stripped and never spoken', () => {
 // The screenshots that motivated this shape ran to roughly 230 words in one
 // block. A cap the model can act on is the only thing that was missing.
 test('the shape caps the length, because the surface is read at a glance', () => {
-  assert.match(LABELLED_SHAPE, /120 words/)
+  assert.match(LABELLED_SHAPE, /90 words/)
+})
+
+// The cap is stated in seconds as well as words. The number is what the model
+// can count; the seconds are what the limit is actually for, and an instruction
+// carrying its own purpose survives a long prompt better than a bare figure.
+test('the cap says what it is for, not just how many words', () => {
+  assert.match(LABELLED_SHAPE, /seconds/)
 })

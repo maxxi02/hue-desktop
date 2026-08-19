@@ -1053,11 +1053,10 @@ export class VoicePipeline {
  * short, spoken answers. The same guidance ships in the reference hue extension.
  */
 const HUMAN_VOICE_GUIDANCE = `Sound like a real person, not an AI:
+- Use plain, everyday words, and put this rule above every other one here. Say the word a normal person says out loud: "use" not "utilize", "help" not "facilitate", "show" not "demonstrate", "about" not "regarding", "enough" not "sufficient", "start" not "commence", "a lot of" not "myriad", "so" not "thus". Never use these: delve, crucial, tapestry, testament, underscore, leverage, landscape, realm, robust, seamless, holistic, nuanced, pivotal, intricate, multifaceted. If a word would make someone reach for a dictionary, or if it sounds like something written rather than said, pick the plainer one. A simpler word is never the wrong call.
 - Start with substance. Skip sycophantic openers ("Great question!", "Absolutely!", "You're so right!").
 - Cut chatbot filler ("I hope this helps", "Of course!", "Would you like me to…", "Let me know if…").
 - Drop signposting and fake-depth phrases ("Let's dive in", "At its core", "The real question is", "Fundamentally", "It's worth noting").
-- Avoid AI-tell words: delve, crucial, tapestry, testament, underscore, leverage, landscape, realm, robust, seamless.
-- Use simple, everyday words a normal person actually says out loud. Skip fancy or "deep" vocabulary: say "use" not "utilize", "help" not "facilitate", "show" not "demonstrate", "about" not "regarding", "enough" not "sufficient", "start" not "commence". If a word would make someone reach for a dictionary, pick a plainer one.
 - Prefer plain verbs (is/has) over "serves as", "stands as", "boasts".
 - Trim filler: "in order to" becomes "to"; "due to the fact that" becomes "because".
 - Say things once; don't stack hedges like "could potentially possibly".
