@@ -52,16 +52,39 @@ export const LABELLED_SHAPE =
   'half of it and the sections above are the other half. ' +
   'If no story in the background genuinely fits the question, omit the "## scenario" section ' +
   'entirely and let the answer be the sections above. Never invent a scenario to fill the ' +
-  'space, and never bend a story that does not apply. ' +
-  'Keep the whole answer under about 120 words. It is read aloud at a glance, and a longer ' +
-  'answer is one the user cannot find their place in.'
+  'space, and never bend a story that does not apply.'
 
 const STAR_SHAPE = 'Structure the answer using the STAR method (Situation, Task, Action, Result).'
 
 const LIVE_SHAPE =
   'Give a tight, direct answer the user can say immediately. Brevity over completeness.'
 
-export function answerShapeFor(mode: InterviewMode): string {
+/**
+ * How long the answer may take to say out loud.
+ *
+ * Stated in both words and seconds deliberately. The model can count words; the
+ * seconds are what the constraint is actually for, and an instruction that
+ * carries its own purpose survives a long prompt better than a bare number.
+ *
+ * A ceiling rather than a target, and the phrasing matters more than it looks.
+ * `LIVE_SHAPE` exists to be terser than this, so a cap worded as a target would
+ * make live answers longer than they are today, which is the opposite of that
+ * mode's whole point.
+ *
+ * Composed onto every shape by `answerShapeFor` rather than written into each
+ * one. Two copies of a number are two numbers that can disagree, and a shape
+ * disagreeing with a neighbouring rule is exactly what produced the unbroken
+ * walls of text this replaces.
+ */
+export const SPOKEN_LENGTH_CAP =
+  'Never write more than about 70 words. That is roughly 30 seconds read aloud, and it is a ' +
+  'hard ceiling rather than a target: shorter is always fine, longer never is. The user has to ' +
+  'say the whole thing out loud in a live interview, so an answer they cannot finish is worse ' +
+  'than one that stops early. If the material will not fit, cut the least specific part rather ' +
+  'than compressing everything into a summary.'
+
+/** The shape alone, before the length cap is composed onto it. */
+function shapeFor(mode: InterviewMode): string {
   switch (mode) {
     case 'star':
       return STAR_SHAPE
@@ -70,4 +93,8 @@ export function answerShapeFor(mode: InterviewMode): string {
     default:
       return LABELLED_SHAPE
   }
+}
+
+export function answerShapeFor(mode: InterviewMode): string {
+  return `${shapeFor(mode)} ${SPOKEN_LENGTH_CAP}`
 }

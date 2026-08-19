@@ -1,9 +1,29 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { answerShapeFor, LABELLED_SHAPE } from './answer-shape.ts'
+import { answerShapeFor, LABELLED_SHAPE, SPOKEN_LENGTH_CAP } from './answer-shape.ts'
 
 test('practice mode gets the labelled sections', () => {
-  assert.equal(answerShapeFor('practice'), LABELLED_SHAPE)
+  assert.ok(answerShapeFor('practice').includes(LABELLED_SHAPE))
+})
+
+// The cap is composed onto every shape rather than written into each one, so a
+// fourth mode cannot be added without it. Unbounded length is the defect this
+// exists to prevent, and star and live carried no length rule at all before.
+test('every mode carries the spoken length cap', () => {
+  for (const mode of ['practice', 'star', 'live'] as const) {
+    assert.ok(answerShapeFor(mode).includes(SPOKEN_LENGTH_CAP), `${mode} is missing the cap`)
+  }
+})
+
+test('the cap is 70 words, stated as 30 seconds spoken', () => {
+  assert.match(SPOKEN_LENGTH_CAP, /70 words/)
+  assert.match(SPOKEN_LENGTH_CAP, /30 seconds/)
+})
+
+// A ceiling, not a target. Phrased as a target it would make live answers
+// LONGER than they are now, which is the opposite of what that mode is for.
+test('the cap reads as a ceiling rather than a target', () => {
+  assert.match(SPOKEN_LENGTH_CAP, /hard ceiling rather than a target/)
 })
 
 // star and live are deliberate choices the user made, and each already carries
@@ -53,8 +73,9 @@ test('the shape says the markers are stripped and never spoken', () => {
   assert.match(LABELLED_SHAPE, /strips the markers/)
 })
 
-// The screenshots that motivated this shape ran to roughly 230 words in one
-// block. A cap the model can act on is the only thing that was missing.
-test('the shape caps the length, because the surface is read at a glance', () => {
-  assert.match(LABELLED_SHAPE, /120 words/)
+// The length rule lives in SPOKEN_LENGTH_CAP now, composed onto every mode.
+// Duplicating it inside the shape would be two numbers to disagree with each
+// other, which is the class of bug that produced the walls of text.
+test('the labelled shape states no length of its own', () => {
+  assert.doesNotMatch(LABELLED_SHAPE, /\d+ words/)
 })
