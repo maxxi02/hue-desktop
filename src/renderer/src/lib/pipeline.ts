@@ -9,16 +9,6 @@ import {
   type Command as SpeculationCommand,
   type Speaker
 } from '../../../shared/speculation'
-import {
-  CueMatcher,
-  cueSheetPromptBlock,
-  cueCardPromptBlock,
-  gateCommands,
-  newLatchState,
-  type CueSheet,
-  type CueCard,
-  type GateDecision
-} from '../../../shared/cuesheet'
 import type {
   HueSettings,
   LlmMessage,
@@ -56,24 +46,6 @@ export interface PipelineCallbacks {
    */
   onAssistantComplete?: (text: string, grounding: Grounding | null) => void
   onError?: (message: string) => void
-  /**
-   * Fired when a prepared cue card latches onto the current question (the
-   * user's own prepared answer), or with null when the latch clears (a new
-   * question began, or the session tore down). Optional so existing callers
-   * keep compiling.
-   */
-  onCueCard?: (card: CueCard | null) => void
-  /**
-   * Fired once per session start with the armed cue sheet, or with null when no
-   * sheet is armed (or the armed one could not be loaded).
-   *
-   * Separate from `onCueCard` because the two answer different questions.
-   * `onCueCard` is "which question is being asked right now"; this is "what did
-   * the user prepare", which the document panel needs in full and up front —
-   * the panel exists to be read *before* and *between* questions, not only at
-   * the moment one matches.
-   */
-  onCueSheet?: (sheet: CueSheet | null) => void
 }
 
 /** The VAD (and Whisper) sample rate; every buffer below is mono Float32 at this rate. */
@@ -190,18 +162,6 @@ export class VoicePipeline {
    */
   private scheduler: SpeculationScheduler | null = null
 
-  /**
-   * The cue matcher for the session's armed cue sheet, or null when none is
-   * selected (or the selected id no longer resolves to a sheet) — the pipeline
-   * then behaves exactly as it does without the feature. Built once per
-   * session in `start()`, not per utterance.
-   */
-  private matcher: CueMatcher | null = null
-  /** The armed sheet itself, so its prepared points can inform a generated answer. */
-  private armedSheet: CueSheet | null = null
-  /** Which card (if any) is latched onto the current question. */
-  private latch = newLatchState()
-
   /** The in-flight speculative LLM stream, if any. Never `currentStreamId`. */
   private specStreamId: string | null = null
   /** The scheduler's id for that stream — the guard that stale deltas are tested against. */
@@ -210,16 +170,6 @@ export class VoicePipeline {
   private specText = ''
   /** True once the speculative stream finished on its own, before the final arrived. */
   private specFinished = false
-
-  /**
-   * The most recent interim transcript text, held here because
-   * `SpeculationScheduler.latestInterim` is private and unreadable from the
-   * caller. `beginSegment`'s tick timer has no text of its own — `onTick` takes
-   * none — so it reads this instead of the scheduler's internal copy. Updated
-   * in `runInterim` immediately after a new interim is transcribed, and cleared
-   * whenever a segment opens or closes.
-   */
-  private lastInterimText = ''
 
   /** Speech captured since the VAD opened this segment, for interim transcription. */
   private speechFrames: Float32Array[] = []
@@ -251,18 +201,6 @@ export class VoicePipeline {
     // Surface the loading phase immediately: model downloads + VAD init can take
     // a while on the first run, and the UI should reflect that rather than look dead.
     this.setState('connecting')
-
-    // Load the armed cue sheet, if any. An id that no longer resolves (sheet
-    // deleted, settings stale) leaves the matcher null and the pipeline behaves
-    // exactly as it does without the feature.
-    //
-    // Guarded, and the guard is the point: this runs before mic and ASR setup,
-    // so an unhandled rejection here — IPC failure, an unreadable sheets
-    // directory, a truncated sheet that makes `new CueMatcher` throw — would
-    // propagate out of `start()` and the interview would never begin. A cue
-    // sheet is an optional aid; it must never be able to stop a session.
-    await this.armCueSheet()
-    this.latch = newLatchState()
 
     // Listen for streamed LLM tokens once; filter by the active streamId.
     this.unsubscribe.push(
@@ -527,11 +465,10 @@ export class VoicePipeline {
     this.speechSamples = 0
     this.bufferedSamples = 0
     this.samplesAtLastInterim = 0
-    this.lastInterimText = ''
     if (this.tickTimer === null) {
       this.tickTimer = setInterval(() => {
         if (!this.scheduler) return
-        this.applyInterimCommands(this.scheduler.onTick(Date.now()), this.lastInterimText)
+        this.applyInterimCommands(this.scheduler.onTick(Date.now()))
       }, SPECULATION_TICK_MS)
     }
   }
@@ -543,7 +480,6 @@ export class VoicePipeline {
     this.speechSamples = 0
     this.bufferedSamples = 0
     this.samplesAtLastInterim = 0
-    this.lastInterimText = ''
     if (this.tickTimer !== null) {
       clearInterval(this.tickTimer)
       this.tickTimer = null
@@ -602,10 +538,8 @@ export class VoicePipeline {
       // way, and feeding a late interim now would re-open a question the
       // scheduler has just closed.
       if (!this.speechActive || !this.scheduler) return
-      this.lastInterimText = text
       this.applyInterimCommands(
-        this.scheduler.onInterim(text, this.speakerOfIncomingSpeech(), Date.now()),
-        text
+        this.scheduler.onInterim(text, this.speakerOfIncomingSpeech(), Date.now())
       )
     } catch (e) {
       // An interim is best-effort scaffolding. Surfacing its failure would put an
@@ -617,84 +551,8 @@ export class VoicePipeline {
     }
   }
 
-  /**
-   * Ask the matcher what to do about the text so far.
-   *
-   * Returns null-latch on the interim path: suppression is decided live, but
-   * nothing is ever put on screen until the final. A card that changed twice
-   * while the interviewer was still talking is exactly the distraction the
-   * glance UI exists to avoid.
-   */
-  /**
-   * Load the armed cue sheet and build its matcher.
-   *
-   * Public and callable mid-session, which is the whole point. This used to run
-   * only inside `start()`, so a sheet armed while a session was already running
-   * was never matched against — and once the panel began reading the armed
-   * sheet straight from settings, the sheet was visibly on screen the entire
-   * time it was being ignored. A user watching their own prepared answer sit
-   * there while Hue invented a different one has every reason to conclude the
-   * feature is broken; it was simply matching against nothing.
-   *
-   * `settings` is re-read rather than trusted, because the selection changes in
-   * the drawer and the pipeline's copy predates it.
-   *
-   * Never throws. A cue sheet is an optional aid and must not be able to stop
-   * or interrupt a session — hence the load and the emit guarded separately, so
-   * a failing subscriber cannot discard a perfectly good matcher.
-   */
-  async armCueSheet(): Promise<void> {
-    this.matcher = null
-    let armedSheet: CueSheet | null = null
-    try {
-      const settings = await window.hue.settings.get()
-      this.settings = settings
-      if (settings.selectedCueSheetId) {
-        const sheets = await window.hue.cueSheet.list()
-        const sheet = sheets.find((s: CueSheet) => s.id === settings.selectedCueSheetId)
-        armedSheet = sheet ?? null
-        this.matcher = sheet ? new CueMatcher(sheet) : null
-      }
-    } catch {
-      armedSheet = null
-      this.matcher = null
-    }
-    this.armedSheet = armedSheet
-    try {
-      this.callbacks.onCueSheet?.(armedSheet)
-    } catch {
-      // The panel is an aid; the interview is not.
-    }
-  }
-
-  private decide(text: string, isFinal: boolean): GateDecision {
-    if (!this.matcher || text.trim().length === 0) {
-      return { suppress: false, latch: null, isFinal }
-    }
-    const result = this.matcher.match(text)
-    if (!isFinal) {
-      return { suppress: this.matcher.suppresses(result), latch: null, isFinal }
-    }
-    const latch = this.matcher.renders(result) ? result.cardId : null
-    return { suppress: false, latch, isFinal }
-  }
-
   /** Commands produced while the interviewer is still speaking. */
-  private applyInterimCommands(commands: SpeculationCommand[], text: string): void {
-    const decision = this.decide(text, false)
-    const gated = gateCommands(commands, this.latch, decision)
-    if (gated.resetScheduler) this.scheduler?.reset()
-    commands = gated.commands
-
-    // A mid-question `reset` (the interviewer withdrew the question and started
-    // a different one) clears the latch inside the gate. The FINAL path
-    // compensates for that with its own `onCueCard(null)`; this path used not
-    // to, and the card simply stayed on screen. In glance mode `App.tsx`
-    // renders `voice.cueCard ? CueCardBody : latestAnswer`, so a stale card
-    // does not merely linger — it HIDES the real answer to the question that
-    // replaced it, for as long as the next question fails to match anything.
-    if (gated.latchCleared) this.callbacks.onCueCard?.(null)
-
+  private applyInterimCommands(commands: SpeculationCommand[]): void {
     for (const command of commands) {
       switch (command.kind) {
         case 'fire':
@@ -719,38 +577,6 @@ export class VoicePipeline {
 
   /** Commands produced by the final transcript, which knows what was really asked. */
   private applyFinalCommands(commands: SpeculationCommand[], finalText: string): void {
-    // Captured before gateCommands mutates `this.latch` in place, so it reads
-    // as "what was on screen a moment ago" for the transition check below.
-    const previousLatch = this.latch.cardId
-    const decision = this.decide(finalText, true)
-    const gated = gateCommands(commands, this.latch, decision)
-    if (gated.resetScheduler) this.scheduler?.reset()
-    commands = gated.commands
-
-    if (decision.latch !== null) {
-      // The card goes up, and an answer is generated to sit beside it. Any draft
-      // still in flight is discarded rather than adopted: it was fired before
-      // this card was known, so it was generated card-blind, and `gateCommands`
-      // has already asked (via `regenerateForLatch`) for a fresh one that knows
-      // what the user is about to read aloud.
-      //
-      // Adopting the draft here instead — to save the round-trip — was tried and
-      // reverted: the matched card is the only part of the prompt carrying the
-      // user's prepared SCRIPT, so a card-blind answer stops reflecting their own
-      // wording. See the note above `gateCommands`.
-      this.abortSpeculation()
-      this.specId = null
-      this.callbacks.onCueCard?.(this.matcher?.card(decision.latch) ?? null)
-    } else if (previousLatch !== null) {
-      // A final is a question boundary: it either latches a new card or
-      // clears whatever was standing (see gateCommands). This final matched
-      // nothing, but a card was on screen from a previous question — tell the
-      // UI so the stale card doesn't linger through the next question. Not
-      // fired when nothing was ever latched, so an ordinary unmatched
-      // question doesn't spam the callback.
-      this.callbacks.onCueCard?.(null)
-    }
-
     for (const command of commands) {
       switch (command.kind) {
         case 'commit':
@@ -777,17 +603,6 @@ export class VoicePipeline {
           break
       }
     }
-
-    // The commit the gate withheld because its draft was card-blind. Same work
-    // the `fire`/`regenerate` branch above does — the question goes into
-    // history and an answer is generated — except this one is built with the
-    // matched card in the system prompt (see `buildCompanionPrompt`).
-    if (gated.regenerateForLatch) {
-      this.abortSpeculation()
-      this.scheduler?.reset()
-      this.messages.push({ role: 'user', content: finalText })
-      this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
-    }
   }
 
   /**
@@ -807,7 +622,7 @@ export class VoicePipeline {
     this.specFinished = false
     void window.hue.llm.start(streamId, {
       messages: [...this.messages, { role: 'user', content: text }],
-      system: buildSystemPrompt(this.settings, this.armedSheet),
+      system: buildSystemPrompt(this.settings),
       maxTokens: 500
     })
   }
@@ -912,20 +727,6 @@ export class VoicePipeline {
     this.startResponse({ speak: this.speakResponses, maxTokens: 500 })
   }
 
-  /**
-   * The card standing on this question, if any — the one thing the answer being
-   * generated must not simply repeat.
-   *
-   * Only ever non-null on a turn whose FINAL latched a card: interims never
-   * latch (see `decide`), and every path that starts something new resets the
-   * latch. So an ordinary turn, a screen capture and an interviewer kickoff all
-   * read null here and build exactly the prompt they built before.
-   */
-  private latchedCard(): CueCard | null {
-    if (this.latch.cardId === null) return null
-    return this.matcher?.card(this.latch.cardId) ?? null
-  }
-
   private startResponse(opts: { speak: boolean; maxTokens: number }): void {
     this.setState('thinking')
     this.assistantText = ''
@@ -934,7 +735,7 @@ export class VoicePipeline {
     this.currentStreamId = streamId
     void window.hue.llm.start(streamId, {
       messages: this.messages,
-      system: buildSystemPrompt(this.settings, this.armedSheet, this.latchedCard()),
+      system: buildSystemPrompt(this.settings),
       maxTokens: opts.maxTokens
     })
   }
@@ -953,12 +754,6 @@ export class VoicePipeline {
     // exists.
     this.abortSpeculation()
     this.scheduler?.reset()
-    // A latched cue card is per-question state too, and this path (barge-in,
-    // screen capture, clear, stop) is starting something new. Without this, a
-    // latched card survives a session stop and reappears attached to the next
-    // question.
-    this.latch = newLatchState()
-    this.callbacks.onCueCard?.(null)
     this.tts.interrupt()
   }
 
@@ -1208,18 +1003,10 @@ function jobContext(s: HueSettings): string | null {
   return null
 }
 
-function buildSystemPrompt(
-  s: HueSettings,
-  cueSheet: CueSheet | null = null,
-  latchedCard: CueCard | null = null
-): string {
-  // Prepared answers go only to the companion prompt. In interviewer mode Hue
-  // is asking the questions, and handing it the user's own answers would let it
-  // ask precisely what they have already rehearsed — which makes the practice
-  // worthless.
-  return s.hueMode === 'interviewer'
-    ? buildInterviewerPrompt(s)
-    : buildCompanionPrompt(s, cueSheet, latchedCard)
+function buildSystemPrompt(s: HueSettings): string {
+  // The two modes are different jobs, not variations on one: in interviewer
+  // mode Hue asks the questions, in companion mode it answers them.
+  return s.hueMode === 'interviewer' ? buildInterviewerPrompt(s) : buildCompanionPrompt(s)
 }
 
 /** Hue plays the interviewer, asking the user questions one at a time (spoken). */
@@ -1262,11 +1049,7 @@ function buildInterviewerPrompt(s: HueSettings): string {
 }
 
 /** Hue assists the user: incoming text is the interviewer's question; Hue drafts the answer. */
-function buildCompanionPrompt(
-  s: HueSettings,
-  cueSheet: CueSheet | null = null,
-  latchedCard: CueCard | null = null
-): string {
+function buildCompanionPrompt(s: HueSettings): string {
   const parts: string[] = [
     'You are Hue, a real-time interview companion helping the user during a live interview. ' +
       "The user message you receive is the INTERVIEWER'S question (transcribed from the call). " +
@@ -1387,27 +1170,6 @@ function buildCompanionPrompt(
     )
     parts.push(job)
   }
-  // The prepared answers, as material rather than as a replacement.
-  //
-  // Two shapes, and a matched card wins. When a card latched this question, the
-  // model is told exactly what the user is about to read aloud so it can supply
-  // what the card leaves out instead of echoing it — the card and this answer
-  // now appear together on screen, so an answer that restates the card wastes
-  // the only surface the user can glance at. With no match, the sheet-wide
-  // block covers the near-miss: a question close to something they prepared but
-  // not close enough to latch, which would otherwise be answered from the
-  // résumé alone while their own better wording sat unused beside it.
-  //
-  // Swapped rather than stacked: the matched card IS the relevant preparation,
-  // and sending both would pay for the whole sheet twice over on the one turn
-  // where it matters least.
-  const cueBlock = latchedCard
-    ? cueCardPromptBlock(latchedCard) || (cueSheet ? cueSheetPromptBlock(cueSheet) : '')
-    : cueSheet
-      ? cueSheetPromptBlock(cueSheet)
-      : ''
-  if (cueBlock) parts.push(cueBlock)
-
   switch (s.interviewMode) {
     case 'star':
       parts.push('Structure the answer using the STAR method (Situation, Task, Action, Result).')
