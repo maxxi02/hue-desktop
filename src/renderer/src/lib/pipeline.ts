@@ -7,6 +7,7 @@ import { parseJobSpec, jobSpecPromptBlock, rawJobDescriptionBlock } from '../../
 import { answerShapeFor } from '../../../shared/answer-shape'
 import { isFillerOnly } from '../../../shared/filler'
 import { parseJobBrief, jobBriefPromptBlock } from '../../../shared/job-brief'
+import { EndpointBuffer } from '../../../shared/endpointing'
 import {
   SpeculationScheduler,
   type Command as SpeculationCommand,
@@ -174,6 +175,19 @@ export class VoicePipeline {
   /** True once the speculative stream finished on its own, before the final arrived. */
   private specFinished = false
 
+  /**
+   * Holds a finished segment briefly so a mid-sentence pause cannot split one
+   * question into two.
+   *
+   * Companion mode only, where the incoming voice is the interviewer's and there
+   * is a question to assemble. In interviewer mode the incoming voice is the
+   * user answering, and joining their segments would only delay a turn nothing
+   * is generated from.
+   */
+  private endpoint: EndpointBuffer | null = null
+  /** The pending hold. Cleared by a continuation, by expiry, and by teardown. */
+  private holdTimer: ReturnType<typeof setTimeout> | null = null
+
   /** Speech captured since the VAD opened this segment, for interim transcription. */
   private speechFrames: Float32Array[] = []
   /** Cumulative samples in this segment. Drives the interim cadence. */
@@ -192,6 +206,10 @@ export class VoicePipeline {
     if (settings.speculativeDrafting && settings.hueMode === 'companion') {
       this.scheduler = new SpeculationScheduler()
     }
+    // Independent of the scheduler on purpose: a split question is answered
+    // wrongly whether or not speculation is on, so the repair must not be
+    // something a user turns off with the drafting toggle.
+    if (settings.hueMode === 'companion') this.endpoint = new EndpointBuffer()
     this.tts = new StreamingTTSQueue({
       voice: settings.ttsVoice,
       speed: settings.ttsSpeed
@@ -269,10 +287,24 @@ export class VoicePipeline {
       // off or no segment is open.
       onFrameProcessed: (_probs, frame) => this.onFrame(frame),
       onVADMisfire: () => {
-        // The segment produced no final, so nothing will ever arrive to commit
-        // or discard a draft fired from it. Tear it down here or it stays in
-        // flight forever, blocking every later question (one draft, ever).
+        // A misfire while a question is held is the case that must not simply
+        // reset. onSpeechStart already cancelled the hold expiry on the
+        // assumption this segment was the continuation, and a misfire means no
+        // final is coming from it — so the held question has no timer left and
+        // would sit there unanswered forever. The misfire is the evidence that
+        // no continuation arrived, which is exactly what the expiry was waiting
+        // to learn, so resolve the held question now rather than dropping it.
+        const held = this.endpoint?.onHoldExpired(Date.now())
+        this.clearHoldTimer()
         this.endSegment()
+        if (held) {
+          this.resolveQuestion(held.text)
+          return
+        }
+        // Nothing held: the ordinary misfire. The segment produced no final, so
+        // nothing will ever arrive to commit or discard a draft fired from it.
+        // Tear it down here or it stays in flight forever, blocking every later
+        // question (one draft, ever).
         this.discardSpeculation()
         this.scheduler?.reset()
         if (this.state === 'transcribing') this.setState('listening')
@@ -314,6 +346,8 @@ export class VoicePipeline {
     })
     this.unsubscribe = []
     this.endSegment()
+    this.clearHoldTimer()
+    this.endpoint?.reset()
     this.setState('idle')
   }
 
@@ -359,6 +393,8 @@ export class VoicePipeline {
     // per-document limit and TTS goes silent for the rest of the app run.
     this.tts.dispose()
     this.endSegment()
+    this.clearHoldTimer()
+    this.endpoint?.reset()
     this.scheduler?.reset()
     if (this.vad) {
       await this.vad.destroy()
@@ -388,6 +424,8 @@ export class VoicePipeline {
   clearHistory(): void {
     this.abortResponse()
     this.endSegment()
+    this.clearHoldTimer()
+    this.endpoint?.reset()
     this.scheduler?.reset()
     this.messages = []
     this.assistantText = ''
@@ -406,7 +444,23 @@ export class VoicePipeline {
     if (this.state === 'thinking' || this.state === 'speaking') {
       this.abortResponse()
     }
+    // Speech inside the hold is the back half of the question already held, not
+    // a new one. Cancel the pending expiry and let this segment join it.
+    if (this.endpoint?.onSpeechStart(Date.now())) this.clearHoldTimer()
     this.beginSegment()
+  }
+
+  /**
+   * Drop any pending hold expiry.
+   *
+   * A timer that outlives its session fires an answer into a stopped pipeline,
+   * so every teardown path calls this.
+   */
+  private clearHoldTimer(): void {
+    if (this.holdTimer !== null) {
+      clearTimeout(this.holdTimer)
+      this.holdTimer = null
+    }
   }
 
   private async onSpeechEnd(audio: Float32Array): Promise<void> {
@@ -452,6 +506,36 @@ export class VoicePipeline {
       return
     }
 
+    // The question may not be over. Hold this segment; if speech resumes inside
+    // the hold, onSpeechStart cancels the expiry and the next final joins it.
+    if (this.endpoint) {
+      const decision = this.endpoint.onSegmentFinal(text, Date.now())
+      this.clearHoldTimer()
+      if (decision.kind === 'complete') {
+        this.resolveQuestion(decision.text)
+        return
+      }
+      this.holdTimer = setTimeout(
+        () => {
+          this.holdTimer = null
+          const done = this.endpoint?.onHoldExpired(Date.now())
+          if (done) this.resolveQuestion(done.text)
+        },
+        Math.max(0, decision.until - Date.now())
+      )
+      return
+    }
+
+    this.resolveQuestion(text)
+  }
+
+  /**
+   * The question is genuinely over: generate against it.
+   *
+   * Split out of `onSpeechEnd` so the endpoint hold can call it later, once it
+   * knows no continuation is coming.
+   */
+  private resolveQuestion(text: string): void {
     if (this.scheduler) {
       const commands = this.scheduler.onFinal(text, this.speakerOfIncomingSpeech(), Date.now())
       if (commands.length > 0) {
