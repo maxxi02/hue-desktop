@@ -2,6 +2,7 @@ import { getSettings } from './settings'
 import { fetchWithRetry, ProviderHttpError } from './stream-resilience'
 import { record } from './usage-store'
 import { parseRateLimitHeaders, type RateLimitSnapshot } from '../shared/usage'
+import { languageEntriesFor } from '../shared/asr-language'
 import type { CloudAsrResult } from '../shared/types'
 
 /**
@@ -159,6 +160,8 @@ async function deepgram(
     punctuate: 'true',
     smart_format: 'true'
   })
+  // Pinned, never auto-detected. See shared/asr-language.ts.
+  for (const [field, value] of languageEntriesFor('deepgram')) params.set(field, value)
 
   const res = await asrFetch(
     `https://api.deepgram.com/v1/listen?${params}`,
@@ -194,6 +197,11 @@ async function groq(
   form.append('file', new Blob([wav], { type: 'audio/wav' }), 'audio.wav')
   form.append('model', 'whisper-large-v3-turbo')
   form.append('response_format', 'json')
+  // whisper-large-v3-turbo is the multilingual Whisper. Without this it detects
+  // the language per clip, and on a short or noisy utterance it misdetects and
+  // transcribes the interviewer's English into Indonesian or Chinese.
+  // See shared/asr-language.ts.
+  for (const [field, value] of languageEntriesFor('groq')) form.append(field, value)
 
   const res = await asrFetch(
     'https://api.groq.com/openai/v1/audio/transcriptions',
@@ -241,7 +249,11 @@ async function assemblyai(
     {
       method: 'POST',
       headers: { authorization: apiKey, 'content-type': 'application/json' },
-      body: JSON.stringify({ audio_url: audioUrl })
+      // Pinned, never auto-detected. See shared/asr-language.ts.
+      body: JSON.stringify({
+        audio_url: audioUrl,
+        ...Object.fromEntries(languageEntriesFor('assemblyai'))
+      })
     },
     'AssemblyAI transcript',
     deadline,
