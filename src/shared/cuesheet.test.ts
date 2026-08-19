@@ -13,8 +13,7 @@ import {
   DEFAULT_MATCH_CONFIG,
   gateCommands,
   newLatchState,
-  verifyCard,
-  scriptIsExtractive
+  verifyCard
 } from './cuesheet.ts'
 import type { CueSheet } from './cuesheet.ts'
 import { SpeculationScheduler } from './speculation.ts'

@@ -30,7 +30,6 @@ export type SectionIconName =
   | 'phone-app'
   | 'shortcuts'
   | 'interview'
-  | 'cue-sheets'
   | 'asr'
   | 'tts'
   | 'stealth'
@@ -99,14 +98,6 @@ const GLYPHS: Record<SectionIconName, React.JSX.Element> = {
       <rect x="3" y="7" width="18" height="13" rx="2" />
       <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
       <path d="M3 12h18" />
-    </>
-  ),
-  // Stacked cards, seen from above.
-  'cue-sheets': (
-    <>
-      <path d="M12 2 3 7l9 5 9-5-9-5z" />
-      <path d="M3 12l9 5 9-5" />
-      <path d="M3 17l9 5 9-5" />
     </>
   ),
   // Microphone.

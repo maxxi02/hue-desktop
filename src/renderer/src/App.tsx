@@ -5,7 +5,6 @@ import { isAtBottom } from './lib/stickToBottom'
 import type { VoiceTurn, CaptureTurn } from './hooks/useVoiceMode'
 import type { ScreenCapture } from '@shared/types'
 import { describeStory, type Grounding } from '@shared/grounding'
-import { stripEmphasis, type CueCard, type CueSheet } from '@shared/cuesheet'
 import { parseProfileBundle, type ProfileBundle } from '@shared/profile'
 import { describeReview, reviewSession, type SessionReview } from '@shared/session-review'
 import {
@@ -17,7 +16,6 @@ import {
   type StoredSession
 } from './lib/sessionHistory'
 import { Settings } from './components/Settings'
-import { CueSheetPanel } from './components/CueSheetPanel'
 import { UsagePanel } from './components/UsagePanel'
 
 // ── Icons ──
@@ -256,51 +254,6 @@ function Receipt({ grounding }: { grounding: Grounding }): React.JSX.Element {
       <span className="receipt-mark" aria-hidden="true" />
       Not anchored to your history — improvise from this, don’t read it off the screen.
     </div>
-  )
-}
-
-/**
- * The user's own prepared answer, latched onto the current question.
- *
- * Rendered in place of a generated answer, never beside one — the pipeline
- * enforces that itself by aborting generation the instant a card latches (see
- * VoicePipeline.applyFinalCommands), so there is never a competing assistant
- * turn for this to conflict with; callers just need to stop showing whatever
- * they showed before and show this instead.
- *
- * `cues` get the exact text-block treatment the generated answer already uses
- * (passed in as `textClass` — `bubble-text` in the transcript, `glance-text`
- * in glance mode), just bolded per line, so the user is not learning a second
- * layout under pressure. `script` sits behind a disclosure that starts
- * collapsed: an open paragraph invites reading verbatim, which is the exact
- * failure mode the cue format exists to prevent. Callers must mount this
- * keyed on `card.id` — the collapsed state lives in this component's own
- * `useState`, and without a fresh key a second question would inherit the
- * first question's already-open script.
- */
-function CueCardBody({ card, textClass }: { card: CueCard; textClass: string }): React.JSX.Element {
-  const [scriptOpen, setScriptOpen] = useState(false)
-  return (
-    <>
-      <div className="bubble-label">Prepared answer</div>
-      <div className={textClass}>
-        {card.cues.map((cue, i) => (
-          <div key={i}>
-            <strong>{stripEmphasis(cue)}</strong>
-          </div>
-        ))}
-      </div>
-      <button
-        type="button"
-        className="review-close"
-        onClick={() => setScriptOpen((v) => !v)}
-        aria-expanded={scriptOpen}
-        title={scriptOpen ? 'Hide the full prepared script' : 'Show the full prepared script'}
-      >
-        {scriptOpen ? 'Hide full script' : 'Show full script'}
-      </button>
-      {scriptOpen && <div className={textClass}>{card.script}</div>}
-    </>
   )
 }
 
@@ -559,28 +512,6 @@ function SessionReviewPanel({
   )
 }
 
-// ── The transcript / cue sheet split ──
-
-/**
- * How narrow either side of the split may get, as a percentage of the row.
- *
- * Clamped rather than free because both panes are prose read under time
- * pressure: a transcript squeezed to a column of two-word lines is unreadable,
- * and a cue sheet squeezed the same way is worse, because the user reaches for
- * it precisely when they have no attention to spare on re-wrapping text. The
- * bounds are the same on both sides — neither pane is the "real" one.
- */
-const SPLIT_MIN_PCT = 34
-const SPLIT_MAX_PCT = 70
-/** Slightly transcript-heavy at rest: the sheet is scanned, the transcript is read. */
-const SPLIT_DEFAULT_PCT = 56
-/** Keyboard resize step, in percent, for the divider's arrow keys. */
-const SPLIT_KEY_STEP = 4
-
-function clampSplit(pct: number): number {
-  return Math.min(SPLIT_MAX_PCT, Math.max(SPLIT_MIN_PCT, pct))
-}
-
 // ── App ──
 
 export default function App(): React.JSX.Element {
@@ -618,15 +549,6 @@ export default function App(): React.JSX.Element {
    * true so a fresh session follows from the first token.
    */
   const followTranscriptRef = useRef(true)
-  /**
-   * Where the transcript ends and the cue sheet begins, as a percentage of the
-   * split row. Transient state like `glance`, and for the same reason: it is a
-   * posture for the call you are on, not a preference worth restoring into a
-   * session that may not even have a sheet armed.
-   */
-  const [splitPct, setSplitPct] = useState(SPLIT_DEFAULT_PCT)
-  const [dividerDragging, setDividerDragging] = useState(false)
-  const splitRef = useRef<HTMLDivElement>(null)
   const glanceRef = useRef<HTMLDivElement>(null)
   // The answer glance mode last painted, used to tell a growing answer from a
   // new one. See the scroll effect below.
@@ -649,32 +571,6 @@ export default function App(): React.JSX.Element {
    */
   const [bundle, setBundle] = useState<ProfileBundle | null>(null)
 
-  /**
-   * The armed cue sheet, read from settings rather than from the pipeline.
-   *
-   * The pipeline also reports it, but only from `start()` — which meant the
-   * document appeared solely once a session was running. That is backwards for
-   * what this panel is: prepared answers are read *before* the call, while you
-   * are still deciding whether the sheet is any good, and between questions.
-   * Uploading a sheet and finding nothing on screen is the bug that behaviour
-   * produced.
-   *
-   * Loaded here and re-loaded when the drawer closes, so arming or replacing a
-   * sheet in Settings shows up immediately. During a session the pipeline's
-   * copy wins, since that is the one the matcher is actually scoring against.
-   */
-  const [armedSheet, setArmedSheet] = useState<CueSheet | null>(null)
-
-  /**
-   * The sheet the panel actually shows.
-   *
-   * The pipeline's copy wins during a session because that is the one the
-   * matcher is scoring against, so the document on screen and the card that
-   * latches can never come from different sheets. Outside a session there is no
-   * pipeline, and the armed sheet read from settings is the answer.
-   */
-  const visibleSheet = voice.cueSheet ?? armedSheet
-
   // Reads the settings that affect what App renders: the card's translucency
   // (from windowOpacity) and the profile bundle. Re-run when the settings drawer
   // closes so both take effect live rather than at next launch.
@@ -686,20 +582,6 @@ export default function App(): React.JSX.Element {
     void window.hue.settings.get().then((s) => {
       document.documentElement.style.setProperty('--bg-alpha', String(s.windowOpacity))
       setBundle(parseProfileBundle(s.profileBundleJson))
-
-      // Same guard the pipeline applies: an id that no longer resolves (sheet
-      // deleted, settings stale) means no sheet, never an error. A cue sheet is
-      // an aid, and nothing about it may break the screen it sits on.
-      if (!s.selectedCueSheetId) {
-        setArmedSheet(null)
-        return
-      }
-      void window.hue.cueSheet
-        .list()
-        .then((sheets) => {
-          setArmedSheet(sheets.find((sheet) => sheet.id === s.selectedCueSheetId) ?? null)
-        })
-        .catch(() => setArmedSheet(null))
     })
   }, [])
 
@@ -800,7 +682,7 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     const el = transcriptRef.current
     if (el && followTranscriptRef.current) el.scrollTop = el.scrollHeight
-  }, [messages, voice.greetingText, voice.cueCard])
+  }, [messages, voice.greetingText])
 
   /**
    * Re-arm auto-follow when the reader comes back to the bottom.
@@ -894,38 +776,6 @@ export default function App(): React.JSX.Element {
   }, [messages])
 
   /**
-   * Where a latched cue card belongs in the transcript: directly after the
-   * question that matched it, and therefore ABOVE the answer Hue generates to
-   * accompany it.
-   *
-   * Anchoring to the last USER turn rather than to the last assistant turn is
-   * what makes both moments read correctly. While Hue is still thinking there
-   * is no assistant bubble yet and the card must land at the end; once the
-   * answer streams in, the card must stay put and let the answer appear beneath
-   * it rather than jumping below it. Anchoring to the question does both,
-   * because the question is fixed for the whole turn.
-   *
-   * -1 on an empty transcript, which puts the card at the end — the same place
-   * it went before.
-   */
-  const lastQuestionIndex = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i]?.role === 'user') return i
-    }
-    return -1
-  }, [messages])
-
-  /**
-   * Built once and rendered in one of two places (see `lastQuestionIndex`), so
-   * the card cannot end up drawn twice or drift between the two branches.
-   */
-  const cueCardBubble = voice.cueCard ? (
-    <div className="bubble bubble--assistant bubble--cue">
-      <CueCardBody key={voice.cueCard.id} card={voice.cueCard} textClass="bubble-text" />
-    </div>
-  ) : null
-
-  /**
    * Scroll discipline for the reader.
    *
    * The transcript chases the newest line, and glance mode must not: an answer
@@ -954,48 +804,13 @@ export default function App(): React.JSX.Element {
       prevGlanceTextRef.current = undefined
       return
     }
-    if (voice.cueCard) {
-      // A cue card lands whole rather than streaming in, so it is never a
-      // "continuation" of whatever text was on screen before — every card is
-      // read from the top, the same as a genuinely new generated answer.
-      prevGlanceTextRef.current = undefined
-      el.scrollTop = 0
-      return
-    }
     const text = latestAnswer?.text ?? ''
     const prev = prevGlanceTextRef.current
     const continuation =
       prev !== undefined && prev !== '' && (text.startsWith(prev) || prev.startsWith(text))
     prevGlanceTextRef.current = text
     if (!continuation) el.scrollTop = 0
-  }, [latestAnswer?.text, glance, voice.cueCard])
-
-  /**
-   * The divider drag.
-   *
-   * The listeners live on `window` rather than on the handle so the pointer can
-   * outrun the 10px target — it always does — and so releasing the button
-   * anywhere, including outside the window, ends the drag. Mounted only while a
-   * drag is in progress, so the app is not carrying a mousemove listener for
-   * the 99.9% of a session where nobody is resizing anything.
-   */
-  useEffect(() => {
-    if (!dividerDragging) return
-    const onMove = (e: MouseEvent): void => {
-      const el = splitRef.current
-      if (!el) return
-      const rect = el.getBoundingClientRect()
-      if (rect.width === 0) return
-      setSplitPct(clampSplit(((e.clientX - rect.left) / rect.width) * 100))
-    }
-    const onUp = (): void => setDividerDragging(false)
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    return () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-  }, [dividerDragging])
+  }, [latestAnswer?.text, glance])
 
   // Escape leaves glance mode. Getting back to the full transcript has to be a
   // reflex, not a hunt for the toggle — and Escape is already free here, since
@@ -1153,42 +968,16 @@ export default function App(): React.JSX.Element {
          */
         <main className="app-main app-main--glance">
           <div className="glance" ref={glanceRef}>
-            {/* The prepared card first, then Hue's answer beneath it. The card
-                is what the user SAYS and so it owns the top of the surface,
-                where the eye lands; the generated answer is the supporting
-                detail behind it and can be reached by reading on. Both are
-                shown — a matched question no longer cancels the generation. */}
-            {voice.cueCard && (
-              <CueCardBody key={voice.cueCard.id} card={voice.cueCard} textClass="glance-text" />
-            )}
             {latestAnswer ? (
-              voice.cueCard ? (
-                // Labelled, and the label is not decoration: under a prepared
-                // card the user must never be in doubt about which of the two
-                // blocks is their own wording and which is Hue's.
-                <>
-                  <div className="bubble-label glance-aside-label">Hue’s take</div>
-                  <div className="glance-text glance-text--aside">{latestAnswer.text}</div>
-                </>
-              ) : (
-                <div className="glance-text">{latestAnswer.text}</div>
-              )
+              <div className="glance-text">{latestAnswer.text}</div>
             ) : (
-              // Never a waiting line under a card: the card is already an
-              // answer, so "Hue's suggestion will appear here" would read as if
-              // nothing had arrived.
-              !voice.cueCard && (
-                <div className="glance-text glance-text--waiting">
-                  {voice.active
-                    ? 'Hue’s suggestion will appear here.'
-                    : 'Start a session — Hue’s suggestion will appear here.'}
-                </div>
-              )
+              <div className="glance-text glance-text--waiting">
+                {voice.active
+                  ? 'Hue’s suggestion will appear here.'
+                  : 'Start a session — Hue’s suggestion will appear here.'}
+              </div>
             )}
             {voice.error && <div className="error-msg">{voice.error}</div>}
-            {/* The receipt grounds the GENERATED answer, which now exists even
-                when a card is showing. The card itself needs none — it is the
-                user's own prepared words — so this keys off the answer alone. */}
             {latestAnswer?.grounding && (
               <div className="glance-receipt">
                 <Receipt grounding={latestAnswer.grounding} />
@@ -1224,108 +1013,56 @@ export default function App(): React.JSX.Element {
         </main>
       ) : (
         <main className="app-main">
-          {/*
-           * Transcript and cue sheet, side by side.
-           *
-           * The row is here even with no sheet armed — one pane, flexed to the
-           * full width — so that arming one does not restructure the layout the
-           * transcript lives in. The transcript's own scroll position survives
-           * as a result, which matters because a sheet can be armed between
-           * questions of a live session.
-           */}
-          <div className="cuesheet-split" ref={splitRef}>
-            <div
-              className="cuesheet-split-pane"
-              style={visibleSheet ? { flex: `0 0 ${splitPct}%` } : { flex: '1 1 auto' }}
-            >
-              <div className="transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
-                {voice.greetingText && (
-                  <div className="bubble bubble--assistant">
-                    <div className="bubble-label">Hue</div>
-                    <div className="bubble-text">{voice.greetingText}</div>
-                  </div>
-                )}
-                {messages.length === 0 && !voice.greetingText ? (
-                  <div className="transcript-empty">
-                    <span>
-                      {voice.connecting
-                        ? 'Starting up…'
-                        : voice.active
-                          ? companion
-                            ? 'Listening for the interviewer’s question…'
-                            : 'Hue is starting the interview…'
-                          : 'Press Start — or hit Ctrl+Shift+Space to summon Hue, and use your start-session shortcut anytime during a live call'}
-                    </span>
-                  </div>
-                ) : (
-                  messages.map((msg, i) => (
-                    <Fragment key={i}>
-                      {voice.cueCard && i === lastQuestionIndex + 1 && cueCardBubble}
-                      <div className={`bubble bubble--${msg.role}`}>
-                        <div className="bubble-label">
-                          {msg.role === 'user' ? userLabel : assistantLabel}
-                        </div>
-                        {msg.image ? (
-                          <img
-                            className="bubble-capture"
-                            src={`data:${msg.image.mediaType};base64,${msg.image.dataBase64}`}
-                            alt="Captured screen sent to Hue"
-                          />
-                        ) : (
-                          <div className="bubble-text">{msg.text}</div>
-                        )}
-                        {msg.grounding && <Receipt grounding={msg.grounding} />}
-                        {msg.role === 'user' && msg.tier && (
-                          <div className="bubble-meta">
-                            {msg.tier} · {msg.latencyMs}ms
-                          </div>
-                        )}
+          <div className="transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
+            {voice.greetingText && (
+              <div className="bubble bubble--assistant">
+                <div className="bubble-label">Hue</div>
+                <div className="bubble-text">{voice.greetingText}</div>
+              </div>
+            )}
+            {messages.length === 0 && !voice.greetingText ? (
+              <div className="transcript-empty">
+                <span>
+                  {voice.connecting
+                    ? 'Starting up…'
+                    : voice.active
+                      ? companion
+                        ? 'Listening for the interviewer’s question…'
+                        : 'Hue is starting the interview…'
+                      : 'Press Start — or hit Ctrl+Shift+Space to summon Hue, and use your start-session shortcut anytime during a live call'}
+                </span>
+              </div>
+            ) : (
+              messages.map((msg, i) => (
+                <Fragment key={i}>
+                  <div className={`bubble bubble--${msg.role}`}>
+                    <div className="bubble-label">
+                      {msg.role === 'user' ? userLabel : assistantLabel}
+                    </div>
+                    {msg.image ? (
+                      <img
+                        className="bubble-capture"
+                        src={`data:${msg.image.mediaType};base64,${msg.image.dataBase64}`}
+                        alt="Captured screen sent to Hue"
+                      />
+                    ) : (
+                      <div className="bubble-text">{msg.text}</div>
+                    )}
+                    {msg.grounding && <Receipt grounding={msg.grounding} />}
+                    {msg.role === 'user' && msg.tier && (
+                      <div className="bubble-meta">
+                        {msg.tier} · {msg.latencyMs}ms
                       </div>
-                    </Fragment>
-                  ))
-                )}
-                {/* The question was the last thing said — Hue is still drafting
+                    )}
+                  </div>
+                </Fragment>
+              ))
+            )}
+            {/* The question was the last thing said — Hue is still drafting
                 the answer that will follow the card, or the transcript is
                 empty. Either way the card goes here; once the answer arrives it
                 appears beneath the card via the branch inside the map. */}
-                {voice.cueCard && lastQuestionIndex === messages.length - 1 && cueCardBubble}
-                {voice.error && <div className="error-msg">{voice.error}</div>}
-              </div>
-            </div>
-            {visibleSheet && (
-              <>
-                <div
-                  className={
-                    dividerDragging
-                      ? 'cuesheet-divider cuesheet-divider--dragging'
-                      : 'cuesheet-divider'
-                  }
-                  role="separator"
-                  aria-orientation="vertical"
-                  aria-label="Resize the cue sheet panel"
-                  aria-valuenow={Math.round(splitPct)}
-                  aria-valuemin={SPLIT_MIN_PCT}
-                  aria-valuemax={SPLIT_MAX_PCT}
-                  tabIndex={0}
-                  onMouseDown={(e) => {
-                    // Or the drag selects the transcript text it passes over.
-                    e.preventDefault()
-                    setDividerDragging(true)
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'ArrowLeft') setSplitPct((v) => clampSplit(v - SPLIT_KEY_STEP))
-                    else if (e.key === 'ArrowRight')
-                      setSplitPct((v) => clampSplit(v + SPLIT_KEY_STEP))
-                    else return
-                    e.preventDefault()
-                  }}
-                  title="Drag to resize"
-                />
-                <div className="cuesheet-split-pane" style={{ flex: '1 1 0' }}>
-                  <CueSheetPanel sheet={visibleSheet} activeCardId={voice.cueCard?.id ?? null} />
-                </div>
-              </>
-            )}
+            {voice.error && <div className="error-msg">{voice.error}</div>}
           </div>
         </main>
       )}
