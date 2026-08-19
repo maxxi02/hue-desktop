@@ -136,6 +136,14 @@ behaviour change to preserve.
   collapses to a single answer block, losing the "Hue's take" label branch; the
   waiting placeholder loses its `!voice.cueCard` guard. The transcript site at
   924 is easy to miss — the card renders in bubble mode as well as glance mode.
+  The panel route is also more than an element: it is half a resizable
+  split-pane wrapping the whole transcript view (`splitPct`, `clampSplit`,
+  `SPLIT_KEY_STEP`, `splitRef`, the pointer drag handler at 989, the
+  keyboard-resizable divider at 1295-1323, `armedSheet` at 666, `visibleSheet`
+  at 676). Its container classes live in `cuesheet-doc.css`, so leaving the
+  wrappers behind would break the transcript layout with no compile error.
+- **`package.json`** — remove the `eval:cuesheet` script, which points at a
+  deleted test file.
 - **`src/renderer/src/components/Settings.tsx`** — remove the "Prepared answers"
   section (2069-2115), the onboarding checklist item (931-933), and the
   remaining references. 41 references, the largest single edit.
@@ -184,9 +192,18 @@ Two existing rules constrain how this is written:
   any example added to the prompt is written dash-free. The worked example above
   has already been rewritten this way.
 
+The three per-mode shape strings move out of `pipeline.ts` into a new pure
+module `shared/answer-shape.ts`, exporting `answerShapeFor(mode: InterviewMode)`.
+This is not tidiness: `pipeline.ts` has no test file and imports browser globals,
+so it cannot be loaded under plain `node --test`, which leaves the prompt's most
+load-bearing rules unpinned. A pure module makes the four beats, the mode
+scoping, and the dash ban testable. Same arrangement as `job-spec.ts` and
+`memory-policy.ts`.
+
 ### Mode scope
 
-Default mode only.
+`'practice'` mode only — the default member of `InterviewMode`
+(`'practice' | 'star' | 'live'`, `types.ts:28`).
 
 `star` and `live` are deliberate choices the user made, and each already carries
 a shape instruction that contradicts this one: `star` demands
