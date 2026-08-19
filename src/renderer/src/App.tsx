@@ -3,6 +3,7 @@ import { useVoiceMode } from './hooks/useVoiceMode'
 import type { PipelineState } from './lib/pipeline'
 import { isAtBottom } from './lib/stickToBottom'
 import { paragraphs } from './lib/paragraphs'
+import { parseBeats } from '@shared/answer-beats'
 import type { VoiceTurn, CaptureTurn } from './hooks/useVoiceMode'
 import type { ScreenCapture } from '@shared/types'
 import { describeStory, type Grounding } from '@shared/grounding'
@@ -975,8 +976,14 @@ export default function App(): React.JSX.Element {
                     change on every streamed token and re-mount the whole answer
                     dozens of times a second; see the note on .glance-text in
                     main.css. The list only ever grows at its end. */}
-                {paragraphs(latestAnswer.text).map((beat, i) => (
-                  <p key={i}>{beat}</p>
+                {parseBeats(latestAnswer.text).map((beat, i) => (
+                  <div
+                    className={beat.label === 'scenario' ? 'beat beat--scenario' : 'beat'}
+                    key={i}
+                  >
+                    {beat.label && <span className="beat-label">{beat.label}</span>}
+                    <p>{beat.text}</p>
+                  </div>
                 ))}
               </div>
             ) : (

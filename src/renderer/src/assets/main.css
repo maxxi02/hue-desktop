@@ -499,6 +499,61 @@
   margin-top: calc(var(--glance-size) * var(--glance-leading) * 0.55);
 }
 
+/*
+ * A beat and the tag in its margin.
+ *
+ * The tag is app chrome and never part of what the user says: the model writes
+ * "## what" on its own line and answer-beats.ts strips it to this. It sits in
+ * the margin rather than in the text so the eye can find the section it left off
+ * in without the label ever entering the line being read aloud.
+ *
+ * A fixed first column rather than an auto one, so the tags line up down the
+ * card and the prose starts at the same x on every beat. A ragged left edge
+ * would cost exactly the glanceability the tags are here to buy.
+ */
+.beat {
+  display: grid;
+  grid-template-columns: 4.5ch 1fr;
+  column-gap: 1ch;
+}
+
+.beat + .beat {
+  margin-top: calc(var(--glance-size) * var(--glance-leading) * 0.55);
+}
+
+.beat p {
+  margin: 0;
+}
+
+/*
+ * Muted, small, and nudged onto the first line's optical baseline rather than
+ * its box top. It has to be findable at a glance and must never compete with the
+ * prose: the user is reading the prose aloud, and the tag is only a landmark.
+ *
+ * Not selectable, because it is the one thing on this surface that is not the
+ * answer, and a copied answer should not carry it.
+ */
+.beat-label {
+  font-size: 0.5em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding-top: 0.55em;
+  user-select: none;
+}
+
+/*
+ * The scenario is the other half of the answer, so it gets a rule above it
+ * rather than only a wider gap. This is the seam the eye jumps to when the
+ * direct answer is done and the story is what is wanted next.
+ */
+.beat--scenario {
+  margin-top: calc(var(--glance-size) * var(--glance-leading) * 0.8);
+  padding-top: calc(var(--glance-size) * var(--glance-leading) * 0.5);
+  border-top: 1px solid var(--border);
+}
+
 /* Same treatment in the transcript, at that pane's own rhythm. */
 .bubble-text p {
   margin: 0;
