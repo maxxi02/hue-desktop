@@ -415,18 +415,6 @@ test('an interim with no latch does not clear a standing latch mid-answer', () =
 const source =
   'I see it less as switching away from development and more as bringing my background into a different contribution. I shipped a lead scoring engine.'
 
-test('an extractive script is accepted', () => {
-  assert.equal(scriptIsExtractive('I shipped a lead scoring engine.', source), true)
-})
-
-test('a script the user never wrote is rejected', () => {
-  assert.equal(scriptIsExtractive('I led a team of forty engineers.', source), false)
-})
-
-test('whitespace and case differences do not reject a real extract', () => {
-  assert.equal(scriptIsExtractive('i shipped   a lead\nscoring engine', source), true)
-})
-
 test('a cue introducing an unsourced number is dropped', () => {
   const card = {
     id: 'c',

@@ -480,3 +480,33 @@ test('the settings summary counts requirements and gets the singular right', () 
     'Role — 0 requirements found'
   )
 })
+
+// The evidence containment check used to live in `cuesheet.ts` and was imported
+// here. These pin its behaviour through `verifyRequirement`, the public API that
+// depends on it, so the move out of that module cannot silently weaken it.
+const posting =
+  'We are looking for an engineer to own our billing integration. ' +
+  'Five years of experience with distributed systems required.'
+
+test('a requirement whose evidence is verbatim in the posting is kept', () => {
+  const req = {
+    id: 'billing',
+    text: 'Own billing integration',
+    evidence: 'own our billing integration'
+  }
+  assert.deepEqual(verifyRequirement(req, posting), req)
+})
+
+test('a requirement whose evidence was composed rather than quoted is dropped', () => {
+  const req = { id: 'k8s', text: 'Kubernetes', evidence: 'deep Kubernetes expertise required' }
+  assert.equal(verifyRequirement(req, posting), null)
+})
+
+test('re-wrapped whitespace and case do not reject real evidence', () => {
+  const req = {
+    id: 'exp',
+    text: 'Five years',
+    evidence: 'Five years of\nexperience   with distributed systems'
+  }
+  assert.deepEqual(verifyRequirement(req, posting), req)
+})

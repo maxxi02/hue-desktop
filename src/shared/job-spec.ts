@@ -22,8 +22,7 @@
  * 1. **Evidence spans.** Every requirement carries `evidence`, a verbatim span
  *    of the posting. `verifyRequirement` checks it is literally present in the
  *    source and drops the requirement when it is not, so the list cannot hold a
- *    requirement the employer never wrote. Same mechanism as `verifyCard` in
- *    `./cuesheet.ts`, and for the same reason: containment is the only kind of
+ *    requirement the employer never wrote. Containment is the only kind of
  *    grounding check that cannot itself be wrong.
  * 2. **Provenance in the prompt.** `jobSpecPromptBlock` states that everything
  *    in it is what the employer WANTS, never what the user HAS, and that a
@@ -34,7 +33,6 @@
  * Everything in this file is pure and runs under plain `node --test`.
  */
 
-import { scriptIsExtractive as isVerbatimSpan } from './cuesheet.ts'
 
 export interface JobRequirement {
   /** Short kebab-case slug, unique within the spec. */
@@ -147,6 +145,23 @@ function slugify(text: string, index: number): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 40)
   return slug || `requirement-${index + 1}`
+}
+
+function normaliseSpan(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * The evidence must be a span the employer actually wrote, not prose about it.
+ *
+ * Containment rather than a judgement call: the only kind of grounding check
+ * that cannot itself be wrong. It lived in the cue sheet module until that
+ * feature was removed, which was only ever where it happened to be written
+ * first — nothing about it was specific to cue cards.
+ */
+function isVerbatimSpan(span: string, source: string): boolean {
+  const s = normaliseSpan(span)
+  return s.length > 0 && normaliseSpan(source).includes(s)
 }
 
 /**
