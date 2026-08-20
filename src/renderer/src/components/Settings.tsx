@@ -1042,6 +1042,25 @@ export function Settings({
     }
   }
 
+  const onRescanGaps = async (): Promise<void> => {
+    setResumeStatus('Looking for gaps…')
+    try {
+      const bundle = await window.hue.profile.rescanGaps()
+      set('profileBundleJson', JSON.stringify(bundle))
+      const open = bundle.gaps.filter((g) => g.status === 'open').length
+      setResumeStatus(
+        open === 0
+          ? 'No new questions — your bank covers every competency.'
+          : `${open} question${open === 1 ? '' : 's'} to answer.`
+      )
+    } catch (err) {
+      // The handler throws when no profile is linked and when the ingest provider
+      // has no API key. Unhandled, either would leave the pane stuck on
+      // "Looking for gaps…" with no way to tell what went wrong.
+      setResumeStatus(err instanceof Error ? err.message : 'Rescan failed.')
+    }
+  }
+
   const onAnswerGap = async (gapId: string): Promise<void> => {
     const text = (gapDrafts[gapId] ?? '').trim()
     if (!text) return
@@ -1861,16 +1880,25 @@ export function Settings({
                         <span className="gap-progress-count">
                           Question {gapNumberShown} of {gapTotal}
                         </span>
-                        <span className="gap-dots">
-                          {Array.from({ length: gapTotal }, (_, i) => (
-                            <span
-                              key={i}
-                              className={i < gapNumberShown ? 'gap-dot gap-dot-filled' : 'gap-dot'}
-                            />
-                          ))}
-                        </span>
+                        {/* Past a handful the dots stop being countable at a glance
+                            and start wrapping to a second row, which moves every
+                            control below them. The count beside them already says
+                            the same thing. Eight is MAX_GAP_QUESTIONS, so today's
+                            ceiling always shows them. */}
+                        {gapTotal <= 8 && (
+                          <span className="gap-dots">
+                            {Array.from({ length: gapTotal }, (_, i) => (
+                              <span
+                                key={i}
+                                className={
+                                  i < gapNumberShown ? 'gap-dot gap-dot-filled' : 'gap-dot'
+                                }
+                              />
+                            ))}
+                          </span>
+                        )}
                       </div>
-                      <div style={{ fontSize: 13 }}>{currentGap.question}</div>
+                      <div className="gap-question">{currentGap.question}</div>
                       <textarea
                         className="settings-input"
                         rows={3}
@@ -1881,11 +1909,10 @@ export function Settings({
                         }
                         placeholder="Tell it the way you’d tell it out loud…"
                       />
-                      {gapNotes[currentGap.id] && (
-                        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                          {gapNotes[currentGap.id]}
-                        </span>
-                      )}
+                      {/* Rendered unconditionally so the space is reserved: a note
+                          appearing on a rejected answer must not shift the buttons
+                          out from under the cursor. */}
+                      <span className="gap-note">{gapNotes[currentGap.id] ?? ''}</span>
                       <div className="gap-nav">
                         <button
                           type="button"
@@ -1922,10 +1949,14 @@ export function Settings({
                     </div>
                   ) : (
                     <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                      Gap scan complete.
+                      No open questions. Rescan if you have added stories or want the high-risk
+                      competencies checked again.
                     </div>
                   )}
                   <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+                    <button type="button" className="link-btn" onClick={onRescanGaps}>
+                      Rescan for questions
+                    </button>
                     <button type="button" className="link-btn" onClick={onRefreshProfile}>
                       Reload profile
                     </button>

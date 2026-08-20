@@ -1063,6 +1063,31 @@
   background: var(--accent);
 }
 
+/*
+ * The question is model-written and clamped only at 400 characters, and it sits
+ * inside a Settings pane that is already long. Fixed room with its own scroll
+ * keeps every control below it in the same place from one question to the next —
+ * the buttons must not move under the cursor because question 3 is wordier than
+ * question 2.
+ */
+.gap-question {
+  font-size: 13px;
+  line-height: 1.5;
+  max-height: 4.5em;
+  overflow-y: auto;
+}
+
+/*
+ * Same reason, for the note that appears when an answer is rejected: it must not
+ * shift the buttons between attempts.
+ */
+.gap-note {
+  display: block;
+  min-height: 2.4em;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 /* Back and skip sit apart from the forward action: the two ways to leave a
    question shouldn't sit under the thumb that's aiming for Next. */
 .gap-nav {
