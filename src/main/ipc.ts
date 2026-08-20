@@ -24,6 +24,7 @@ import {
   deleteProfile,
   ingestResume,
   refreshBundle,
+  rescanProfileGaps,
   skipProfileGap
 } from './ingest'
 import { analyzeJobDescription } from './job-spec-ingest'
@@ -243,6 +244,11 @@ export function registerIpc(): void {
     if (typeof gapId !== 'string' || !gapId) throw new Error('A gap id is required.')
     return skipProfileGap(gapId)
   })
+
+  // Regenerating questions is deliberately a separate channel from ingest: it
+  // costs one model call rather than a full re-mine, and it must not be reachable
+  // by a path that would replace the story bank.
+  ipcMain.handle('hue:profile:rescan-gaps', () => rescanProfileGaps())
 
   // The job posting. Same progress-on-a-side-channel shape again, and for the
   // same reason: the analysis is several model calls deep, and a Settings pane

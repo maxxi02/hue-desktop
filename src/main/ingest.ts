@@ -1,5 +1,5 @@
 import { extractResume, type ExtractResult } from './resume-extract.ts'
-import { answerGap, runIngest } from './resume-pipeline.ts'
+import { answerGap, rescanGaps, runIngest } from './resume-pipeline.ts'
 import { sealBundle } from './resume-profile.ts'
 import { clientForSettings, LlmRefusal, MissingApiKey, quotaMessage } from './structured-llm.ts'
 import {
@@ -156,6 +156,31 @@ export async function answerProfileGap(gapId: string, text: string): Promise<Gap
  * make the honest answer the one path that needs an API key and a network.
  * Recording it truthfully is the entire point of the gap scan.
  */
+/**
+ * Re-run the gap scan against the stored bundle.
+ *
+ * Separate from `ingestResume` because the expensive part of ingest is mining,
+ * and nothing about the stories needs to change for the questions to.
+ */
+export async function rescanProfileGaps(): Promise<ProfileBundle> {
+  const bundle = await currentBundle()
+  if (!bundle) throw new Error('No profile is linked yet.')
+
+  const llm = await clientForSettings('ingest')
+  // The renderer's bundle type is the wide one (competencies as strings, because
+  // it is parsed from user-editable JSON); the pipeline works in the narrow one.
+  // Safe because `rescanGaps` re-normalises every competency it emits against
+  // COMPETENCIES via buildGaps.
+  const next = (await rescanGaps(
+    bundle as unknown as Parameters<typeof rescanGaps>[0],
+    llm
+  )) as unknown as ProfileBundle
+
+  const { updateSettings } = await settingsModule()
+  updateSettings({ profileBundleJson: JSON.stringify(next) })
+  return next
+}
+
 export async function skipProfileGap(gapId: string): Promise<ProfileBundle> {
   const bundle = await currentBundle()
   if (!bundle) throw new Error('No profile is linked yet.')
