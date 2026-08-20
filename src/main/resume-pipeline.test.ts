@@ -3,10 +3,12 @@ import assert from 'node:assert/strict'
 import type { LlmClient, StructuredRequest } from './structured-llm.ts'
 import {
   COMPETENCIES,
+  HIGH_RISK_COMPETENCIES,
   profilePromptBlock as promptBlock,
   storyIds,
   type ProfileBundle
 } from '../shared/profile.ts'
+import type { Competency, Gap } from './resume-types.ts'
 import { contentHash } from './resume-profile.ts'
 import {
   answerGap,
@@ -135,12 +137,21 @@ const GAP_QUESTIONS = {
       question: 'When did you have to start work with the goal still unclear?'
     },
     { competency: 'deadline-pressure', question: 'When did a date force a hard call?' },
-    // Covered already — must be discarded rather than take a slot.
-    { competency: 'conflict', question: 'Tell me about a disagreement.' }
+    // No longer covered by the resume tag alone, so this one is now kept.
+    { competency: 'conflict', question: 'Tell me about a disagreement.' },
+    {
+      competency: 'influence-without-authority',
+      question: 'When did you change minds without being in charge?'
+    },
+    // Covered by a resume story, and ordinary rather than high-risk — so this is
+    // the one that must be discarded rather than take a slot.
+    { competency: 'scaling', question: 'When did you scale something?' }
   ]
 }
 
-function scripted(overrides: Record<string, unknown> = {}): LlmClient & { calls: StructuredRequest[] } {
+function scripted(
+  overrides: Record<string, unknown> = {}
+): LlmClient & { calls: StructuredRequest[] } {
   return fakeLlm({
     'profile extraction': EXTRACTED,
     'story mining': MINED,
@@ -249,15 +260,17 @@ test('an invented metric on a real role is dropped', async () => {
   )
 })
 
-test('gaps are the set difference, with the invention-prone competencies first', () => {
+test('gaps put the invention-prone competencies first, and resume tags do not cover them', () => {
   const stories = normaliseStories(MINED)
   const gaps = findGaps(stories)
 
-  assert.ok(!gaps.includes('conflict'))
+  // MINED has a conflict story, but it came from the resume — which is exactly
+  // the tag this rule stopped trusting.
+  assert.ok(gaps.includes('conflict'))
   assert.ok(gaps.includes('failure'))
-  // failure / ambiguity / influence-without-authority are what a model invents
-  // when the resume has none, so they get asked first.
-  assert.equal(gaps[0], 'failure')
+  // failure / conflict / ambiguity / influence-without-authority are what a
+  // model invents when the resume has none, so they get asked first.
+  assert.ok(HIGH_RISK_COMPETENCIES.includes(gaps[0]))
 })
 
 test('gap questions are capped and never ask about a covered competency', async () => {
@@ -265,36 +278,12 @@ test('gap questions are capped and never ask about a covered competency', async 
   assert.ok(bundle.gaps.length <= MAX_GAP_QUESTIONS)
   assert.deepEqual(
     bundle.gaps.map((g) => g.competency),
-    ['failure', 'ambiguity', 'deadline-pressure']
+    ['failure', 'ambiguity', 'deadline-pressure', 'conflict', 'influence-without-authority']
   )
+  // `scaling` is covered by a resume story and ordinary rather than high-risk,
+  // so its question is discarded rather than taking a slot.
+  assert.ok(!bundle.gaps.some((g) => g.competency === 'scaling'))
   assert.ok(bundle.gaps.every((g) => g.status === 'open'))
-})
-
-test('the gap scan is skipped entirely when the bank covers everything', async () => {
-  const llm = scripted({
-    'story mining': {
-      stories: [
-        story('everything', 'acme-robotics', [
-          'conflict',
-          'failure',
-          'leadership',
-          'ambiguity',
-          'scaling',
-          'deadline-pressure',
-          'influence-without-authority',
-          'technical-tradeoff',
-          'mentorship',
-          'customer-focus',
-          'data-driven-decision',
-          'ownership'
-        ])
-      ]
-    }
-  })
-  const { bundle } = await runIngest(RESUME, llm, { now: FIXED_NOW })
-
-  assert.deepEqual(bundle.gaps, [])
-  assert.ok(!llm.calls.some((c) => c.label === 'gap scan'))
 })
 
 async function ingestFixture(): Promise<ProfileBundle> {
@@ -521,10 +510,12 @@ test('onPhase fires once per model call, in order, so the label can never lie', 
   assert.deepEqual(seen, ['mining-profile', 'mining-stories', 'gap-scan'])
 })
 
-test('a bank with no gaps never reports a gap scan it did not run', async () => {
+// The high-risk four are coverable only by a gap answer, and a gap answer can
+// only exist after an ingest. So the scan always has something to ask about,
+// however complete the resume looks. This is the point of the rule, stated as a
+// test: the four questions a resume cannot answer are always asked.
+test('a resume ingest always runs the gap scan, however well covered it looks', async () => {
   const seen: string[] = []
-  // Covers every competency, so `findGaps` returns nothing and the scan is skipped.
-  const noGaps = scripted({ 'gap scan': { questions: [] } })
   const full = {
     stories: COMPETENCIES.map((c, i) => ({
       id: `story-${i}`,
@@ -537,9 +528,90 @@ test('a bank with no gaps never reports a gap scan it did not run', async () => 
       metrics: []
     }))
   }
-  await runIngest(RESUME, scripted({ 'story mining': full, ...noGaps }), {
+  const { bundle } = await runIngest(RESUME, scripted({ 'story mining': full }), {
     now: FIXED_NOW,
     onPhase: (p) => seen.push(p)
   })
-  assert.ok(!seen.includes('gap-scan'), `gap-scan reported but not run: ${seen.join(', ')}`)
+
+  assert.ok(seen.includes('gap-scan'))
+  assert.deepEqual(bundle.gaps.map((g) => g.competency).sort(), [
+    'ambiguity',
+    'conflict',
+    'failure',
+    'influence-without-authority'
+  ])
+})
+
+// A resume structurally cannot evidence conflict, so a conflict tag that came
+// from one is exactly the signal that must not silence the question.
+test('a resume-sourced story does not cover a high-risk competency', () => {
+  const stories = normaliseStories({ stories: [story('c1', null, ['conflict'])] })
+  assert.ok(findGaps(stories).includes('conflict'))
+})
+
+test('a gap-answer story does cover a high-risk competency', () => {
+  const stories = normaliseStories({ stories: [story('c1', null, ['conflict'])] }, 'gap-answer')
+  assert.ok(!findGaps(stories).includes('conflict'))
+})
+
+test('an ordinary competency is still covered by a resume story', () => {
+  const stories = normaliseStories({ stories: [story('s1', null, ['scaling'])] })
+  assert.ok(!findGaps(stories).includes('scaling'))
+})
+
+// The reported bundle, reduced to a fixture: every tag present, all from the
+// resume, so exactly the four high-risk competencies come back.
+test('a resume covering every competency still yields the four high-risk gaps', () => {
+  const stories = normaliseStories({
+    stories: COMPETENCIES.map((c, i) => story(`s${i}`, null, [c]))
+  })
+  assert.deepEqual(findGaps(stories).sort(), [
+    'ambiguity',
+    'conflict',
+    'failure',
+    'influence-without-authority'
+  ])
+})
+
+test('high-risk competencies still sort first', () => {
+  const stories = normaliseStories({ stories: [story('s1', null, ['scaling'])] })
+  const gaps = findGaps(stories)
+  const firstOrdinary = gaps.findIndex((c) => !HIGH_RISK_COMPETENCIES.includes(c))
+  const lastRisky = gaps.reduce((last, c, i) => (HIGH_RISK_COMPETENCIES.includes(c) ? i : last), -1)
+  assert.ok(lastRisky < firstOrdinary)
+})
+
+function gap(competency: string, status: 'open' | 'answered' | 'skipped'): Gap {
+  return {
+    id: `gap-${competency}`,
+    competency: competency as Competency,
+    question: `Tell me about ${competency}.`,
+    status,
+    storyId: null
+  }
+}
+
+// The load-bearing case: "I don't have one" is an answer, and re-asking would
+// punish the honest response with repetition.
+test('a skipped competency is never asked again', () => {
+  const stories = normaliseStories({ stories: [story('s1', null, ['scaling'])] })
+  assert.ok(!findGaps(stories, [gap('conflict', 'skipped')]).includes('conflict'))
+})
+
+// The easy one to miss: an open gap means the question is already on screen and
+// unanswered, so the competency is genuinely still uncovered and would be
+// returned again — appending a second open question for it on every rescan.
+test('a competency with an open gap is not duplicated', () => {
+  const stories = normaliseStories({ stories: [story('s1', null, ['scaling'])] })
+  assert.ok(!findGaps(stories, [gap('conflict', 'open')]).includes('conflict'))
+})
+
+test('an answered competency is not asked again', () => {
+  const stories = normaliseStories({ stories: [story('s1', null, ['scaling'])] })
+  assert.ok(!findGaps(stories, [gap('conflict', 'answered')]).includes('conflict'))
+})
+
+test('existing gaps default to none, so the ingest path is unchanged', () => {
+  const stories = normaliseStories({ stories: [story('s1', null, ['scaling'])] })
+  assert.deepEqual(findGaps(stories), findGaps(stories, []))
 })

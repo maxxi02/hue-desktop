@@ -341,15 +341,6 @@ export function normaliseStories(raw: unknown, source: Story['source'] = 'resume
 }
 
 /**
- * Competencies with no story behind them.
- *
- * Deterministic rather than a model call: it is a set difference, and asking a
- * model to compute one is both slower and less reliable than computing it.
- * High-risk competencies sort first — they are where the model would otherwise
- * invent, which is the failure the gap scan exists to prevent.
- */
-
-/**
  * Tags that cover more than [TAG_SATURATION] of the bank.
  *
  * Sorted commonest first so the report leads with the worst offender.
@@ -368,11 +359,41 @@ export function overusedTags(stories: Story[]): { competency: Competency; fracti
     .sort((a, b) => b.fraction - a.fraction)
 }
 
-export function findGaps(stories: Story[]): Competency[] {
+/**
+ * Competencies with no evidence worth trusting behind them.
+ *
+ * Deterministic rather than a model call: it is a set difference, and asking a
+ * model to compute one is both slower and less reliable than computing it.
+ *
+ * The difference is taken over *trustworthy* evidence, not over tags. For the
+ * high-risk competencies only a `gap-answer` story counts, because `profile.ts`
+ * defines those four as ones "a resume essentially never evidences on its own" —
+ * so a tag on a resume-mined story is precisely the signal that should not
+ * silence the question. Observed on a real bundle: one resume-sourced `conflict`
+ * story in twenty suppressed the conflict question permanently, and the bank had
+ * nothing real behind it at interview time.
+ *
+ * `existingGaps` excludes anything already asked, whatever its status. `skipped`
+ * is the load-bearing case — it is the only thing that makes "I don't have one"
+ * permanent. `open` matters too: the question is already on screen and the
+ * competency is still uncovered, so without this a rescan appends a duplicate
+ * every time. `answered` is belt-and-braces, since its story covers the
+ * competency anyway.
+ *
+ * High-risk competencies sort first — they are where the model would otherwise
+ * invent, which is the failure the gap scan exists to prevent.
+ */
+export function findGaps(stories: Story[], existingGaps: Gap[] = []): Competency[] {
   const covered = new Set<Competency>()
-  for (const story of stories) for (const tag of story.competencies) covered.add(tag)
+  for (const story of stories) {
+    const trustworthy = story.source === 'gap-answer'
+    for (const tag of story.competencies) {
+      if (trustworthy || !HIGH_RISK_COMPETENCIES.includes(tag)) covered.add(tag)
+    }
+  }
 
-  const missing = COMPETENCIES.filter((c) => !covered.has(c))
+  const asked = new Set<Competency>(existingGaps.map((g) => g.competency))
+  const missing = COMPETENCIES.filter((c) => !covered.has(c) && !asked.has(c))
   const risky = missing.filter((c) => HIGH_RISK_COMPETENCIES.includes(c))
   const rest = missing.filter((c) => !HIGH_RISK_COMPETENCIES.includes(c))
   return [...risky, ...rest]
