@@ -8,8 +8,8 @@ import {
   storyIds,
   type ProfileBundle
 } from '../shared/profile.ts'
-import type { Competency, Gap } from './resume-types.ts'
-import { contentHash } from './resume-profile.ts'
+import type { Competency, Gap, Story } from './resume-types.ts'
+import { contentHash, sealBundle } from './resume-profile.ts'
 import {
   answerGap,
   findGaps,
@@ -18,6 +18,7 @@ import {
   normaliseProfile,
   normaliseStories,
   overusedTags,
+  rescanGaps,
   runIngest
 } from './resume-pipeline.ts'
 
@@ -614,4 +615,112 @@ test('an answered competency is not asked again', () => {
 test('existing gaps default to none, so the ingest path is unchanged', () => {
   const stories = normaliseStories({ stories: [story('s1', null, ['scaling'])] })
   assert.deepEqual(findGaps(stories), findGaps(stories, []))
+})
+
+const RESCAN_QUESTIONS = {
+  questions: [
+    { competency: 'failure', question: 'Tell me about a project that did not work out.' },
+    { competency: 'conflict', question: 'Describe a disagreement with a colleague.' },
+    { competency: 'ambiguity', question: 'When were the requirements unclear?' },
+    {
+      competency: 'influence-without-authority',
+      question: 'When did you change minds without being in charge?'
+    }
+  ]
+}
+
+function bundleWith(stories: Story[], gaps: Gap[]): ProfileBundle {
+  return sealBundle(
+    { version: 1, profile: normaliseProfile(EXTRACTED), stories, gaps },
+    '2026-08-09T12:00:00.000Z'
+  )
+}
+
+function everyTagFromResume(): Story[] {
+  return normaliseStories({ stories: COMPETENCIES.map((c, i) => story(`s${i}`, null, [c])) })
+}
+
+test('rescan adds the high-risk questions a resume-only bank is missing', async () => {
+  const before = bundleWith(everyTagFromResume(), [])
+  const llm = fakeLlm({ 'gap scan': RESCAN_QUESTIONS })
+
+  const after = await rescanGaps(before, llm, { now: FIXED_NOW })
+
+  assert.deepEqual(after.gaps.map((g) => g.competency).sort(), [
+    'ambiguity',
+    'conflict',
+    'failure',
+    'influence-without-authority'
+  ])
+  assert.ok(after.gaps.every((g) => g.status === 'open'))
+})
+
+test('rescan leaves the story bank untouched', async () => {
+  const before = bundleWith(everyTagFromResume(), [])
+  const after = await rescanGaps(before, fakeLlm({ 'gap scan': RESCAN_QUESTIONS }), {
+    now: FIXED_NOW
+  })
+  assert.deepEqual(after.stories, before.stories)
+})
+
+test('rescan preserves answered and skipped gaps with their status and story', async () => {
+  const kept: Gap[] = [
+    { ...gap('failure', 'answered'), storyId: 'story-from-answer' },
+    gap('conflict', 'skipped')
+  ]
+  const before = bundleWith(everyTagFromResume(), kept)
+
+  const after = await rescanGaps(before, fakeLlm({ 'gap scan': RESCAN_QUESTIONS }), {
+    now: FIXED_NOW
+  })
+
+  const failure = after.gaps.find((g) => g.competency === 'failure')
+  assert.equal(failure?.status, 'answered')
+  assert.equal(failure?.storyId, 'story-from-answer')
+  assert.equal(after.gaps.find((g) => g.competency === 'conflict')?.status, 'skipped')
+  // Only the two that were never asked get added.
+  assert.equal(after.gaps.length, 4)
+})
+
+// The assertion that would have caught the open-gap duplication.
+test('rescan is idempotent', async () => {
+  const once = await rescanGaps(
+    bundleWith(everyTagFromResume(), []),
+    fakeLlm({ 'gap scan': RESCAN_QUESTIONS }),
+    { now: FIXED_NOW }
+  )
+  // A second pass has nothing missing, so it must not call the model at all —
+  // fakeLlm throws on any unscripted label, and there are none scripted here.
+  const twice = await rescanGaps(once, fakeLlm({}), { now: FIXED_NOW })
+  assert.deepEqual(twice.gaps, once.gaps)
+  assert.equal(twice.hash, once.hash)
+})
+
+test('rescan makes no model call when nothing is missing', async () => {
+  const stories = normaliseStories(
+    { stories: COMPETENCIES.map((c, i) => story(`s${i}`, null, [c])) },
+    'gap-answer'
+  )
+  const before = bundleWith(stories, [])
+  const llm = fakeLlm({})
+  const after = await rescanGaps(before, llm, { now: FIXED_NOW })
+  assert.equal(llm.calls.length, 0)
+  assert.equal(after.hash, before.hash)
+})
+
+test('a rescanned gap never reuses an existing gap id', async () => {
+  // An id shaped exactly like the one buildGaps would mint for `failure`.
+  const before = bundleWith(everyTagFromResume(), [gap('failure', 'skipped')])
+  const after = await rescanGaps(before, fakeLlm({ 'gap scan': RESCAN_QUESTIONS }), {
+    now: FIXED_NOW
+  })
+  assert.equal(new Set(after.gaps.map((g) => g.id)).size, after.gaps.length)
+})
+
+test('rescan reseals, so a changed bank changes the hash', async () => {
+  const before = bundleWith(everyTagFromResume(), [])
+  const after = await rescanGaps(before, fakeLlm({ 'gap scan': RESCAN_QUESTIONS }), {
+    now: FIXED_NOW
+  })
+  assert.notEqual(after.hash, before.hash)
 })

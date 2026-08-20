@@ -399,12 +399,15 @@ export function findGaps(stories: Story[], existingGaps: Gap[] = []): Competency
   return [...risky, ...rest]
 }
 
-function buildGaps(questions: unknown, missing: Competency[]): Gap[] {
+function buildGaps(
+  questions: unknown,
+  missing: Competency[],
+  taken: Set<string> = new Set()
+): Gap[] {
   const raw = Array.isArray((questions as { questions?: unknown })?.questions)
     ? (questions as { questions: unknown[] }).questions
     : []
   const wanted = new Set<Competency>(missing)
-  const taken = new Set<string>()
   const gaps: Gap[] = []
 
   for (const entry of raw) {
@@ -539,6 +542,62 @@ export interface GapAnswerResult {
  * cache key and the device sync key must change with it. Mutating in place
  * would leave every cached copy silently stale.
  */
+/**
+ * Regenerate the gap questions for a bundle that already exists.
+ *
+ * The gap scan otherwise runs only inside `runIngest`, so a change to what
+ * counts as coverage reaches an existing user only if they re-upload their
+ * resume — a full re-mine, a minute of wall time, and the whole bank replaced.
+ * This runs the scan alone: one model call, the stories untouched.
+ *
+ * Existing gaps are carried through unchanged rather than regenerated. An
+ * answered gap has a story behind it and a skipped one is a decision the user
+ * made; both are facts, not proposals, and rebuilding them would discard the
+ * only record that they happened.
+ */
+export async function rescanGaps(
+  bundle: ProfileBundle,
+  llm: LlmClient,
+  opts: IngestOptions = {}
+): Promise<ProfileBundle> {
+  const now = opts.now ?? ((): Date => new Date())
+  const missing = findGaps(bundle.stories, bundle.gaps)
+  if (missing.length === 0) return bundle
+
+  // The cap is a budget for the bundle, not for the scan: eight questions total,
+  // however many times this is run.
+  const wanted = missing.slice(0, Math.max(0, MAX_GAP_QUESTIONS - bundle.gaps.length))
+  if (wanted.length === 0) return bundle
+
+  const fresh = buildGaps(
+    await llm.structured<unknown>({
+      label: 'gap scan',
+      maxTokens: STEP_TOKENS.gapScan,
+      system: GAP_SYSTEM,
+      schema: GAP_QUESTIONS_SCHEMA,
+      user:
+        `Roles:\n${JSON.stringify(bundle.profile.roles, null, 2)}\n\n` +
+        `Competencies with no story: ${wanted.join(', ')}`,
+      effort: 'medium'
+    }),
+    wanted,
+    // Seeded with the ids already in the bundle: `buildGaps` mints
+    // `gap-${competency}`, and the pane tracks the question on screen by id, so
+    // a collision would render the wrong question.
+    new Set(bundle.gaps.map((g) => g.id))
+  )
+
+  return sealBundle(
+    {
+      version: bundle.version,
+      profile: bundle.profile,
+      stories: bundle.stories,
+      gaps: [...bundle.gaps, ...fresh]
+    },
+    now().toISOString()
+  )
+}
+
 export async function answerGap(
   bundle: ProfileBundle,
   gapId: string,
