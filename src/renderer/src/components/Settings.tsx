@@ -24,6 +24,7 @@ import {
 import { parseJobBrief } from '../../../shared/job-brief'
 import { clampCursor, nextAfterAnswered, stepCursor } from '../lib/gapCursor'
 import { isSettingsDirty } from '../lib/settingsDirty'
+import { displayVersion } from '../../../shared/version'
 import {
   fieldsOf,
   MAX_TARGETS,
@@ -1068,7 +1069,9 @@ export function Settings({
         <div className="drawer" onClick={(e) => e.stopPropagation()}>
           <div className="drawer-header">
             <h2>Settings</h2>
-            <span className="drawer-version">{appVersion ? `v${appVersion}` : ''}</span>
+            <span className="drawer-version">
+              {appVersion ? `v${displayVersion(appVersion)}` : ''}
+            </span>
             <button className="icon-btn" onClick={onClose}>
               <CloseIcon />
             </button>
@@ -1433,7 +1436,9 @@ export function Settings({
       <div className="drawer" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-header">
           <h2>Settings</h2>
-          <span className="drawer-version">{appVersion ? `v${appVersion}` : ''}</span>
+          <span className="drawer-version">
+            {appVersion ? `v${displayVersion(appVersion)}` : ''}
+          </span>
           {/*
             Search lives in the header, not above the pane, for one reason: a
             filter that scrolls away with its content is a filter nobody finds
