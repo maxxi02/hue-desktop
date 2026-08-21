@@ -189,6 +189,17 @@ export interface HueSettings {
    * leaves a window where a crash strands a brief describing a different job.
    */
   jobBriefJson: string
+  /**
+   * Saved applications — `Target[]` as JSON. See `shared/targets.ts`.
+   *
+   * The fields above (`jobTitle` through `jobBriefJson`, plus the two résumé
+   * fields) are the *working copy* of whichever application `activeTargetId`
+   * names; this holds every application including that one, whose stored copy is
+   * stale until the next switch. Nothing outside `targets.ts` should read this.
+   */
+  targetsJson: string
+  /** Which saved application the live fields belong to. */
+  activeTargetId: string
   interviewMode: InterviewMode
   /** Whether Hue acts as the interviewer or as a companion answering the interviewer. */
   hueMode: HueMode
@@ -313,6 +324,11 @@ export const DEFAULT_SETTINGS: HueSettings = {
   jobDescription: '',
   jobSpecJson: '',
   jobBriefJson: '',
+  // Empty rather than a seeded list: `ensureTargets` adopts whatever is already
+  // in the fields on first run, which is the only behaviour that upgrades an
+  // existing install without inventing a name for work it did not do.
+  targetsJson: '',
+  activeTargetId: '',
   interviewMode: 'practice',
   hueMode: 'companion',
   audioSource: 'microphone',
@@ -326,7 +342,7 @@ export const DEFAULT_SETTINGS: HueSettings = {
   speculativeDrafting: true,
   // True for a fresh install: there is no saved file to opt in, so the one-time
   // opt-in is already spent.
-  speculationOptInApplied: true,
+  speculationOptInApplied: true
 }
 
 /** Keys that are sensitive and stored encrypted at rest via Electron safeStorage. */

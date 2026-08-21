@@ -142,6 +142,35 @@ export const GAP_QUESTIONS_SCHEMA: Record<string, unknown> = {
   }
 }
 
+/**
+ * Technical probes, one per target the pipeline picked.
+ *
+ * `targetId` rather than a free-text subject: the pipeline chose which role and
+ * which technologies to ask about, and it needs to map each returned question
+ * back to that choice to anchor the gap. Letting the model name its own subject
+ * would let it drift onto a technology the resume never listed, which is the
+ * exact failure the rest of this pipeline is built to prevent.
+ */
+export const TECH_QUESTIONS_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['questions'],
+  properties: {
+    questions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['targetId', 'question'],
+        properties: {
+          targetId: { type: 'string' },
+          question: { type: 'string' }
+        }
+      }
+    }
+  }
+}
+
 /** One spoken answer folded back into the bank as a STAR entry. */
 export const GAP_ANSWER_SCHEMA: Record<string, unknown> = {
   type: 'object',

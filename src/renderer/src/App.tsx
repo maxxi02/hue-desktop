@@ -1173,6 +1173,9 @@ export default function App(): React.JSX.Element {
       */}
       <Settings
         open={settingsOpen}
+        // Connecting counts as running: the prompt is already being built from
+        // the active application by the time the button says "connecting".
+        sessionActive={voice.active || voice.connecting}
         onClose={() => {
           setSettingsOpen(false)
           voice.reloadConfig()

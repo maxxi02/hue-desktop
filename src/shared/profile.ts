@@ -60,7 +60,20 @@ export interface ProfileStory {
 
 export interface ProfileGap {
   id: string
+  /**
+   * `'technical'` on a question mined from a role's stack, `'behavioral'` on one
+   * from the competency scan.
+   *
+   * Optional because bundles written before the technical axis existed are still
+   * on disk and still valid — `parseProfileBundle` accepts them, and every read
+   * site must treat an absent `kind` as `'behavioral'`, which is what those
+   * bundles' questions are.
+   */
+  kind?: 'behavioral' | 'technical'
   competency: string
+  /** Technologies the question names, joined for display. Absent on behavioral gaps. */
+  subject?: string | null
+  roleId?: string | null
   question: string
   status: 'open' | 'answered' | 'skipped'
   storyId: string | null
@@ -155,7 +168,12 @@ export function canonicalJson(value: unknown): string {
  * to exactly one model call, so the label describes work that is genuinely
  * happening rather than captioning a spinner.
  */
-export type IngestPhase = 'extracting' | 'mining-profile' | 'mining-stories' | 'gap-scan'
+export type IngestPhase =
+  | 'extracting'
+  | 'mining-profile'
+  | 'mining-stories'
+  | 'gap-scan'
+  | 'tech-probe'
 
 /** Progress for the Settings label while an ingest runs. */
 export interface IngestProgress {

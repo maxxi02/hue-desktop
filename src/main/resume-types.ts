@@ -71,9 +71,33 @@ export interface Story {
 
 export type GapStatus = 'open' | 'answered' | 'skipped'
 
+/**
+ * Which axis a question probes.
+ *
+ * `behavioral` is the original gap scan: a competency with no story behind it,
+ * asked about because it is where the model would otherwise invent.
+ *
+ * `technical` is the other half of an interview, and the resume evidences it
+ * richly — every role carries a stack. A technology listed against a role that
+ * no story explains is a gap in exactly the same sense, and a far more precise
+ * one: it names a real system the candidate built.
+ */
+export type GapKind = 'behavioral' | 'technical'
+
 export interface Gap {
   id: string
+  kind: GapKind
   competency: Competency
+  /**
+   * What the question is *about*, for technical gaps: the technologies it names,
+   * joined for display. Null on behavioral gaps, where the competency is the
+   * subject. This is the receipt — it lets the UI show that a question came from
+   * the resume rather than from a list, and lets a test assert the question
+   * actually mentions what it was asked to.
+   */
+  subject: string | null
+  /** The role the question is anchored to, or null when it spans the resume. */
+  roleId: string | null
   question: string
   status: GapStatus
   /** Set when an answer has been folded back into the bank as a new story. */

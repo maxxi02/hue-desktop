@@ -29,6 +29,15 @@ import {
 import { analyzeJobDescription } from './job-spec-ingest'
 import { JOB_DESCRIPTION_LIMIT } from '../shared/job-spec'
 import { parseProfileBundle } from '../shared/profile'
+import {
+  createTarget,
+  deleteTarget,
+  duplicateTarget,
+  ensureTargets,
+  renameTarget,
+  switchTarget,
+  type TargetPatch
+} from '../shared/targets'
 import { applyStealth, isStealthSupported } from './stealth'
 import { currentEvents, onRecorded } from './usage-store'
 import { summarize, type UsageSummary } from '../shared/usage'
@@ -299,6 +308,55 @@ export function registerIpc(): void {
   // error travels to the renderer to be shown.
 
   ipcMain.handle('hue:jobspec:clear', () => updateSettings({ jobDescription: '', jobSpecJson: '' }))
+
+  /*
+    Saved applications.
+
+    Every one of these is the same three lines — compute a patch, write it if
+    there is one, hand back the settings — and they live in main rather than in
+    the renderer for one reason: ingest and the job-spec analysis also write
+    these fields, from here. A renderer that read settings, computed a switch,
+    and wrote it back would have a window in which a finishing ingest could land
+    a résumé bundle into the application the user just left.
+
+    They return the full `HueSettings` so the drawer can re-render from one
+    round-trip. `null` from the pure function means "nothing to do" — an unknown
+    id, an already-active slot, the last application — and the current settings
+    come back unchanged rather than an error, because none of those are failures
+    the user needs told about.
+  */
+  const applyTargetPatch = (patch: TargetPatch | null): HueSettings =>
+    patch ? updateSettings(patch) : getSettings()
+
+  /**
+   * Adopt the current fields as the first application if there is none yet.
+   *
+   * Called by the renderer when the drawer opens rather than at startup: it is
+   * the only moment the list is about to be looked at, and doing it at launch
+   * would rewrite the settings file of every install on upgrade before anyone
+   * had asked for the feature.
+   */
+  ipcMain.handle('hue:targets:ensure', () => applyTargetPatch(ensureTargets(getSettings())))
+
+  ipcMain.handle('hue:targets:switch', (_e, id: string) =>
+    applyTargetPatch(switchTarget(getSettings(), id))
+  )
+
+  ipcMain.handle('hue:targets:create', (_e, name: string) =>
+    applyTargetPatch(createTarget(getSettings(), name))
+  )
+
+  ipcMain.handle('hue:targets:duplicate', (_e, name: string) =>
+    applyTargetPatch(duplicateTarget(getSettings(), name))
+  )
+
+  ipcMain.handle('hue:targets:rename', (_e, id: string, name: string) =>
+    applyTargetPatch(renameTarget(getSettings(), id, name))
+  )
+
+  ipcMain.handle('hue:targets:delete', (_e, id: string) =>
+    applyTargetPatch(deleteTarget(getSettings(), id))
+  )
 
   // Stealth status for the renderer: the setting alone doesn't tell the UI
   // whether the window is really hidden from capture, so the platform's verdict

@@ -29,6 +29,7 @@ export type SectionIconName =
   | 'phone-mirror'
   | 'phone-app'
   | 'shortcuts'
+  | 'applications'
   | 'interview'
   | 'asr'
   | 'tts'
@@ -47,6 +48,14 @@ export type SectionIconName =
  * one was redrawn: Docking is a thumbtack, Appearance a droplet.
  */
 const GLYPHS: Record<SectionIconName, React.JSX.Element> = {
+  // Stacked cards — several applications, one of them on top. The offset is the
+  // whole point of the glyph: a single card would read as 'document'.
+  applications: (
+    <>
+      <rect x="3" y="7" width="14" height="12" rx="2" />
+      <path d="M7 4h12a2 2 0 0 1 2 2v10" />
+    </>
+  ),
   // Sliders — two faders. Three would be truer to a mixing desk and unreadable
   // at 16px; two still says "settings you slide".
   setup: (

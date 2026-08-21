@@ -109,6 +109,23 @@ const hue = {
     onProgress: (cb: (p: { phase: string; pct: number }) => void): (() => void) =>
       sub('hue:jobspec:progress', cb)
   },
+  /**
+   * Saved applications. Every call returns the whole settings document, because
+   * a switch rewrites six fields at once and the drawer has to re-render from
+   * the result rather than guess which ones moved.
+   */
+  targets: {
+    /** Adopt the current fields as the first application if none exists yet. */
+    ensure: (): Promise<HueSettings> => ipcRenderer.invoke('hue:targets:ensure'),
+    switch: (id: string): Promise<HueSettings> => ipcRenderer.invoke('hue:targets:switch', id),
+    create: (name: string): Promise<HueSettings> => ipcRenderer.invoke('hue:targets:create', name),
+    duplicate: (name: string): Promise<HueSettings> =>
+      ipcRenderer.invoke('hue:targets:duplicate', name),
+    rename: (id: string, name: string): Promise<HueSettings> =>
+      ipcRenderer.invoke('hue:targets:rename', id, name),
+    /** Permanent, and may take the only copy of an ingested résumé. Confirm first. */
+    delete: (id: string): Promise<HueSettings> => ipcRenderer.invoke('hue:targets:delete', id)
+  },
   phone: {
     status: (): Promise<PhoneMirrorStatus> => ipcRenderer.invoke('hue:phone:status'),
     /** Persists phoneMirrorEnabled and starts/stops the LAN server in one step. */

@@ -12,11 +12,13 @@ import {
   answerGap,
   findGaps,
   jobDescriptionBrief,
+  MAX_BEHAVIORAL_GAP_QUESTIONS,
   MAX_GAP_QUESTIONS,
   normaliseProfile,
   normaliseStories,
   overusedTags,
-  runIngest
+  runIngest,
+  technicalProbeTargets
 } from './resume-pipeline.ts'
 
 /**
@@ -140,11 +142,39 @@ const GAP_QUESTIONS = {
   ]
 }
 
-function scripted(overrides: Record<string, unknown> = {}): LlmClient & { calls: StructuredRequest[] } {
+/**
+ * Keyed to the target ids `technicalProbeTargets` produces for this fixture:
+ * `<roleId>-<n>`. The last entry is the case the builder must reject — a
+ * question about a target nobody asked for, which is how a model would smuggle
+ * in a technology the resume never printed.
+ */
+const TECH_QUESTIONS = {
+  questions: [
+    {
+      targetId: 'acme-robotics-1',
+      question:
+        'At Acme Robotics you list Go and Terraform on the checkout platform — what did Terraform actually manage there, and what made you reach for Go over what the other services were written in?'
+    },
+    {
+      targetId: 'northwind-data-1',
+      question:
+        'Your Northwind Data ingestion pipeline lists Postgres — what was it doing at 2.4M events a day, and how did you keep writes from falling behind?'
+    },
+    {
+      targetId: 'globex-1',
+      question: 'How did you use Cassandra at Globex?'
+    }
+  ]
+}
+
+function scripted(
+  overrides: Record<string, unknown> = {}
+): LlmClient & { calls: StructuredRequest[] } {
   return fakeLlm({
     'profile extraction': EXTRACTED,
     'story mining': MINED,
     'gap scan': GAP_QUESTIONS,
+    'technical probe': TECH_QUESTIONS,
     ...overrides
   })
 }
@@ -264,10 +294,124 @@ test('gap questions are capped and never ask about a covered competency', async 
   const { bundle } = await runIngest(RESUME, scripted(), { now: FIXED_NOW })
   assert.ok(bundle.gaps.length <= MAX_GAP_QUESTIONS)
   assert.deepEqual(
-    bundle.gaps.map((g) => g.competency),
+    bundle.gaps.filter((g) => g.kind === 'behavioral').map((g) => g.competency),
     ['failure', 'ambiguity', 'deadline-pressure']
   )
   assert.ok(bundle.gaps.every((g) => g.status === 'open'))
+})
+
+test('the behavioral scan can no longer take every slot', async () => {
+  const { bundle } = await runIngest(RESUME, scripted(), { now: FIXED_NOW })
+  const behavioral = bundle.gaps.filter((g) => g.kind === 'behavioral')
+  assert.ok(
+    behavioral.length <= MAX_BEHAVIORAL_GAP_QUESTIONS,
+    `${behavioral.length} behavioral questions took the budget`
+  )
+  // The complaint this exists to answer: every question was situational.
+  assert.ok(bundle.gaps.some((g) => g.kind === 'technical'))
+})
+
+test('technical questions lead, because they are what the résumé can actually evidence', async () => {
+  const { bundle } = await runIngest(RESUME, scripted(), { now: FIXED_NOW })
+  assert.equal(bundle.gaps[0].kind, 'technical')
+})
+
+test('a technical question names a real role and technologies the résumé printed', async () => {
+  const { bundle } = await runIngest(RESUME, scripted(), { now: FIXED_NOW })
+  const technical = bundle.gaps.filter((g) => g.kind === 'technical')
+
+  assert.deepEqual(
+    technical.map((g) => g.subject),
+    ['Go, Terraform', 'Postgres']
+  )
+  assert.deepEqual(
+    technical.map((g) => g.roleId),
+    ['acme-robotics', 'northwind-data']
+  )
+  // An answered probe must land where the live session looks for a technical
+  // story, not in a bucket of its own.
+  assert.ok(technical.every((g) => g.competency === 'technical-tradeoff'))
+})
+
+test('a question about a target nobody asked for is dropped, not repaired', async () => {
+  const { bundle } = await runIngest(RESUME, scripted(), { now: FIXED_NOW })
+  // `globex-1` / Cassandra appears nowhere in the résumé. The model offered a
+  // question about it; nothing in the bundle may mention it.
+  assert.ok(!bundle.gaps.some((g) => g.question.includes('Cassandra')))
+  assert.equal(bundle.gaps.filter((g) => g.kind === 'technical').length, 2)
+})
+
+test('a technology a story already explains is not asked about again', () => {
+  const targets = technicalProbeTargets(
+    normaliseProfile(EXTRACTED),
+    normaliseStories(MINED),
+    MAX_GAP_QUESTIONS
+  )
+  const asked = targets.flatMap((t) => t.technologies)
+  // `scaling-kubernetes-migration` is a story about Kubernetes at Acme, so the
+  // candidate can already speak to it — spending a slot on it buys nothing.
+  assert.ok(!asked.includes('Kubernetes'))
+  // And a technology shared by two roles is one question, not two.
+  assert.equal(asked.filter((t) => t === 'Go').length, 1)
+})
+
+test('probes round-robin across roles rather than exhausting the newest one', () => {
+  const profile = normaliseProfile({
+    ...EXTRACTED,
+    roles: [
+      { ...EXTRACTED.roles[0], stack: ['Go', 'Terraform', 'Kubernetes', 'Envoy', 'Bazel', 'gRPC'] },
+      { ...EXTRACTED.roles[1], stack: ['Postgres'] }
+    ],
+    skills: []
+  })
+  const targets = technicalProbeTargets(profile, [], 3)
+  // Two chunks are available on the first role, but the second role gets its
+  // question before the first role gets a second one.
+  assert.deepEqual(
+    targets.map((t) => t.roleId),
+    ['acme-robotics', 'northwind-data', 'acme-robotics']
+  )
+})
+
+test('skills the résumé attaches to no role become one catch-all probe', () => {
+  const profile = normaliseProfile({
+    ...EXTRACTED,
+    roles: [{ ...EXTRACTED.roles[0], stack: [] }],
+    skills: ['Rust', 'Kafka', 'gRPC', 'Redis', 'Elasticsearch']
+  })
+  const targets = technicalProbeTargets(profile, [], MAX_GAP_QUESTIONS)
+  assert.deepEqual(
+    targets.map((t) => t.id),
+    ['unattributed-skills']
+  )
+  // Capped: a long skills section must not crowd out questions about real work.
+  assert.deepEqual(targets[0].technologies, ['Rust', 'Kafka', 'gRPC'])
+  assert.equal(targets[0].roleId, null)
+})
+
+test('a short technology name is not matched inside a longer word', () => {
+  const profile = normaliseProfile({
+    ...EXTRACTED,
+    roles: [{ ...EXTRACTED.roles[0], stack: ['Go', 'R'] }],
+    skills: []
+  })
+  // "going" and "roadmap" contain "go" and "r" as substrings. Treating those as
+  // explanations would silently delete both questions.
+  const targets = technicalProbeTargets(profile, normaliseStories(MINED), MAX_GAP_QUESTIONS)
+  assert.deepEqual(targets[0].technologies, ['Go', 'R'])
+})
+
+test('the technical probe is skipped when every technology already has a story', async () => {
+  const llm = scripted({
+    'profile extraction': {
+      ...EXTRACTED,
+      roles: EXTRACTED.roles.map((r) => ({ ...r, stack: [] })),
+      skills: []
+    }
+  })
+  const { bundle } = await runIngest(RESUME, llm, { now: FIXED_NOW })
+  assert.ok(!llm.calls.some((c) => c.label === 'technical probe'))
+  assert.ok(bundle.gaps.every((g) => g.kind === 'behavioral'))
 })
 
 test('the gap scan is skipped entirely when the bank covers everything', async () => {
@@ -293,8 +437,10 @@ test('the gap scan is skipped entirely when the bank covers everything', async (
   })
   const { bundle } = await runIngest(RESUME, llm, { now: FIXED_NOW })
 
-  assert.deepEqual(bundle.gaps, [])
   assert.ok(!llm.calls.some((c) => c.label === 'gap scan'))
+  // A full behavioral bank says nothing about the stack, so the technical
+  // probe still runs — and every remaining question is one of its.
+  assert.ok(bundle.gaps.every((g) => g.kind === 'technical'))
 })
 
 async function ingestFixture(): Promise<ProfileBundle> {
@@ -518,7 +664,7 @@ test('an empty bank reports nothing rather than dividing by zero', () => {
 test('onPhase fires once per model call, in order, so the label can never lie', async () => {
   const seen: string[] = []
   await runIngest(RESUME, scripted(), { now: FIXED_NOW, onPhase: (p) => seen.push(p) })
-  assert.deepEqual(seen, ['mining-profile', 'mining-stories', 'gap-scan'])
+  assert.deepEqual(seen, ['mining-profile', 'mining-stories', 'gap-scan', 'tech-probe'])
 })
 
 test('a bank with no gaps never reports a gap scan it did not run', async () => {

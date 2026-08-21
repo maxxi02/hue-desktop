@@ -24,6 +24,13 @@ import {
 import { parseJobBrief } from '../../../shared/job-brief'
 import { clampCursor, nextAfterAnswered, stepCursor } from '../lib/gapCursor'
 import { isSettingsDirty } from '../lib/settingsDirty'
+import {
+  fieldsOf,
+  MAX_TARGETS,
+  parseTargets,
+  summarise,
+  UNTITLED_TARGET
+} from '../../../shared/targets'
 import { SectionIcon } from './SectionIcon'
 
 const KOKORO_VOICES = ['af_heart', 'af_bella', 'af_nicole', 'am_michael', 'bf_emma', 'bm_george']
@@ -44,7 +51,8 @@ const RESUME_PHASE_PCT: Record<string, number> = {
   extracting: 8,
   'mining-profile': 25,
   'mining-stories': 60,
-  'gap-scan': 92
+  'gap-scan': 86,
+  'tech-probe': 94
 }
 
 interface CompatProviderInfo {
@@ -533,10 +541,17 @@ const ANCHOR_LABELS: Record<(typeof ANCHOR_CELLS)[number], string> = {
 
 export function Settings({
   open,
-  onClose
+  onClose,
+  sessionActive
 }: {
   open: boolean
   onClose: () => void
+  /**
+   * Whether a session is live. Switching applications is refused while it is:
+   * the prompt is built once at session start, so a swap mid-interview leaves
+   * Hue answering from the previous posting while the pane shows the new one.
+   */
+  sessionActive: boolean
 }): React.JSX.Element {
   const [s, setS] = useState<HueSettings | null>(null)
   const [saved, setSaved] = useState(false)
@@ -549,6 +564,16 @@ export function Settings({
   const [llmStatus, setLlmStatus] = useState<'idle' | 'detecting' | 'ok' | 'unreachable'>('idle')
   const [resumeStatus, setResumeStatus] = useState<string | null>(null)
   // Gap answering, previously possible only in the phone app.
+  // Saved applications. `targetNote` carries the one-line reason a click did
+  // nothing — refused mid-session, the last application, the ceiling — which is
+  // otherwise indistinguishable from a broken button.
+  const [targetBusy, setTargetBusy] = useState(false)
+  const [targetNote, setTargetNote] = useState('')
+  /** The application whose name is being edited inline, if any. */
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  /** Armed delete: the first click asks, the second does it. */
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [gapDrafts, setGapDrafts] = useState<Record<string, string>>({})
   const [gapBusy, setGapBusy] = useState<string | null>(null)
   const [gapNotes, setGapNotes] = useState<Record<string, string>>({})
@@ -663,6 +688,28 @@ export function Settings({
     window.hue.settings.get().then(markPersisted)
     void window.hue.version().then(setAppVersion)
   }, [])
+
+  /**
+   * Adopt the current fields as the first saved application, once, when the
+   * drawer is first opened.
+   *
+   * Not at launch. An existing install has a résumé and a posting and has never
+   * heard of applications, and rewriting its settings file on upgrade — before
+   * anyone has asked for the feature — is a change made behind the user's back.
+   * Opening this pane is the moment the list is about to be looked at, so it is
+   * the moment it may as well exist. `ensure` is a no-op once there is one, and
+   * returns the settings unchanged.
+   */
+  const ensuredTargets = useRef(false)
+  useEffect(() => {
+    if (!open || ensuredTargets.current) return
+    ensuredTargets.current = true
+    void window.hue.targets
+      .ensure()
+      .then((next) =>
+        markFieldsPersisted({ targetsJson: next.targetsJson, activeTargetId: next.activeTargetId })
+      )
+  }, [open])
 
   useEffect(() => {
     // Re-arm on every mount, not just the first.
@@ -954,6 +1001,71 @@ export function Settings({
     setTimeout(() => setSaved(false), 1500)
   }
 
+  /*
+    Saved applications.
+
+    The list is derived from `s` rather than held in its own state: every action
+    returns the whole settings document and `markPersisted` assigns it, so a
+    second copy could only ever be the same data one render out of date.
+  */
+  const targets = summarise(parseTargets(s.targetsJson), s.activeTargetId, fieldsOf(s))
+  const activeTarget = targets.find((t) => t.id === s.activeTargetId) ?? null
+
+  /**
+   * Why a switch is blocked rather than merged.
+   *
+   * A gap draft is a story the user has just composed from memory, and it
+   * belongs to the story bank of the application they are leaving. Switching
+   * would replace `profileBundleJson` underneath it and there would be nothing
+   * left to attach the answer to. Everything else in the form is recoverable by
+   * retyping; this is not, so it is the one thing that stops the switch.
+   */
+  const unsavedGapAnswer = Object.values(gapDrafts).some((d) => d.trim().length > 0)
+  const switchBlockedReason = sessionActive
+    ? 'Stop the session to switch applications.'
+    : unsavedGapAnswer
+      ? 'Answer or clear the open gap question first — it belongs to this application’s story bank.'
+      : ''
+
+  /**
+   * Runs one application action against the main process.
+   *
+   * The save first is load-bearing. These handlers rewrite six settings fields
+   * in main, which reads them from disk — so any edit still open in this form
+   * would be reverted by the round-trip without anything on screen to say so.
+   * Persisting first means the outgoing application keeps what was typed into
+   * it, which is the entire promise of the feature.
+   */
+  const runTargetAction = async (act: () => Promise<HueSettings>): Promise<void> => {
+    if (targetBusy) return
+    setTargetBusy(true)
+    setTargetNote('')
+    try {
+      if (pristine.current && isSettingsDirty(s, pristine.current, {})) {
+        markPersisted(await window.hue.settings.set(s))
+      }
+      markPersisted(await act())
+    } catch (e) {
+      setTargetNote(e instanceof Error ? e.message : 'That did not work.')
+    } finally {
+      setTargetBusy(false)
+    }
+  }
+
+  const onSwitchTarget = async (id: string): Promise<void> => {
+    if (switchBlockedReason) {
+      setTargetNote(switchBlockedReason)
+      return
+    }
+    await runTargetAction(() => window.hue.targets.switch(id))
+    // The cursor points into the outgoing application's gap list. Clearing it
+    // lets `clampCursor` land on the incoming bank's first open question
+    // instead of holding an id that no longer exists.
+    setGapCursorId(null)
+    setGapNotes({})
+    setResumeStatus('')
+  }
+
   /**
    * Closing, via any route: the X, the backdrop.
    *
@@ -1016,7 +1128,9 @@ export function Settings({
             ? 'Pulling out your roles and dates…'
             : p.phase === 'mining-stories'
               ? `Building your story bank… ${p.elapsedSeconds}s`
-              : `Looking for gaps… ${p.elapsedSeconds}s`
+              : p.phase === 'gap-scan'
+                ? `Looking for gaps… ${p.elapsedSeconds}s`
+                : `Writing questions about your stack… ${p.elapsedSeconds}s`
       )
     })
 
@@ -1656,6 +1770,193 @@ export function Settings({
             </div>
           </div>
 
+          {/*
+            Saved applications, above the two sections they scope.
+
+            The order is the argument: everything below this — the job title,
+            the posting and its analysis, the résumé and its story bank — belongs
+            to whichever radio is selected. Putting the switcher underneath any
+            of them would read as scoping only that one field.
+          */}
+          <div className="settings-section">
+            <div className="settings-section-title">
+              <SectionIcon name="applications" />
+              Applications
+            </div>
+            <span style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 8 }}>
+              One per job you’re interviewing for. Each keeps its own job title, posting, analysis
+              and résumé, so switching back to an application restores everything you had prepared
+              for it — no re-pasting, no re-uploading.
+            </span>
+
+            <div className="settings-field" style={{ gap: 6 }}>
+              {targets.map((target) => {
+                const active = target.id === s.activeTargetId
+                return (
+                  <div
+                    key={target.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '6px 8px',
+                      borderRadius: 6,
+                      background: active
+                        ? 'var(--surface-raised, rgba(127,127,127,0.10))'
+                        : 'transparent'
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="hue-application"
+                      checked={active}
+                      // Disabled only while something is in flight. The refusals
+                      // — mid-session, an unanswered gap — are handled in the
+                      // click so the reason can be *said*: a radio that silently
+                      // will not move is the thing that makes people reinstall.
+                      disabled={targetBusy}
+                      onChange={() => void onSwitchTarget(target.id)}
+                      id={`hue-app-${target.id}`}
+                    />
+                    {renamingId === target.id ? (
+                      <input
+                        className="settings-input"
+                        autoFocus
+                        value={renameDraft}
+                        maxLength={80}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const name = renameDraft
+                            setRenamingId(null)
+                            void runTargetAction(() => window.hue.targets.rename(target.id, name))
+                          }
+                          if (e.key === 'Escape') setRenamingId(null)
+                        }}
+                        onBlur={() => {
+                          const name = renameDraft
+                          setRenamingId(null)
+                          void runTargetAction(() => window.hue.targets.rename(target.id, name))
+                        }}
+                        style={{ flex: 1 }}
+                      />
+                    ) : (
+                      <label
+                        htmlFor={`hue-app-${target.id}`}
+                        style={{ flex: 1, cursor: 'pointer', fontSize: 13, minWidth: 0 }}
+                      >
+                        <span style={{ fontWeight: active ? 600 : 400 }}>{target.name}</span>
+                        {target.jobTitle && target.jobTitle !== target.name && (
+                          <span style={{ color: 'var(--text-muted)' }}> — {target.jobTitle}</span>
+                        )}
+                        {/*
+                          What is actually set up in this slot. Without it every
+                          row looks equally ready, and the one you switch to
+                          turns out to be the empty one you made last week.
+                        */}
+                        <span
+                          style={{ display: 'block', color: 'var(--text-muted)', fontSize: 11 }}
+                        >
+                          {[
+                            target.hasResume ? 'résumé' : null,
+                            target.hasJobDescription ? 'posting' : null
+                          ]
+                            .filter(Boolean)
+                            .join(' · ') || 'nothing saved yet'}
+                        </span>
+                      </label>
+                    )}
+                    {active && renamingId !== target.id && (
+                      <button
+                        className="settings-btn"
+                        disabled={targetBusy}
+                        onClick={() => {
+                          setRenameDraft(target.name === UNTITLED_TARGET ? '' : target.name)
+                          setRenamingId(target.id)
+                        }}
+                      >
+                        Rename
+                      </button>
+                    )}
+                    <button
+                      className="settings-btn"
+                      disabled={targetBusy || targets.length <= 1}
+                      title={
+                        targets.length <= 1
+                          ? 'The last application can’t be deleted.'
+                          : 'Delete this application'
+                      }
+                      onClick={() => {
+                        if (confirmDeleteId !== target.id) {
+                          setConfirmDeleteId(target.id)
+                          setTargetNote(
+                            `Click Delete again to remove “${target.name}”. Its posting, analysis and résumé go with it, and there’s no undo.`
+                          )
+                          return
+                        }
+                        setConfirmDeleteId(null)
+                        void runTargetAction(() => window.hue.targets.delete(target.id))
+                      }}
+                    >
+                      {confirmDeleteId === target.id ? 'Delete?' : '×'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+              <button
+                className="settings-btn"
+                disabled={targetBusy || targets.length >= MAX_TARGETS}
+                onClick={() => {
+                  if (switchBlockedReason) {
+                    setTargetNote(switchBlockedReason)
+                    return
+                  }
+                  void runTargetAction(() => window.hue.targets.create(''))
+                }}
+              >
+                + New
+              </button>
+              <button
+                className="settings-btn"
+                disabled={targetBusy || targets.length >= MAX_TARGETS}
+                title="Copy this application, résumé and analysis included — for the same role at another company."
+                onClick={() => {
+                  if (switchBlockedReason) {
+                    setTargetNote(switchBlockedReason)
+                    return
+                  }
+                  void runTargetAction(() =>
+                    window.hue.targets.duplicate(
+                      activeTarget ? `${activeTarget.name} copy` : UNTITLED_TARGET
+                    )
+                  )
+                }}
+              >
+                Duplicate
+              </button>
+              {targets.length >= MAX_TARGETS && (
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, alignSelf: 'center' }}>
+                  {MAX_TARGETS} is the limit — delete one to add another.
+                </span>
+              )}
+            </div>
+
+            {targetNote && (
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 6 }}>
+                {targetNote}
+              </span>
+            )}
+            {sessionActive && (
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 6 }}>
+                A session is running. Hue built its prompt from this application when the session
+                started, so switching now is held until you stop.
+              </span>
+            )}
+          </div>
+
           <div className="settings-section">
             <div className="settings-section-title">
               <SectionIcon name="interview" />
@@ -1932,11 +2233,34 @@ export function Settings({
                       single question with a visible end to it is answerable.
                     */
                     <div className="settings-field" style={{ marginTop: 10, gap: 10 }}>
+                      {/*
+                        Two kinds of question now share this queue, and they are
+                        asked for opposite reasons — one because the résumé says
+                        nothing, the other because it says a technology and no
+                        story explains it. One caption covering both would be
+                        true of neither.
+                      */}
                       <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                        These cover the things your résumé can’t show — which are exactly the ones
-                        an AI would otherwise make up. “I don’t have one” is a real answer, and Hue
-                        records it as one rather than inventing a story.
+                        {currentGap.kind === 'technical' ? (
+                          <>
+                            Your résumé lists this, but none of your stories say what you did with
+                            it — so it’s the first thing an interviewer will push on. Answer in your
+                            own words; specifics, versions and numbers are what make it yours.
+                          </>
+                        ) : (
+                          <>
+                            These cover the things your résumé can’t show — which are exactly the
+                            ones an AI would otherwise make up. “I don’t have one” is a real answer,
+                            and Hue records it as one rather than inventing a story.
+                          </>
+                        )}
                       </div>
+                      {currentGap.subject && (
+                        // The receipt: this question came off the page, not off a list.
+                        <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                          From your résumé: {currentGap.subject}
+                        </div>
+                      )}
                       <div className="gap-progress">
                         <span className="gap-progress-count">
                           Question {gapNumberShown} of {gapTotal}

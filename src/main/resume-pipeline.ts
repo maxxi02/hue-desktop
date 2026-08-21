@@ -16,7 +16,8 @@ import {
   GAP_QUESTIONS_SCHEMA,
   JD_SCHEMA,
   PROFILE_SCHEMA,
-  STORIES_SCHEMA
+  STORIES_SCHEMA,
+  TECH_QUESTIONS_SCHEMA
 } from './resume-schemas.ts'
 
 /**
@@ -38,6 +39,32 @@ export const MAX_STORIES = 25
 export const MIN_STORIES = 15
 /** "5–8 targeted questions in-app" — more than that and nobody finishes the flow. */
 export const MAX_GAP_QUESTIONS = 8
+
+/**
+ * How many of the eight slots the behavioral competency scan may take.
+ *
+ * It used to take all of them, and that was the complaint: every question the
+ * feature produced was situational ("tell me about a time you disagreed"),
+ * because every question was generated from a list of twelve behavioral
+ * competencies and nothing else. A resume's most interrogable content — the
+ * stack against each role — reached the question writer as context and was
+ * never asked about.
+ *
+ * Three is enough to cover the high-risk competencies, which sort first and are
+ * the ones a model would otherwise invent mid-interview. The rest of the budget
+ * goes to technical probes, which is where the resume actually has substance.
+ */
+export const MAX_BEHAVIORAL_GAP_QUESTIONS = 3
+
+/**
+ * Technologies named in a single technical question.
+ *
+ * One per technology produces eight variations of "what did you use X for",
+ * which is a checklist. Two or three lets the question ask about the *choice* —
+ * why this cache next to that database — which is the thing only the person who
+ * built it can answer, and the thing an interviewer actually asks.
+ */
+const MAX_TECHNOLOGIES_PER_PROBE = 3
 
 const MAX_FIELD_CHARS = 1200
 const MAX_METRICS_PER_STORY = 6
@@ -65,6 +92,7 @@ const STEP_TOKENS = {
   extraction: 4_000,
   mining: 8_000,
   gapScan: 1_000,
+  techProbe: 1_500,
   gapAnswer: 1_500,
   jobDescription: 3_000
 } as const
@@ -171,6 +199,41 @@ and what did you do next?"). A bad one restates the competency ("tell me about f
 
 Ask only about the competencies given. Do not invent the answers.`
 
+const TECH_SYSTEM = `You write technical questions about the specific systems one candidate has actually built.
+
+Each target you are given is a role from their resume plus the technologies listed against
+that role that none of their stories explain. Write exactly one question per target, and
+put the target's \`id\` on it so it can be matched back.
+
+The test every question must pass: **only the person who did this work could answer it.**
+If the question would make sense addressed to any engineer with the same resume keywords,
+it is the wrong question and you must rewrite it.
+
+That means each question:
+- names the company verbatim (or the project its summary names), never "your last role";
+- names the technologies from that target verbatim, never a category like "your database";
+- asks for a decision and its reason — what that technology was doing in that system, what
+  it was chosen over, which constraint made it the right call, how it was sized, shaped, or
+  configured for that particular workload, or what it made harder.
+
+Good: "At Northwind you list Kafka alongside Postgres on the billing pipeline — what was
+Kafka carrying that Postgres couldn't, and how did you land on the partition count?"
+Good: "Your Vertex work lists Terraform and GitHub Actions — walk me through what actually
+happens between a merge and a running deploy, and where that pipeline was most fragile."
+
+Bad: "Tell me about a technical tradeoff you've made." (generic, and it is a competency,
+not a system)
+Bad: "What is your experience with Kafka?" (a keyword check, answerable from the resume)
+Bad: "How do you approach designing scalable systems?" (belongs to no project at all)
+
+Hard rules:
+- Never introduce a technology, service, metric, team size, or traffic figure the target
+  does not give you. If you want to know the scale, ask what it was — do not assert it.
+- Never assume the architecture. "How did you use Redis there?" is honest; "how did your
+  Redis cache-aside layer handle invalidation?" invents a design they may not have built.
+- One question, two sentences at most. It is read on screen and answered out loud.
+- Do not suggest, hint at, or begin the answer.`
+
 const GAP_ANSWER_SYSTEM = `You turn a candidate's spoken answer into one STAR story.
 
 Use only what the candidate said. Do not smooth over a gap by supplying a plausible detail
@@ -179,7 +242,14 @@ they did not give — an unstated result stays vague, and that is correct.
 If the answer does not contain a usable story — they declined, drew a blank, or said
 something unrelated — set \`usable\` to false, explain briefly in \`reason\`, and set
 \`story\` to null. Recording "no story here" honestly is the point of asking: a competency
-the candidate has no experience of is exactly the one a model would otherwise invent.`
+the candidate has no experience of is exactly the one a model would otherwise invent.
+
+When the question was a technical one, the STAR frame still applies — the situation is the
+system, the task is the problem it had to solve, the action is what they built or chose,
+the result is what it did. Keep every technology name, version, and figure they said,
+spelled the way they spelled it: those are the details that make the story theirs, and
+paraphrasing "Postgres 14 with logical replication" into "a relational database" throws
+away the only part an interviewer will follow up on.`
 
 const JD_SYSTEM = `You prepare a candidate for one specific job description.
 
@@ -188,8 +258,25 @@ story bank entry that answers it. If nothing in the bank fits, set \`storyId\` t
 that is the most valuable output here, because it tells the candidate their weak flank
 before they walk in rather than after.
 
-Then list requirements in the job description that no story supports. Be direct about it.
-Never map a question to a story that does not really answer it.`
+Most of these questions should be **technical and specific to this posting**, because most
+interviews are. Read the job description for the systems, technologies, and scale it names,
+read the candidate's stack, and ask what the interviewer will actually ask at the
+intersection: how they have used the thing this job runs on, what they did instead where
+their stack differs, how they would approach the problem this team clearly has. Name the
+technology, and where the candidate has used it, name the employer too.
+
+Good: "This team runs Kafka for event delivery and your Postgres pipeline at Northwind did
+the same job — what would you carry over, and what would you do differently on Kafka?"
+Good: "The posting asks for Terraform across multiple accounts; how was your Acme Terraform
+setup structured, and what broke as it grew?"
+Bad: "Tell me about a time you learned a new technology." (asks nothing about this job)
+Bad: "Do you have experience with Kubernetes?" (answerable from the résumé)
+
+Keep a few behavioral questions where the posting genuinely signals them — a lead role will
+be asked about conflict and mentorship — but do not fill the list with them.
+
+Never invent a technology, and never map a question to a story that does not really answer
+it. Then list requirements in the job description that no story supports. Be direct.`
 
 function clamp(text: unknown, limit = MAX_FIELD_CHARS): string {
   return typeof text === 'string' ? text.slice(0, limit).trim() : ''
@@ -368,6 +455,204 @@ export function overusedTags(stories: Story[]): { competency: Competency; fracti
     .sort((a, b) => b.fraction - a.fraction)
 }
 
+/**
+ * Whether `haystack` (already lowercased) names `term` as a term rather than as
+ * a substring of a longer word.
+ *
+ * `includes` is wrong here and wrong in a way that silently suppresses
+ * questions: "Go" is inside "going", "R" is inside every third word, and "C" is
+ * inside "click". Each false positive marks a technology as already explained
+ * and drops the one question about it. A word boundary regex is also wrong,
+ * because half of these names are not words — `C++`, `.NET`, `Node.js`, `F#` all
+ * fail `\b`. So the check is explicit: the characters either side of the match
+ * must not be alphanumeric.
+ */
+function mentionsTerm(haystack: string, term: string): boolean {
+  const needle = term.toLowerCase().trim()
+  if (!needle) return false
+  const alphanumeric = /[a-z0-9]/
+  for (let from = 0; ; from += 1) {
+    const at = haystack.indexOf(needle, from)
+    if (at < 0) return false
+    const before = haystack[at - 1]
+    const after = haystack[at + needle.length]
+    if (!(before && alphanumeric.test(before)) && !(after && alphanumeric.test(after))) return true
+    from = at
+  }
+}
+
+/** One technical question's worth of subject matter, chosen before any model sees it. */
+export interface TechProbeTarget {
+  /** Short handle the model echoes back so the question can be anchored. */
+  id: string
+  roleId: string | null
+  /** Null on the catch-all target for skills the resume attributes to no role. */
+  company: string | null
+  title: string | null
+  summary: string | null
+  /** Verbatim from the resume, via the profile — so a question may safely name them. */
+  technologies: string[]
+  /** Figures the resume attributes to this role, so the question can ask about the real one. */
+  metrics: string[]
+}
+
+/** Everything a role's own stories say, lowercased, for the "is this explained" test. */
+function roleNarrative(stories: Story[], roleId: string | null): string {
+  return stories
+    .filter((story) => story.roleId === roleId)
+    .map((story) => `${story.situation} ${story.task} ${story.action} ${story.result}`)
+    .join(' ')
+    .toLowerCase()
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
+  return out
+}
+
+/**
+ * What to ask technical questions about.
+ *
+ * Deterministic, and the same shape of judgement as `findGaps`: a technology
+ * listed against a role that none of that role's stories mention is a gap. The
+ * story bank is what the candidate can already speak to; the stack is what the
+ * resume claims. The difference is the interrogable surface, and it is where an
+ * interviewer will go first.
+ *
+ * Two rules make the output worth eight slots rather than eight keywords:
+ *
+ *  - **Deduplicated across roles.** React at three employers is one question,
+ *    asked about the most recent one. Asking three times spends the budget on a
+ *    word rather than on a system.
+ *  - **Round-robin across roles.** A candidate with a forty-item stack at their
+ *    current job and three earlier roles should not get eight questions about
+ *    the current job. One chunk per role, then round again — so the whole
+ *    resume is covered before any part of it is covered twice.
+ *
+ * Skills the resume lists but attaches to no role come last, as a single
+ * catch-all: they are the weakest evidence on the page and the likeliest thing
+ * an interviewer catches the candidate out on.
+ */
+export function technicalProbeTargets(
+  profile: Profile,
+  stories: Story[],
+  limit: number
+): TechProbeTarget[] {
+  if (limit <= 0) return []
+
+  // Deduped case-insensitively but reported verbatim: the question must print
+  // the technology the way the resume spells it.
+  const claimed = new Set<string>()
+  const queues: TechProbeTarget[][] = []
+
+  for (const role of profile.roles) {
+    const narrative = roleNarrative(stories, role.id)
+    const unexplained = role.stack.filter((tech) => {
+      const key = tech.toLowerCase().trim()
+      if (!key || claimed.has(key)) return false
+      if (mentionsTerm(narrative, tech)) return false
+      claimed.add(key)
+      return true
+    })
+    if (unexplained.length === 0) continue
+
+    const metrics = profile.metrics
+      .filter((metric) => metric.roleId === role.id)
+      .map((metric) => `${metric.value} — ${metric.claim}`)
+      .slice(0, 4)
+
+    queues.push(
+      chunk(unexplained, MAX_TECHNOLOGIES_PER_PROBE).map((technologies, i) => ({
+        id: `${role.id}-${i + 1}`,
+        roleId: role.id,
+        company: role.company,
+        title: role.title,
+        summary: role.summary,
+        technologies,
+        metrics
+      }))
+    )
+  }
+
+  // Skills with no role behind them and no story mentioning them anywhere.
+  const everything = stories
+    .map((story) => `${story.situation} ${story.task} ${story.action} ${story.result}`)
+    .join(' ')
+    .toLowerCase()
+  const orphans = profile.skills.filter((skill) => {
+    const key = skill.toLowerCase().trim()
+    if (!key || claimed.has(key)) return false
+    if (mentionsTerm(everything, skill)) return false
+    claimed.add(key)
+    return true
+  })
+  if (orphans.length > 0) {
+    queues.push(
+      chunk(orphans, MAX_TECHNOLOGIES_PER_PROBE)
+        // One catch-all, not a tail of them: a long skills section would
+        // otherwise crowd out every question anchored to real work.
+        .slice(0, 1)
+        .map((technologies) => ({
+          id: 'unattributed-skills',
+          roleId: null,
+          company: null,
+          title: null,
+          summary: null,
+          technologies,
+          metrics: []
+        }))
+    )
+  }
+
+  const targets: TechProbeTarget[] = []
+  for (let round = 0; targets.length < limit; round += 1) {
+    const available = queues.filter((queue) => queue.length > round)
+    if (available.length === 0) break
+    for (const queue of available) {
+      if (targets.length >= limit) break
+      targets.push(queue[round])
+    }
+  }
+  return targets
+}
+
+/** Anchors each returned question to the target it was written for. */
+function buildTechnicalGaps(raw: unknown, targets: TechProbeTarget[], taken: Set<string>): Gap[] {
+  const list = Array.isArray((raw as { questions?: unknown })?.questions)
+    ? (raw as { questions: unknown[] }).questions
+    : []
+  const byId = new Map(targets.map((target) => [target.id, target]))
+  const gaps: Gap[] = []
+
+  for (const entry of list) {
+    const item = (entry ?? {}) as Record<string, unknown>
+    const target = byId.get(clamp(item.targetId, 128))
+    const question = clamp(item.question, 400)
+    // A question for a target we did not ask about is a question about
+    // something the resume may not contain — the one thing this pipeline
+    // never ships. Drop it rather than repair it.
+    if (!target || !question) continue
+    byId.delete(target.id)
+    gaps.push({
+      id: uniqueId(`tech-${target.id}`, `tech-${gaps.length + 1}`, taken),
+      kind: 'technical',
+      // Every technical probe is a tradeoff question by construction: it asks
+      // why this technology, in this system, over the alternative. Tagging it
+      // so means an answered probe lands in the bank where the live session
+      // looks for a technical story.
+      competency: 'technical-tradeoff',
+      subject: target.technologies.join(', '),
+      roleId: target.roleId,
+      question,
+      status: 'open',
+      storyId: null
+    })
+  }
+
+  return gaps
+}
+
 export function findGaps(stories: Story[]): Competency[] {
   const covered = new Set<Competency>()
   for (const story of stories) for (const tag of story.competencies) covered.add(tag)
@@ -378,12 +663,11 @@ export function findGaps(stories: Story[]): Competency[] {
   return [...risky, ...rest]
 }
 
-function buildGaps(questions: unknown, missing: Competency[]): Gap[] {
+function buildGaps(questions: unknown, missing: Competency[], taken: Set<string>): Gap[] {
   const raw = Array.isArray((questions as { questions?: unknown })?.questions)
     ? (questions as { questions: unknown[] }).questions
     : []
   const wanted = new Set<Competency>(missing)
-  const taken = new Set<string>()
   const gaps: Gap[] = []
 
   for (const entry of raw) {
@@ -397,19 +681,22 @@ function buildGaps(questions: unknown, missing: Competency[]): Gap[] {
     wanted.delete(competency as Competency)
     gaps.push({
       id: uniqueId(`gap-${competency}`, `gap-${gaps.length + 1}`, taken),
+      kind: 'behavioral',
       competency: competency as Competency,
+      subject: null,
+      roleId: null,
       question,
       status: 'open',
       storyId: null
     })
-    if (gaps.length >= MAX_GAP_QUESTIONS) break
+    if (gaps.length >= MAX_BEHAVIORAL_GAP_QUESTIONS) break
   }
 
   return gaps
 }
 
 /** The phases a caller can report while an ingest runs. One per model call. */
-export type IngestPhaseName = 'mining-profile' | 'mining-stories' | 'gap-scan'
+export type IngestPhaseName = 'mining-profile' | 'mining-stories' | 'gap-scan' | 'tech-probe'
 
 export interface IngestOptions {
   /** Injected so bundle timestamps are deterministic in tests. */
@@ -459,14 +746,18 @@ export async function runIngest(
   // has a claim in it that the document does not support.
   const pruned = pruneUngrounded(rawProfile, rawStories, sourceText)
 
-  const missing = findGaps(pruned.stories)
+  // Ids are unique across both kinds of question, so the two builders share one
+  // `taken` set — the UI addresses a gap by id and cannot tell them apart.
+  const taken = new Set<string>()
+
+  const missing = findGaps(pruned.stories).slice(0, MAX_BEHAVIORAL_GAP_QUESTIONS)
   // A statement rather than the ternary this used to be, so the progress hook
   // fires only on the branch that actually calls the model: a bank with no gaps
   // must not display "looking for gaps" for a step it is skipping.
-  let gaps: Gap[] = []
+  let behavioral: Gap[] = []
   if (missing.length > 0) {
     opts.onPhase?.('gap-scan')
-    gaps = buildGaps(
+    behavioral = buildGaps(
       await llm.structured<unknown>({
         label: 'gap scan',
         maxTokens: STEP_TOKENS.gapScan,
@@ -476,12 +767,47 @@ export async function runIngest(
         // the whole bank would cost tokens for no gain in question quality.
         user:
           `Roles:\n${JSON.stringify(pruned.profile.roles, null, 2)}\n\n` +
-          `Competencies with no story: ${missing.slice(0, MAX_GAP_QUESTIONS).join(', ')}`,
+          `Competencies with no story: ${missing.join(', ')}`,
         effort: 'medium'
       }),
-      missing.slice(0, MAX_GAP_QUESTIONS)
+      missing,
+      taken
     )
   }
+
+  // The technical axis. Targets are chosen here, deterministically, from the
+  // pruned profile — so every technology a question names is one the document
+  // actually printed, and the model's only job is phrasing.
+  const targets = technicalProbeTargets(
+    pruned.profile,
+    pruned.stories,
+    MAX_GAP_QUESTIONS - behavioral.length
+  )
+  let technical: Gap[] = []
+  if (targets.length > 0) {
+    opts.onPhase?.('tech-probe')
+    technical = buildTechnicalGaps(
+      await llm.structured<unknown>({
+        label: 'technical probe',
+        maxTokens: STEP_TOKENS.techProbe,
+        system: TECH_SYSTEM,
+        schema: TECH_QUESTIONS_SCHEMA,
+        user:
+          `Targets:\n${JSON.stringify(targets, null, 2)}\n\n` +
+          `Write exactly ${targets.length} question${targets.length === 1 ? '' : 's'}, one per target, ` +
+          `each carrying its target's id.`,
+        effort: 'medium'
+      }),
+      targets,
+      taken
+    )
+  }
+
+  // Technical first. They are what the user came for, and they are the easier
+  // ones to answer — a flow that opens with "tell me about a time you failed"
+  // is a flow people close. The behavioral questions still get asked, by
+  // someone who is three answers in rather than nought.
+  const gaps = [...technical, ...behavioral]
 
   const bundle = sealBundle(
     { version: BUNDLE_VERSION, profile: pruned.profile, stories: pruned.stories, gaps },
@@ -536,6 +862,8 @@ export async function answerGap(
     schema: GAP_ANSWER_SCHEMA,
     user:
       `Competency: ${gap.competency}\n` +
+      (gap.subject ? `Technologies the question was about: ${gap.subject}\n` : '') +
+      (gap.roleId ? `Role it was anchored to: ${gap.roleId}\n` : '') +
       `Question asked: ${gap.question}\n` +
       `Roles: ${JSON.stringify(bundle.profile.roles.map((r) => ({ id: r.id, company: r.company, title: r.title })))}\n\n` +
       `The candidate answered:\n${answerText}`,
@@ -567,6 +895,10 @@ export async function answerGap(
   const stored: Story = {
     ...story,
     id,
+    // A technical probe already knows which role it asked about; that is better
+    // evidence than the model's guess, and a story with no role loses the
+    // company name the candidate needs when they tell it.
+    roleId: story.roleId ?? gap.roleId ?? null,
     // Answer the question that was asked: the competency is why we asked, so it
     // belongs on the story even if the model tagged it differently.
     competencies: story.competencies.includes(gap.competency)
@@ -613,6 +945,16 @@ export type JobDescriptionBrief = JobBrief
  */
 interface StoryBankView {
   stories: { id: string; competencies: readonly string[]; situation: string }[]
+  /**
+   * The stack, so the brief can anticipate technical questions and not only
+   * behavioral ones. Without it this pass could only ever ask about the twelve
+   * competencies, which is how a job description full of Kafka and Kubernetes
+   * produced "tell me about a time you handled ambiguity".
+   */
+  profile: {
+    roles: readonly { id: string; company: string; title: string; stack: readonly string[] }[]
+    skills: readonly string[]
+  }
 }
 
 /**
@@ -631,15 +973,27 @@ export async function jobDescriptionBrief(
     maxTokens: STEP_TOKENS.jobDescription,
     system: JD_SYSTEM,
     schema: JD_SCHEMA,
-    user: `Story bank:\n${JSON.stringify(
-      bundle.stories.map((s) => ({
-        id: s.id,
-        competencies: s.competencies,
-        situation: s.situation
-      })),
-      null,
-      2
-    )}\n\nJob description:\n\n${jobDescription}`
+    user:
+      `Candidate's stack, by role:\n${JSON.stringify(
+        bundle.profile.roles.map((r) => ({
+          id: r.id,
+          company: r.company,
+          title: r.title,
+          stack: r.stack
+        })),
+        null,
+        2
+      )}\n\n` +
+      `Other skills listed: ${bundle.profile.skills.join(', ') || '(none)'}\n\n` +
+      `Story bank:\n${JSON.stringify(
+        bundle.stories.map((s) => ({
+          id: s.id,
+          competencies: s.competencies,
+          situation: s.situation
+        })),
+        null,
+        2
+      )}\n\nJob description:\n\n${jobDescription}`
   })
 
   const known = new Set(bundle.stories.map((s) => s.id))
