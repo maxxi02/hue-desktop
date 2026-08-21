@@ -724,3 +724,54 @@ test('rescan reseals, so a changed bank changes the hash', async () => {
   })
   assert.notEqual(after.hash, before.hash)
 })
+
+// Why the questions used to be generic: the scan was shown job titles and a list
+// of abstract nouns, and nothing the candidate had actually done. It cannot name
+// a real project it has never seen.
+test('the gap scan is shown the story bank, not just the job titles', async () => {
+  const llm = scripted()
+  await runIngest(RESUME, llm, { now: FIXED_NOW })
+
+  const scan = llm.calls.find((c) => c.label === 'gap scan')
+  assert.ok(scan, 'no gap scan call was made')
+  assert.match(scan.user, /Situation for conflict-manager-roadmap\./)
+  assert.match(scan.user, /Situation for mentorship-oncall\./)
+})
+
+test('rescan shows the story bank too, so the two paths cannot drift', async () => {
+  const before = bundleWith(everyTagFromResume(), [])
+  const llm = fakeLlm({ 'gap scan': RESCAN_QUESTIONS })
+  await rescanGaps(before, llm, { now: FIXED_NOW })
+
+  const scan = llm.calls.find((c) => c.label === 'gap scan')
+  assert.ok(scan, 'no gap scan call was made')
+  assert.match(scan.user, /Situation for s0\./)
+})
+
+test('the gap scan payload names only the competencies being asked about', async () => {
+  const llm = scripted()
+  await runIngest(RESUME, llm, { now: FIXED_NOW })
+
+  const scan = llm.calls.find((c) => c.label === 'gap scan')!
+  const asked = scan.user.match(/Competencies with no story: (.*)/)![1]
+  assert.match(asked, /conflict/)
+  assert.match(asked, /failure/)
+  // Covered by a resume story, so it is not a gap and must not be asked about.
+  assert.ok(!asked.includes('scaling'))
+})
+
+// The bank travels as context, not as the answer: a long situation is clipped so
+// twenty-five of them cannot quietly become the largest prompt in the pipeline.
+test('a long situation is clipped in the gap scan payload', async () => {
+  const long = 'x'.repeat(600)
+  const llm = scripted({
+    'story mining': {
+      stories: [story('long-one', 'acme-robotics', ['scaling'], { situation: long })]
+    }
+  })
+  await runIngest(RESUME, llm, { now: FIXED_NOW })
+
+  const scan = llm.calls.find((c) => c.label === 'gap scan')!
+  assert.ok(!scan.user.includes(long), 'the full situation was sent unclipped')
+  assert.match(scan.user, /x{100}/)
+})

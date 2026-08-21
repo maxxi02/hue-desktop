@@ -169,6 +169,18 @@ answer out loud in thirty seconds.
 A good question names the shape of the answer ("a project that didn't ship — what happened,
 and what did you do next?"). A bad one restates the competency ("tell me about failure").
 
+You are also given the projects the candidate has already described. Use them. Name two or
+three in the question so the candidate knows where in their memory to look — a question that
+could have come from any list of interview questions wastes the one thing you know that such
+a list does not, which is what this person actually worked on.
+
+Name them as reminders, never as claims. Ask whether something happened; do not state that it
+did. "You worked on the lead pipeline, the scoring weights and the assistant — was there a
+point on any of those where you and someone else disagreed about the approach?" is right.
+"On the scoring weights you disagreed with your manager — what happened?" is wrong: it decides
+the answer before the candidate has spoken, and a candidate who had no such disagreement is
+being invited to invent one.
+
 Ask only about the competencies given. Do not invent the answers.`
 
 const GAP_ANSWER_SYSTEM = `You turn a candidate's spoken answer into one STAR story.
@@ -190,6 +202,44 @@ before they walk in rather than after.
 
 Then list requirements in the job description that no story supports. Be direct about it.
 Never map a question to a story that does not really answer it.`
+
+/**
+ * How much of a story travels to the gap scan.
+ *
+ * The situation is the memory jogger — enough to name the project. The task,
+ * action, and result are what the *answer* will contain, so sending them pays
+ * tokens for text the model does not need in order to write a question. The bank
+ * is capped at MAX_STORIES, so this is what keeps the payload bounded.
+ */
+const STORY_ANCHOR_CHARS = 200
+
+/**
+ * The gap scan's user payload, shared by ingest and rescan.
+ *
+ * Shared because the two must give the same model the same evidence; built
+ * separately, they drift, and the questions differ depending on which button the
+ * user pressed.
+ *
+ * The story bank is included because roles alone cannot make a question
+ * specific — a role is a job title and a stack list. Asked for a conflict
+ * question with only that, the model can do no better than "tell me about a
+ * disagreement", which is what any list of interview questions would have given
+ * the candidate for free. The situations are what let it name work this person
+ * actually did, which is the only thing this pipeline knows that a generic list
+ * does not.
+ */
+function gapScanUser(profile: Profile, stories: Story[], wanted: Competency[]): string {
+  const bank = stories.map((s) => ({
+    role: s.roleId,
+    competencies: s.competencies,
+    situation: clamp(s.situation, STORY_ANCHOR_CHARS)
+  }))
+  return (
+    `Roles:\n${JSON.stringify(profile.roles, null, 2)}\n\n` +
+    `Projects the candidate has already described:\n${JSON.stringify(bank, null, 2)}\n\n` +
+    `Competencies with no story: ${wanted.join(', ')}`
+  )
+}
 
 function clamp(text: unknown, limit = MAX_FIELD_CHARS): string {
   return typeof text === 'string' ? text.slice(0, limit).trim() : ''
@@ -490,20 +540,17 @@ export async function runIngest(
   let gaps: Gap[] = []
   if (missing.length > 0) {
     opts.onPhase?.('gap-scan')
+    const wanted = missing.slice(0, MAX_GAP_QUESTIONS)
     gaps = buildGaps(
       await llm.structured<unknown>({
         label: 'gap scan',
         maxTokens: STEP_TOKENS.gapScan,
         system: GAP_SYSTEM,
         schema: GAP_QUESTIONS_SCHEMA,
-        // Only the roles are needed to make the question specific; sending
-        // the whole bank would cost tokens for no gain in question quality.
-        user:
-          `Roles:\n${JSON.stringify(pruned.profile.roles, null, 2)}\n\n` +
-          `Competencies with no story: ${missing.slice(0, MAX_GAP_QUESTIONS).join(', ')}`,
+        user: gapScanUser(pruned.profile, pruned.stories, wanted),
         effort: 'medium'
       }),
-      missing.slice(0, MAX_GAP_QUESTIONS)
+      wanted
     )
   }
 
@@ -575,9 +622,7 @@ export async function rescanGaps(
       maxTokens: STEP_TOKENS.gapScan,
       system: GAP_SYSTEM,
       schema: GAP_QUESTIONS_SCHEMA,
-      user:
-        `Roles:\n${JSON.stringify(bundle.profile.roles, null, 2)}\n\n` +
-        `Competencies with no story: ${wanted.join(', ')}`,
+      user: gapScanUser(bundle.profile, bundle.stories, wanted),
       effort: 'medium'
     }),
     wanted,
