@@ -23,6 +23,7 @@ import {
 } from '../../../shared/job-spec'
 import { parseJobBrief } from '../../../shared/job-brief'
 import { clampCursor, nextAfterAnswered, stepCursor } from '../lib/gapCursor'
+import { isSettingsDirty } from '../lib/settingsDirty'
 import { SectionIcon } from './SectionIcon'
 
 const KOKORO_VOICES = ['af_heart', 'af_bella', 'af_nicole', 'am_michael', 'bf_emma', 'bm_george']
@@ -631,8 +632,35 @@ export function Settings({
   const detectSeq = useRef(0)
   const llmDetectSeq = useRef(0)
 
+  /**
+   * The settings as last *persisted*, which is what unsaved-ness is measured
+   * against. Every path that writes through main and then syncs the local copy
+   * must call `markPersisted`, or the close guard reports changes that are
+   * already on disk.
+   */
+  const pristine = useRef<HueSettings | null>(null)
+  const markPersisted = (next: HueSettings): void => {
+    pristine.current = next
+    setS(next)
+  }
+  /**
+   * Apply fields the main process has *already* written to disk.
+   *
+   * Patches the form and the pristine copy together, so the change is visible
+   * without reading as unsaved. Deliberately a patch rather than a whole object:
+   * assigning the whole thing would drop every unsaved edit still open in the
+   * drawer, which is the trap the job-spec and cue-sheet handlers already
+   * document.
+   */
+  const markFieldsPersisted = (patch: Partial<HueSettings>): void => {
+    setS((prev) => (prev ? { ...prev, ...patch } : prev))
+    if (pristine.current) pristine.current = { ...pristine.current, ...patch }
+  }
+  /** Set when a close was requested while there was unsaved work. */
+  const [closePending, setClosePending] = useState(false)
+
   useEffect(() => {
-    window.hue.settings.get().then(setS)
+    window.hue.settings.get().then(markPersisted)
     void window.hue.version().then(setAppVersion)
   }, [])
 
@@ -704,7 +732,7 @@ export function Settings({
       const status = await window.hue.phone.setEnabled(!phone.running)
       setPhone(status)
       // Keep the form's copy of the setting in sync (it persists on Save too).
-      setS((prev) => (prev ? { ...prev, phoneMirrorEnabled: status.running } : prev))
+      markFieldsPersisted({ phoneMirrorEnabled: status.running })
     } finally {
       setPhoneBusy(false)
     }
@@ -731,7 +759,7 @@ export function Settings({
       const status = await window.hue.stealth.getStealthStatus()
       setStealth(status)
       // Keep the form's copy of the setting in sync (it persists on Save too).
-      setS((prev) => (prev ? { ...prev, stealthMode: status.enabled } : prev))
+      markFieldsPersisted({ stealthMode: status.enabled })
     } finally {
       setStealthBusy(false)
     }
@@ -774,7 +802,7 @@ export function Settings({
       const status = await window.hue.relay.setEnabled(!relay.running)
       setRelay(status)
       // Keep the form's copy of the setting in sync (it persists on Save too).
-      setS((prev) => (prev ? { ...prev, relayEnabled: status.running } : prev))
+      markFieldsPersisted({ relayEnabled: status.running })
     } finally {
       setRelayBusy(false)
     }
@@ -838,7 +866,6 @@ export function Settings({
         <div className="drawer" onClick={(e) => e.stopPropagation()}>
           <div className="drawer-header">
             <h2>Settings</h2>
-            <span className="drawer-version">{appVersion ? `v${appVersion}` : ''}</span>
             <span className="drawer-version">{appVersion ? `v${appVersion}` : ''}</span>
             <button className="icon-btn" onClick={onClose}>
               <CloseIcon />
@@ -922,9 +949,39 @@ export function Settings({
 
   const save = async (): Promise<void> => {
     const next = await window.hue.settings.set(s)
-    setS(next)
+    markPersisted(next)
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
+  }
+
+  /**
+   * Closing, via any route: the X, the backdrop.
+   *
+   * Intercepted rather than forbidden. Losing a typed API key or a gap answer to
+   * a stray backdrop click is the failure this exists to stop; trapping the user
+   * in the pane until they manually undo an experiment would be a worse one.
+   */
+  const requestClose = (): void => {
+    if (pristine.current && isSettingsDirty(s, pristine.current, gapDrafts)) {
+      setClosePending(true)
+      return
+    }
+    onClose()
+  }
+
+  const saveAndClose = async (): Promise<void> => {
+    await save()
+    setClosePending(false)
+    onClose()
+  }
+
+  const discardAndClose = (): void => {
+    // Back to what is on disk, and drop the unsent drafts with it — leaving them
+    // would resurrect the prompt the moment the pane is reopened.
+    if (pristine.current) setS(pristine.current)
+    setGapDrafts({})
+    setClosePending(false)
+    onClose()
   }
 
   /**
@@ -968,7 +1025,7 @@ export function Settings({
       if (outcome.ok) {
         // The main process already persisted it; mirror it into the local form
         // state so the pane updates without a reload.
-        set('profileBundleJson', JSON.stringify(outcome.bundle))
+        markFieldsPersisted({ profileBundleJson: JSON.stringify(outcome.bundle) })
         setResumeStatus(`Ready — ${describeBundle(outcome.bundle)}.`)
       } else {
         setResumeStatus(outcome.message)
@@ -1019,7 +1076,7 @@ export function Settings({
     // Only the two fields it cleared are taken off the persisted object —
     // assigning the whole thing would drop every unsaved edit open in the
     // drawer, the same trap the cue-sheet handlers below document.
-    setS((prev) => (prev ? { ...prev, jobDescription: '', jobSpecJson: '' } : prev))
+    markFieldsPersisted({ jobDescription: '', jobSpecJson: '' })
     setAnalysedText(null)
     setJobError(null)
     setJobStatus(null)
@@ -1027,7 +1084,7 @@ export function Settings({
 
   const onDeleteProfile = async (): Promise<void> => {
     await window.hue.profile.delete()
-    set('profileBundleJson', '')
+    markFieldsPersisted({ profileBundleJson: '' })
     setResumeStatus('Profile deleted.')
   }
 
@@ -1035,7 +1092,7 @@ export function Settings({
     setResumeStatus('Reloading…')
     const outcome = await window.hue.profile.refresh()
     if (outcome.ok) {
-      set('profileBundleJson', JSON.stringify(outcome.bundle))
+      markFieldsPersisted({ profileBundleJson: JSON.stringify(outcome.bundle) })
       setResumeStatus(`Reloaded — ${describeBundle(outcome.bundle)}.`)
     } else {
       setResumeStatus(outcome.message)
@@ -1056,7 +1113,7 @@ export function Settings({
         setGapNotes((n) => ({ ...n, [gapId]: outcome.message }))
         return
       }
-      set('profileBundleJson', JSON.stringify(outcome.bundle))
+      markFieldsPersisted({ profileBundleJson: JSON.stringify(outcome.bundle) })
       // Routed through `nextAfterAnswered` even when the answer was rejected:
       // a rejected gap is still open, so this returns the same id and the
       // question the "we couldn't use that" note refers to stays on screen.
@@ -1083,7 +1140,7 @@ export function Settings({
     setGapBusy(gapId)
     try {
       const bundle = await window.hue.profile.skipGap(gapId)
-      set('profileBundleJson', JSON.stringify(bundle))
+      markFieldsPersisted({ profileBundleJson: JSON.stringify(bundle) })
       const openAfter = bundle.gaps.filter((g) => g.status === 'open').map((g) => g.id)
       setGapCursorId(nextAfterAnswered(openBefore, gapId, openAfter))
     } finally {
@@ -1114,17 +1171,40 @@ export function Settings({
   return (
     <div
       className={open ? 'drawer-overlay' : 'drawer-overlay drawer-overlay--hidden'}
-      onClick={onClose}
+      onClick={requestClose}
     >
       <div className="drawer" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-header">
           <h2>Settings</h2>
           <span className="drawer-version">{appVersion ? `v${appVersion}` : ''}</span>
-          <span className="drawer-version">{appVersion ? `v${appVersion}` : ''}</span>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" onClick={requestClose}>
             <CloseIcon />
           </button>
         </div>
+
+        {closePending && (
+          // In-app rather than window.confirm: a native dialog blocks the whole
+          // renderer in Electron, which would freeze the pane it is asking about.
+          <div className="unsaved-guard" role="alertdialog" aria-label="Unsaved changes">
+            <div className="unsaved-guard-body">
+              <strong>You have unsaved changes.</strong>
+              <span>
+                Closing now would discard them, including any answer you have typed but not sent.
+              </span>
+              <div className="unsaved-guard-actions">
+                <button type="button" className="icon-btn" onClick={() => void saveAndClose()}>
+                  Save and close
+                </button>
+                <button type="button" className="link-btn" onClick={discardAndClose}>
+                  Discard and close
+                </button>
+                <button type="button" className="link-btn" onClick={() => setClosePending(false)}>
+                  Keep editing
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="drawer-body">
           {/*
