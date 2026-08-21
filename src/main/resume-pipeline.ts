@@ -50,11 +50,21 @@ export const MAX_GAP_QUESTIONS = 8
  * stack against each role — reached the question writer as context and was
  * never asked about.
  *
- * Three is enough to cover the high-risk competencies, which sort first and are
- * the ones a model would otherwise invent mid-interview. The rest of the budget
- * goes to technical probes, which is where the resume actually has substance.
+ * The budget is exactly the size of `HIGH_RISK_COMPETENCIES`, and derived from
+ * it rather than written as a number, because that is the principle rather than
+ * a taste: those four are the competencies a resume cannot evidence, they sort
+ * first in `findGaps`, and they are where a model invents when asked in a live
+ * interview. Every one of them must fit.
+ *
+ * It was briefly a literal 3, which was one short — `influence-without-authority`
+ * is the fourth high-risk competency and it fell off the end silently, which is
+ * precisely the failure the source-aware coverage rule exists to stop. Tying the
+ * two together is what stops that recurring if the list ever changes.
+ *
+ * The remaining four slots go to technical probes, which is where the resume
+ * actually has substance.
  */
-export const MAX_BEHAVIORAL_GAP_QUESTIONS = 3
+export const MAX_BEHAVIORAL_GAP_QUESTIONS = HIGH_RISK_COMPETENCIES.length
 
 /**
  * Technologies named in a single technical question.
@@ -197,6 +207,18 @@ answer out loud in thirty seconds.
 A good question names the shape of the answer ("a project that didn't ship — what happened,
 and what did you do next?"). A bad one restates the competency ("tell me about failure").
 
+You are also given the projects the candidate has already described. Use them. Name two or
+three in the question so the candidate knows where in their memory to look — a question that
+could have come from any list of interview questions wastes the one thing you know that such
+a list does not, which is what this person actually worked on.
+
+Name them as reminders, never as claims. Ask whether something happened; do not state that it
+did. "You worked on the lead pipeline, the scoring weights and the assistant — was there a
+point on any of those where you and someone else disagreed about the approach?" is right.
+"On the scoring weights you disagreed with your manager — what happened?" is wrong: it decides
+the answer before the candidate has spoken, and a candidate who had no such disagreement is
+being invited to invent one.
+
 Ask only about the competencies given. Do not invent the answers.`
 
 const TECH_SYSTEM = `You write technical questions about the specific systems one candidate has actually built.
@@ -277,6 +299,44 @@ be asked about conflict and mentorship — but do not fill the list with them.
 
 Never invent a technology, and never map a question to a story that does not really answer
 it. Then list requirements in the job description that no story supports. Be direct.`
+
+/**
+ * How much of a story travels to the gap scan.
+ *
+ * The situation is the memory jogger — enough to name the project. The task,
+ * action, and result are what the *answer* will contain, so sending them pays
+ * tokens for text the model does not need in order to write a question. The bank
+ * is capped at MAX_STORIES, so this is what keeps the payload bounded.
+ */
+const STORY_ANCHOR_CHARS = 200
+
+/**
+ * The gap scan's user payload, shared by ingest and rescan.
+ *
+ * Shared because the two must give the same model the same evidence; built
+ * separately, they drift, and the questions differ depending on which button the
+ * user pressed.
+ *
+ * The story bank is included because roles alone cannot make a question
+ * specific — a role is a job title and a stack list. Asked for a conflict
+ * question with only that, the model can do no better than "tell me about a
+ * disagreement", which is what any list of interview questions would have given
+ * the candidate for free. The situations are what let it name work this person
+ * actually did, which is the only thing this pipeline knows that a generic list
+ * does not.
+ */
+function gapScanUser(profile: Profile, stories: Story[], wanted: Competency[]): string {
+  const bank = stories.map((s) => ({
+    role: s.roleId,
+    competencies: s.competencies,
+    situation: clamp(s.situation, STORY_ANCHOR_CHARS)
+  }))
+  return (
+    `Roles:\n${JSON.stringify(profile.roles, null, 2)}\n\n` +
+    `Projects the candidate has already described:\n${JSON.stringify(bank, null, 2)}\n\n` +
+    `Competencies with no story: ${wanted.join(', ')}`
+  )
+}
 
 function clamp(text: unknown, limit = MAX_FIELD_CHARS): string {
   return typeof text === 'string' ? text.slice(0, limit).trim() : ''
@@ -426,15 +486,6 @@ export function normaliseStories(raw: unknown, source: Story['source'] = 'resume
     .filter((story): story is Story => story !== null)
     .slice(0, MAX_STORIES)
 }
-
-/**
- * Competencies with no story behind them.
- *
- * Deterministic rather than a model call: it is a set difference, and asking a
- * model to compute one is both slower and less reliable than computing it.
- * High-risk competencies sort first — they are where the model would otherwise
- * invent, which is the failure the gap scan exists to prevent.
- */
 
 /**
  * Tags that cover more than [TAG_SATURATION] of the bank.
@@ -653,17 +704,60 @@ function buildTechnicalGaps(raw: unknown, targets: TechProbeTarget[], taken: Set
   return gaps
 }
 
-export function findGaps(stories: Story[]): Competency[] {
+/**
+ * Competencies with no evidence worth trusting behind them.
+ *
+ * Deterministic rather than a model call: it is a set difference, and asking a
+ * model to compute one is both slower and less reliable than computing it.
+ *
+ * The difference is taken over *trustworthy* evidence, not over tags. For the
+ * high-risk competencies only a `gap-answer` story counts, because `profile.ts`
+ * defines those four as ones "a resume essentially never evidences on its own" —
+ * so a tag on a resume-mined story is precisely the signal that should not
+ * silence the question. Observed on a real bundle: one resume-sourced `conflict`
+ * story in twenty suppressed the conflict question permanently, and the bank had
+ * nothing real behind it at interview time.
+ *
+ * `existingGaps` excludes anything already asked, whatever its status. `skipped`
+ * is the load-bearing case — it is the only thing that makes "I don't have one"
+ * permanent. `open` matters too: the question is already on screen and the
+ * competency is still uncovered, so without this a rescan appends a duplicate
+ * every time. `answered` is belt-and-braces, since its story covers the
+ * competency anyway.
+ *
+ * High-risk competencies sort first — they are where the model would otherwise
+ * invent, which is the failure the gap scan exists to prevent.
+ */
+export function findGaps(stories: Story[], existingGaps: Gap[] = []): Competency[] {
   const covered = new Set<Competency>()
-  for (const story of stories) for (const tag of story.competencies) covered.add(tag)
+  for (const story of stories) {
+    const trustworthy = story.source === 'gap-answer'
+    for (const tag of story.competencies) {
+      if (trustworthy || !HIGH_RISK_COMPETENCIES.includes(tag)) covered.add(tag)
+    }
+  }
 
-  const missing = COMPETENCIES.filter((c) => !covered.has(c))
+  const asked = new Set<Competency>(existingGaps.map((g) => g.competency))
+  const missing = COMPETENCIES.filter((c) => !covered.has(c) && !asked.has(c))
   const risky = missing.filter((c) => HIGH_RISK_COMPETENCIES.includes(c))
   const rest = missing.filter((c) => !HIGH_RISK_COMPETENCIES.includes(c))
   return [...risky, ...rest]
 }
 
-function buildGaps(questions: unknown, missing: Competency[], taken: Set<string>): Gap[] {
+function buildGaps(
+  questions: unknown,
+  missing: Competency[],
+  taken: Set<string> = new Set(),
+  /**
+   * How many questions this call may produce.
+   *
+   * Defaults to the behavioral budget, which is what an ingest wants: three
+   * slots, with the rest of the eight going to technical probes. `rescanGaps`
+   * passes its own, because it has already worked out how much of the
+   * bundle-wide budget is left and must not be cut to three again on top.
+   */
+  limit: number = MAX_BEHAVIORAL_GAP_QUESTIONS
+): Gap[] {
   const raw = Array.isArray((questions as { questions?: unknown })?.questions)
     ? (questions as { questions: unknown[] }).questions
     : []
@@ -689,7 +783,7 @@ function buildGaps(questions: unknown, missing: Competency[], taken: Set<string>
       status: 'open',
       storyId: null
     })
-    if (gaps.length >= MAX_BEHAVIORAL_GAP_QUESTIONS) break
+    if (gaps.length >= limit) break
   }
 
   return gaps
@@ -763,11 +857,7 @@ export async function runIngest(
         maxTokens: STEP_TOKENS.gapScan,
         system: GAP_SYSTEM,
         schema: GAP_QUESTIONS_SCHEMA,
-        // Only the roles are needed to make the question specific; sending
-        // the whole bank would cost tokens for no gain in question quality.
-        user:
-          `Roles:\n${JSON.stringify(pruned.profile.roles, null, 2)}\n\n` +
-          `Competencies with no story: ${missing.join(', ')}`,
+        user: gapScanUser(pruned.profile, pruned.stories, missing),
         effort: 'medium'
       }),
       missing,
@@ -844,6 +934,64 @@ export interface GapAnswerResult {
  * cache key and the device sync key must change with it. Mutating in place
  * would leave every cached copy silently stale.
  */
+/**
+ * Regenerate the gap questions for a bundle that already exists.
+ *
+ * The gap scan otherwise runs only inside `runIngest`, so a change to what
+ * counts as coverage reaches an existing user only if they re-upload their
+ * resume — a full re-mine, a minute of wall time, and the whole bank replaced.
+ * This runs the scan alone: one model call, the stories untouched.
+ *
+ * Existing gaps are carried through unchanged rather than regenerated. An
+ * answered gap has a story behind it and a skipped one is a decision the user
+ * made; both are facts, not proposals, and rebuilding them would discard the
+ * only record that they happened.
+ */
+export async function rescanGaps(
+  bundle: ProfileBundle,
+  llm: LlmClient,
+  opts: IngestOptions = {}
+): Promise<ProfileBundle> {
+  const now = opts.now ?? ((): Date => new Date())
+  const missing = findGaps(bundle.stories, bundle.gaps)
+  if (missing.length === 0) return bundle
+
+  // The cap is a budget for the bundle, not for the scan: eight questions total,
+  // however many times this is run.
+  const wanted = missing.slice(0, Math.max(0, MAX_GAP_QUESTIONS - bundle.gaps.length))
+  if (wanted.length === 0) return bundle
+
+  const fresh = buildGaps(
+    await llm.structured<unknown>({
+      label: 'gap scan',
+      maxTokens: STEP_TOKENS.gapScan,
+      system: GAP_SYSTEM,
+      schema: GAP_QUESTIONS_SCHEMA,
+      user: gapScanUser(bundle.profile, bundle.stories, wanted),
+      effort: 'medium'
+    }),
+    wanted,
+    // Seeded with the ids already in the bundle: `buildGaps` mints
+    // `gap-${competency}`, and the pane tracks the question on screen by id, so
+    // a collision would render the wrong question.
+    new Set(bundle.gaps.map((g) => g.id)),
+    // `wanted` is already the remaining bundle-wide budget, worked out above.
+    // Letting it fall back to the behavioral default would cut every rescan to
+    // three questions on top of a limit that had already been applied.
+    wanted.length
+  )
+
+  return sealBundle(
+    {
+      version: bundle.version,
+      profile: bundle.profile,
+      stories: bundle.stories,
+      gaps: [...bundle.gaps, ...fresh]
+    },
+    now().toISOString()
+  )
+}
+
 export async function answerGap(
   bundle: ProfileBundle,
   gapId: string,

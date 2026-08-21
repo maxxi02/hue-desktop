@@ -86,7 +86,12 @@ const hue = {
       ipcRenderer.invoke('hue:profile:answer-gap', gapId, text),
     /** Record that the user has no story for this gap. Costs no model call. */
     skipGap: (gapId: string): Promise<ProfileBundle> =>
-      ipcRenderer.invoke('hue:profile:skip-gap', gapId)
+      ipcRenderer.invoke('hue:profile:skip-gap', gapId),
+    /**
+     * Re-run the gap scan against the stored bundle. One model call, a few
+     * seconds; the story bank is not touched.
+     */
+    rescanGaps: (): Promise<ProfileBundle> => ipcRenderer.invoke('hue:profile:rescan-gaps')
   },
   usage: {
     /** Totals and remaining quota per provider, already summarised. */
