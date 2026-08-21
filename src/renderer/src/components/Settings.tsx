@@ -31,7 +31,14 @@ import {
   summarise,
   UNTITLED_TARGET
 } from '../../../shared/targets'
-import { SectionIcon } from './SectionIcon'
+import {
+  categoriesWithMatches,
+  SETTINGS_CATEGORIES,
+  SETTINGS_SECTIONS,
+  visibleSections,
+  type SettingsCategoryId
+} from '../lib/settingsNav'
+import { SectionIcon, type SectionIconName } from './SectionIcon'
 
 const KOKORO_VOICES = ['af_heart', 'af_bella', 'af_nicole', 'am_michael', 'bf_emma', 'bm_george']
 
@@ -318,6 +325,26 @@ function HotkeyRecorder({
   )
 }
 
+/* Hand-drawn to match `SectionIcon` — the house style is inline SVG at one
+   stroke weight, and a two-path glyph is not worth an icon dependency. */
+function SearchIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <circle cx="11" cy="11" r="7" />
+      <line x1="16.5" y1="16.5" x2="21" y2="21" />
+    </svg>
+  )
+}
+
 function CloseIcon(): React.JSX.Element {
   return (
     <svg
@@ -539,6 +566,80 @@ const ANCHOR_LABELS: Record<(typeof ANCHOR_CELLS)[number], string> = {
   'bottom-right': 'Bottom right'
 }
 
+export interface SetupStep {
+  title: string
+  detail: string
+  done: boolean
+}
+
+/**
+ * Whether a provider is usable right now — i.e. it has the credential it needs.
+ *
+ * Ollama is the exception on purpose: a local server has no key, and demanding
+ * a placeholder would make the offline path the only one that looks
+ * unconfigured.
+ */
+function providerReady(s: HueSettings, p: LlmProvider): boolean {
+  if (p === 'ollama') return true
+  if (p === 'anthropic') return s.anthropicApiKey.trim().length > 0
+  return (s[COMPAT_PROVIDERS[p].keyField] as string).trim().length > 0
+}
+
+/** Mirrors `providerFor` in the main process: empty means "same as drafting". */
+function ingestProviderOf(s: HueSettings): LlmProvider {
+  return s.ingestProvider || s.llmProvider
+}
+
+/**
+ * The setup checklist, as a pure function of settings.
+ *
+ * Module-level rather than computed in the component body because two things
+ * need it and one of them is a hook. The rail's unfinished-setup dot and the
+ * "open on the category that has work in it" effect both ask "is setup done",
+ * and hooks cannot live below the `if (!s)` early return where the component's
+ * own derived values are built. Deriving both from one function is what stops
+ * the dot and the landing category disagreeing about the same question.
+ */
+function buildSetupSteps(s: HueSettings, hasResume: boolean, openGapCount: number): SetupStep[] {
+  const ingest = ingestProviderOf(s)
+  return [
+    {
+      title: 'Add a key for the provider that drafts answers',
+      detail:
+        s.llmProvider === 'ollama'
+          ? 'Ollama runs locally and needs no key — make sure it is running and the model name below matches one you have pulled.'
+          : 'Pick a provider under Assistant and paste its API key. There are step-by-step instructions under the key field.',
+      done: providerReady(s, s.llmProvider)
+    },
+    {
+      title: 'Choose a provider that can read a whole résumé',
+      detail:
+        ingest === 'groq'
+          ? 'Ingest is currently set to Groq, which cannot finish it: reading a résumé needs about 10,000 tokens in one request and Groq’s free tier caps that at 8,000. Set Ingest provider to Google or Ollama. Drafting can stay on Groq.'
+          : 'Set an Ingest provider and give it a key. Ingest sends a whole document at once, so it needs more headroom per request than drafting does.',
+      done: ingest !== 'groq' && providerReady(s, ingest)
+    },
+    {
+      title: 'Upload your résumé',
+      detail:
+        'Under Your background. Hue turns it into a story bank and checks every claim against the document, so it can only cite things you actually wrote.',
+      done: hasResume
+    },
+    {
+      title: 'Answer the gap questions',
+      detail: hasResume
+        ? 'They cover what a résumé cannot show. Answering them — or saying you have no story — is what stops Hue inventing one under pressure.'
+        : 'Appears once your résumé has been read — the questions are generated from what it does not cover.',
+      // Ticked only when genuinely finished. This used to count as done while
+      // there was no résumé, on the reasoning that it was blocked by the step
+      // above and two open items for one cause reads as twice the work. Seen on
+      // screen that was worse: a tick sat above an unticked step, claiming
+      // credit for something the user had never done.
+      done: hasResume && openGapCount === 0
+    }
+  ]
+}
+
 export function Settings({
   open,
   onClose,
@@ -564,6 +665,19 @@ export function Settings({
   const [llmStatus, setLlmStatus] = useState<'idle' | 'detecting' | 'ok' | 'unreachable'>('idle')
   const [resumeStatus, setResumeStatus] = useState<string | null>(null)
   // Gap answering, previously possible only in the phone app.
+  /*
+    Which category the pane is showing, and what is typed in the search box.
+
+    Both are deliberately *not* persisted to settings. Where you were last in a
+    settings pane is not a preference — it is a place — and restoring it means
+    someone who opened Settings to change their microphone lands in Phone
+    because that is where they finished last week. Opening on the first
+    unfinished thing is the more useful default, which is what the initial
+    value below does.
+  */
+  const [chosenCategory, setChosenCategory] = useState<SettingsCategoryId | null>(null)
+  const [query, setQuery] = useState('')
+
   // Saved applications. `targetNote` carries the one-line reason a click did
   // nothing — refused mid-session, the last application, the ceiling — which is
   // otherwise indistinguishable from a broken button.
@@ -662,10 +776,15 @@ export function Settings({
    * against. Every path that writes through main and then syncs the local copy
    * must call `markPersisted`, or the close guard reports changes that are
    * already on disk.
+   *
+   * State rather than a ref, which it used to be. The footer now reports
+   * unsaved-ness during render, and a ref read in render is untracked — the
+   * label would go stale on any commit that did not happen to re-render for
+   * another reason. It was only ever a ref because nothing rendered from it.
    */
-  const pristine = useRef<HueSettings | null>(null)
+  const [pristine, setPristine] = useState<HueSettings | null>(null)
   const markPersisted = (next: HueSettings): void => {
-    pristine.current = next
+    setPristine(next)
     setS(next)
   }
   /**
@@ -679,10 +798,19 @@ export function Settings({
    */
   const markFieldsPersisted = (patch: Partial<HueSettings>): void => {
     setS((prev) => (prev ? { ...prev, ...patch } : prev))
-    if (pristine.current) pristine.current = { ...pristine.current, ...patch }
+    setPristine((prev) => (prev ? { ...prev, ...patch } : prev))
   }
   /** Set when a close was requested while there was unsaved work. */
   const [closePending, setClosePending] = useState(false)
+
+  /**
+   * Whether Save would write anything, for the footer's status line.
+   *
+   * Derived, not stored. Both inputs are state, so this recomputes exactly when
+   * the answer can have changed and there is no second copy of the truth to go
+   * stale — which is why `pristine` stopped being a ref.
+   */
+  const dirty = s !== null && pristine !== null && isSettingsDirty(s, pristine, gapDrafts)
 
   useEffect(() => {
     window.hue.settings.get().then(markPersisted)
@@ -700,6 +828,33 @@ export function Settings({
    * the moment it may as well exist. `ensure` is a no-op once there is one, and
    * returns the settings unchanged.
    */
+  /**
+   * Open on the category that has work in it.
+   *
+   * Get started while setup is unfinished, Interview once it is — which is the
+   * thing someone opens this pane for on the day of an interview. Runs on each
+   * open rather than once, and only while nothing is typed in the search, so it
+   * cannot yank the pane out from under a query. It deliberately does not
+   * restore the last category: where you were last is a place, not a
+   * preference, and someone who came here to change their microphone should
+   * not land in Phone because that is where they finished last week.
+   */
+  const setupComplete =
+    s !== null && buildSetupSteps(s, profileBundle !== null, openGaps.length).every((st) => st.done)
+
+  /**
+   * Derived, not set by an effect: `null` means "the user has not picked a
+   * category yet", and until they do the pane opens on whatever has work in it.
+   *
+   * Get started while setup is unfinished, Interview once it is — which is what
+   * someone opens this pane for on the day of an interview. Once they click the
+   * rail, their choice stands for as long as the app is running; it is not
+   * written to settings, because where you were last is a place rather than a
+   * preference and it should not survive a restart.
+   */
+  const activeCategory: SettingsCategoryId =
+    chosenCategory ?? (setupComplete ? 'interview' : 'start')
+
   const ensuredTargets = useRef(false)
   useEffect(() => {
     if (!open || ensuredTargets.current) return
@@ -940,59 +1095,28 @@ export function Settings({
   const cfg = compat ? COMPAT_PROVIDERS[compat] : null
   const apiKey = cfg ? (s[cfg.keyField] as string) : ''
 
-  /**
-   * Whether a provider is usable right now — i.e. it has the credential it
-   * needs. Ollama is the exception on purpose: a local server has no key, and
-   * demanding a placeholder would make the offline path the only one that
-   * looks unconfigured.
-   */
-  const providerReady = (p: LlmProvider): boolean => {
-    if (p === 'ollama') return true
-    if (p === 'anthropic') return s.anthropicApiKey.trim().length > 0
-    return (s[COMPAT_PROVIDERS[p].keyField] as string).trim().length > 0
-  }
-
-  // Mirrors `providerFor` in the main process: empty means "same as drafting".
-  const ingestResolved: LlmProvider = s.ingestProvider || s.llmProvider
-
-  const setupSteps: { title: string; detail: string; done: boolean }[] = [
-    {
-      title: 'Add a key for the provider that drafts answers',
-      detail:
-        s.llmProvider === 'ollama'
-          ? 'Ollama runs locally and needs no key — make sure it is running and the model name below matches one you have pulled.'
-          : `Pick a provider under Assistant and paste its API key. There are step-by-step instructions under the key field.`,
-      done: providerReady(s.llmProvider)
-    },
-    {
-      title: 'Choose a provider that can read a whole résumé',
-      detail:
-        ingestResolved === 'groq'
-          ? 'Ingest is currently set to Groq, which cannot finish it: reading a résumé needs about 10,000 tokens in one request and Groq’s free tier caps that at 8,000. Set Ingest provider to Google or Ollama. Drafting can stay on Groq.'
-          : 'Set an Ingest provider and give it a key. Ingest sends a whole document at once, so it needs more headroom per request than drafting does.',
-      done: ingestResolved !== 'groq' && providerReady(ingestResolved)
-    },
-    {
-      title: 'Upload your résumé',
-      detail:
-        'Under Your background. Hue turns it into a story bank and checks every claim against the document, so it can only cite things you actually wrote.',
-      done: profileBundle !== null
-    },
-    {
-      title: 'Answer the gap questions',
-      detail:
-        profileBundle === null
-          ? 'Appears once your résumé has been read — the questions are generated from what it does not cover.'
-          : 'They cover what a résumé cannot show. Answering them — or saying you have no story — is what stops Hue inventing one under pressure.',
-      // Ticked only when genuinely finished. This used to count as done while
-      // there was no résumé, on the reasoning that it was blocked by the step
-      // above and two open items for one cause reads as twice the work. Seen on
-      // screen that was worse: a tick sat above an unticked step, claiming
-      // credit for something the user had never done.
-      done: profileBundle !== null && openGaps.length === 0
-    }
-  ]
+  const setupSteps = buildSetupSteps(s, profileBundle !== null, openGaps.length)
   const modelVal = cfg ? (s[cfg.modelField] as string) : ''
+
+  /*
+    Which sections the pane renders.
+
+    Computed once per render from `lib/settingsNav.ts` and handed to every
+    section as a class. The alternative — wrapping each category's sections in
+    its own JSX branch — would have meant moving fourteen sections around a
+    2,600-line file to group them, and every one of those moves is a chance to
+    drop a section on the floor. This way the JSX order is untouched and the
+    grouping is data.
+  */
+  const searching = query.trim().length > 0
+  const shown = visibleSections(activeCategory, query)
+  const matchedCategories = categoriesWithMatches(query)
+  const sectionClass = (id: SectionIconName): string =>
+    shown.has(id) ? 'settings-section' : 'settings-section settings-section--hidden'
+
+  const setupRemaining = setupSteps.filter((step) => !step.done).length
+  const category =
+    SETTINGS_CATEGORIES.find((c) => c.id === activeCategory) ?? SETTINGS_CATEGORIES[0]
 
   const save = async (): Promise<void> => {
     const next = await window.hue.settings.set(s)
@@ -1041,7 +1165,7 @@ export function Settings({
     setTargetBusy(true)
     setTargetNote('')
     try {
-      if (pristine.current && isSettingsDirty(s, pristine.current, {})) {
+      if (pristine && isSettingsDirty(s, pristine, {})) {
         markPersisted(await window.hue.settings.set(s))
       }
       markPersisted(await act())
@@ -1074,7 +1198,7 @@ export function Settings({
    * in the pane until they manually undo an experiment would be a worse one.
    */
   const requestClose = (): void => {
-    if (pristine.current && isSettingsDirty(s, pristine.current, gapDrafts)) {
+    if (pristine && isSettingsDirty(s, pristine, gapDrafts)) {
       setClosePending(true)
       return
     }
@@ -1090,7 +1214,7 @@ export function Settings({
   const discardAndClose = (): void => {
     // Back to what is on disk, and drop the unsent drafts with it — leaving them
     // would resurrect the prompt the moment the pane is reopened.
-    if (pristine.current) setS(pristine.current)
+    if (pristine) setS(pristine)
     setGapDrafts({})
     setClosePending(false)
     onClose()
@@ -1291,7 +1415,44 @@ export function Settings({
         <div className="drawer-header">
           <h2>Settings</h2>
           <span className="drawer-version">{appVersion ? `v${appVersion}` : ''}</span>
-          <button className="icon-btn" onClick={requestClose}>
+          {/*
+            Search lives in the header, not above the pane, for one reason: a
+            filter that scrolls away with its content is a filter nobody finds
+            a second time. It also outranks the rail — see `visibleSections` —
+            because someone who typed "hotkey" wants the answer, not the
+            answer filtered down to the category they happened to be standing
+            in.
+          */}
+          <div className="settings-search">
+            <SearchIcon />
+            <input
+              type="search"
+              value={query}
+              placeholder="Search settings"
+              aria-label="Search settings"
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' && query) {
+                  // Swallowed, so one Escape clears the search and a second
+                  // closes the drawer. Clearing and closing on the same key
+                  // press is the behaviour that loses work.
+                  e.stopPropagation()
+                  setQuery('')
+                }
+              }}
+            />
+            {query && (
+              <button
+                type="button"
+                className="settings-search-clear"
+                aria-label="Clear search"
+                onClick={() => setQuery('')}
+              >
+                <CloseIcon />
+              </button>
+            )}
+          </div>
+          <button className="icon-btn" aria-label="Close settings" onClick={requestClose}>
             <CloseIcon />
           </button>
         </div>
@@ -1320,8 +1481,71 @@ export function Settings({
           </div>
         )}
 
-        <div className="drawer-body">
-          {/*
+        <div className="drawer-split">
+          <nav className="settings-nav" aria-label="Settings categories">
+            {SETTINGS_CATEGORIES.map((item) => {
+              const active = !searching && item.id === activeCategory
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={[
+                    'settings-nav-item',
+                    active ? 'settings-nav-item--active' : '',
+                    searching && !matchedCategories.has(item.id) ? 'settings-nav-item--dim' : ''
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => {
+                    // Picking a category is also how you leave a search — the
+                    // rail is the map, and a click on it should always take
+                    // you somewhere rather than being filtered out from under
+                    // you by a query you have forgotten you typed.
+                    setQuery('')
+                    setChosenCategory(item.id)
+                  }}
+                >
+                  <SectionIcon name={item.icon} />
+                  {item.label}
+                  {item.id === 'start' && setupRemaining > 0 && (
+                    <span
+                      className="settings-nav-dot"
+                      aria-label={`${setupRemaining} steps left`}
+                      role="img"
+                    />
+                  )}
+                </button>
+              )
+            })}
+          </nav>
+
+          <div className="drawer-body">
+            <div className="settings-pane-head">
+              <h3>{searching ? `Results for “${query.trim()}”` : category.label}</h3>
+              <p>
+                {searching
+                  ? `${shown.size} of ${SETTINGS_SECTIONS.length} sections match. Pick a category to clear the search.`
+                  : category.blurb}
+              </p>
+            </div>
+
+            {searching && shown.size === 0 && (
+              <div className="settings-empty">
+                <strong>Nothing matches “{query.trim()}”.</strong>
+                {/* No "on the left": below 620px the rail moves to the top of
+                    the pane, and copy that names a position is copy that is
+                    wrong at one of the two sizes this ships at. */}
+                <span>
+                  Try a plainer word — “key”, “voice”, “hotkey”, “opacity” — or pick a category to
+                  browse instead.
+                </span>
+                <button type="button" className="link-btn" onClick={() => setQuery('')}>
+                  Clear the search
+                </button>
+              </div>
+            )}
+            {/*
             Setup, as a checklist that knows where you are.
 
             Static instructions would sit at the top being ignored once they no
@@ -1330,679 +1554,278 @@ export function Settings({
             highlighted — which is what someone setting this up an hour before an
             interview actually needs.
           */}
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="setup" />
-              Setup
+            <div className={sectionClass('setup')}>
+              <div className="settings-section-title">
+                <SectionIcon name="setup" />
+                Setup
+              </div>
+              <ol className="setup-list">
+                {setupSteps.map((step) => (
+                  <li
+                    key={step.title}
+                    className={`setup-step${step.done ? ' setup-step--done' : ''}`}
+                  >
+                    <span className="setup-mark" aria-hidden="true">
+                      {step.done ? '✓' : ''}
+                    </span>
+                    <div className="setup-body">
+                      <div className="setup-title">{step.title}</div>
+                      {!step.done && <div className="setup-detail">{step.detail}</div>}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              {setupSteps.every((step) => step.done) ? (
+                <div className="setup-done-note">
+                  Everything is set up. Close Settings and start a session.
+                </div>
+              ) : (
+                <div className="setup-done-note">
+                  Steps tick themselves off as you finish them. Nothing below is required to start a
+                  session — Hue works without a résumé, it just has less of your own material to
+                  draw on.
+                </div>
+              )}
             </div>
-            <ol className="setup-list">
-              {setupSteps.map((step) => (
-                <li
-                  key={step.title}
-                  className={`setup-step${step.done ? ' setup-step--done' : ''}`}
+
+            <div className={sectionClass('assistant')}>
+              <div className="settings-section-title">
+                <SectionIcon name="assistant" />
+                Assistant
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Provider</label>
+                <select
+                  className="settings-input"
+                  value={s.llmProvider}
+                  onChange={(e) => {
+                    set('llmProvider', e.target.value as LlmProvider)
+                    // Reset detected-model state so it doesn't leak across providers.
+                    setLlmModels([])
+                    setLlmStatus('idle')
+                  }}
                 >
-                  <span className="setup-mark" aria-hidden="true">
-                    {step.done ? '✓' : ''}
-                  </span>
-                  <div className="setup-body">
-                    <div className="setup-title">{step.title}</div>
-                    {!step.done && <div className="setup-detail">{step.detail}</div>}
-                  </div>
-                </li>
-              ))}
-            </ol>
-            {setupSteps.every((step) => step.done) ? (
-              <div className="setup-done-note">
-                Everything is set up. Close Settings and start a session.
+                  <option value="anthropic">Anthropic Claude (cloud)</option>
+                  <option value="google">Google Gemini (cloud)</option>
+                  <option value="groq">Groq (cloud, fast)</option>
+                  <option value="mistral">Mistral AI (cloud)</option>
+                  <option value="cohere">Cohere (cloud)</option>
+                  <option value="deepseek">DeepSeek (cloud)</option>
+                  <option value="ollama">Ollama (local)</option>
+                </select>
               </div>
-            ) : (
-              <div className="setup-done-note">
-                Steps tick themselves off as you finish them. Nothing below is required to start a
-                session — Hue works without a résumé, it just has less of your own material to draw
-                on.
-              </div>
-            )}
-          </div>
 
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="assistant" />
-              Assistant
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Provider</label>
-              <select
-                className="settings-input"
-                value={s.llmProvider}
-                onChange={(e) => {
-                  set('llmProvider', e.target.value as LlmProvider)
-                  // Reset detected-model state so it doesn't leak across providers.
-                  setLlmModels([])
-                  setLlmStatus('idle')
-                }}
-              >
-                <option value="anthropic">Anthropic Claude (cloud)</option>
-                <option value="google">Google Gemini (cloud)</option>
-                <option value="groq">Groq (cloud, fast)</option>
-                <option value="mistral">Mistral AI (cloud)</option>
-                <option value="cohere">Cohere (cloud)</option>
-                <option value="deepseek">DeepSeek (cloud)</option>
-                <option value="ollama">Ollama (local)</option>
-              </select>
-            </div>
-
-            {s.llmProvider === 'anthropic' ? (
-              <>
-                <div className="settings-field">
-                  <label className="settings-label">Anthropic API key</label>
-                  <SecretInput
-                    value={s.anthropicApiKey}
-                    onChange={(next) => set('anthropicApiKey', next)}
-                    placeholder="sk-ant-…"
-                  />
-                </div>
-                <div className="settings-field">
-                  <label className="settings-label">Model</label>
-                  <input
-                    className="settings-input"
-                    value={s.model}
-                    onChange={(e) => set('model', e.target.value)}
-                  />
-                </div>
-              </>
-            ) : compat && cfg ? (
-              <>
-                <div className="settings-field">
-                  <label className="settings-label">{cfg.label} API key</label>
-                  <SecretInput
-                    value={apiKey}
-                    onChange={(next) => setStr(cfg.keyField, next)}
-                    placeholder={cfg.keyPlaceholder}
-                  />
-                  <details style={{ marginTop: 6 }}>
-                    <summary
-                      style={{ color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}
-                    >
-                      How do I get a {cfg.label} API key?
-                    </summary>
-                    <ol
-                      style={{
-                        color: 'var(--text-muted)',
-                        fontSize: 12,
-                        margin: '6px 0 0',
-                        paddingLeft: 18,
-                        lineHeight: 1.5
-                      }}
-                    >
-                      {cfg.steps.map((step, i) => (
-                        <li key={i}>{step}</li>
-                      ))}
-                    </ol>
-                    <a
-                      href={cfg.consoleUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ fontSize: 12, display: 'inline-block', marginTop: 4 }}
-                    >
-                      {cfg.consoleUrl}
-                    </a>
-                  </details>
-                </div>
-                <div className="settings-field">
-                  <label className="settings-label">Model</label>
-                  {llmModels.length > 0 ? (
-                    <select
-                      className="settings-input"
-                      value={modelVal}
-                      onChange={(e) => setStr(cfg.modelField, e.target.value)}
-                    >
-                      {modelVal && !llmModels.includes(modelVal) && (
-                        <option value={modelVal}>{modelVal} (custom)</option>
-                      )}
-                      {llmModels.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      className="settings-input"
-                      value={modelVal}
-                      onChange={(e) => setStr(cfg.modelField, e.target.value)}
-                      placeholder="Detect models, or type a model name"
-                    />
-                  )}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      style={{ width: 'auto', padding: '4px 10px', fontSize: 12 }}
-                      onClick={() => detectLlmModels(compat, apiKey)}
-                      disabled={llmStatus === 'detecting' || !apiKey}
-                    >
-                      {llmStatus === 'detecting' ? 'Detecting…' : 'Detect models'}
-                    </button>
-                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                      {llmStatus === 'detecting'
-                        ? 'Fetching available models…'
-                        : llmStatus === 'ok'
-                          ? `${llmModels.length} model(s) available.`
-                          : llmStatus === 'unreachable'
-                            ? 'Could not list models — check the key, or type a model name.'
-                            : 'Enter your key, then detect the available models.'}
-                    </span>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="settings-field">
-                  <label className="settings-label">Ollama server URL</label>
-                  <input
-                    className="settings-input"
-                    value={s.ollamaBaseUrl}
-                    onChange={(e) => set('ollamaBaseUrl', e.target.value)}
-                    placeholder="http://localhost:11434"
-                  />
-                </div>
-                <div className="settings-field">
-                  <label className="settings-label">Model</label>
-                  {ollamaModels.length > 0 ? (
-                    <select
-                      className="settings-input"
-                      value={s.ollamaModel}
-                      onChange={(e) => set('ollamaModel', e.target.value)}
-                    >
-                      {!ollamaModels.includes(s.ollamaModel) && (
-                        <option value={s.ollamaModel}>{s.ollamaModel} (not installed)</option>
-                      )}
-                      {ollamaModels.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      className="settings-input"
-                      value={s.ollamaModel}
-                      onChange={(e) => set('ollamaModel', e.target.value)}
-                      placeholder="llama3.2"
-                    />
-                  )}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      style={{ width: 'auto', padding: '4px 10px', fontSize: 12 }}
-                      onClick={() => detectOllama(s.ollamaBaseUrl)}
-                      disabled={ollamaStatus === 'detecting'}
-                    >
-                      {ollamaStatus === 'detecting' ? 'Detecting…' : 'Detect models'}
-                    </button>
-                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                      {ollamaStatus === 'detecting'
-                        ? 'Scanning Ollama server…'
-                        : ollamaStatus === 'ok'
-                          ? `${ollamaModels.length} model(s) detected.`
-                          : ollamaStatus === 'unreachable'
-                            ? 'No Ollama server found — is it running? You can also type a model name manually.'
-                            : ''}
-                    </span>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="mode" />
-              Mode
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Hue&apos;s role</label>
-              <select
-                className="settings-input"
-                value={s.hueMode}
-                onChange={(e) => set('hueMode', e.target.value as HueMode)}
-              >
-                <option value="companion">Companion — help me answer the interviewer</option>
-                <option value="interviewer">Interviewer — ask me questions (practice)</option>
-              </select>
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                {s.hueMode === 'companion'
-                  ? 'Hue treats incoming speech as the interviewer’s question and shows a suggested answer as text (it stays silent so it never talks over you).'
-                  : 'Hue conducts a mock interview, asking you questions out loud and waiting for your answers.'}
-              </span>
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Listen to</label>
-              <select
-                className="settings-input"
-                value={s.audioSource}
-                onChange={(e) => set('audioSource', e.target.value as AudioSource)}
-              >
-                <option value="microphone">My microphone</option>
-                <option value="system">System / call audio (loopback)</option>
-              </select>
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                {s.audioSource === 'system'
-                  ? 'Captures the audio coming out of your speakers — e.g. the interviewer on a Zoom/Meet call. Supported on Windows; you may be asked to pick a screen to share.'
-                  : 'Captures your microphone. In Companion mode, speak or relay the interviewer’s question for Hue to answer.'}
-              </span>
-            </div>
-          </div>
-
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="phone-mirror" />
-              Phone mirror — opens a web page
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Mirror the session to your phone</label>
-              <button
-                type="button"
-                className="icon-btn"
-                style={{
-                  alignSelf: 'flex-start',
-                  width: 'auto',
-                  padding: '6px 12px',
-                  fontSize: 13
-                }}
-                onClick={() => void togglePhone()}
-                disabled={phoneBusy || !phone}
-              >
-                {phoneBusy
-                  ? 'Working…'
-                  : phone?.running
-                    ? 'Disable phone mirror'
-                    : 'Enable phone mirror'}
-              </button>
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Streams the interviewer’s question and Hue’s suggested answer to your phone’s
-                browser over your Wi-Fi — nothing leaves your network. Takes effect immediately.
-              </span>
-              {phone?.running && (
+              {s.llmProvider === 'anthropic' ? (
                 <>
-                  {phoneQr && (
-                    <img
-                      src={phoneQr}
-                      alt="QR code — scan with your phone to open Hue's mirror page"
-                      style={{
-                        width: 160,
-                        height: 160,
-                        borderRadius: 8,
-                        marginTop: 10,
-                        alignSelf: 'flex-start'
-                      }}
+                  <div className="settings-field">
+                    <label className="settings-label">Anthropic API key</label>
+                    <SecretInput
+                      value={s.anthropicApiKey}
+                      onChange={(next) => set('anthropicApiKey', next)}
+                      placeholder="sk-ant-…"
                     />
-                  )}
-                  <span
-                    style={{
-                      fontSize: 12,
-                      marginTop: 8,
-                      userSelect: 'text',
-                      wordBreak: 'break-all'
-                    }}
-                  >
-                    {phone.url}
-                  </span>
-                  <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                    Scan with your phone’s <strong>browser</strong> (same Wi-Fi as this PC) and keep
-                    the page open. Not for the Hue app — that’s the “Phone app” code below. The link
-                    changes each time Hue restarts, so re-scan if the phone says “reconnecting”.
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="phone-app" />
-              Phone app — scan this one in Hue
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Relay URL</label>
-              <input
-                className="settings-input"
-                type="text"
-                value={s.relayBaseUrl}
-                placeholder="https://relay.hue.app"
-                onChange={(e) => set('relayBaseUrl', e.target.value)}
-              />
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Where the Hue relay is running. Changing this takes effect the next time you connect
-                the phone app below.
-              </span>
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Mirror the session to the Hue phone app</label>
-              <button
-                type="button"
-                className="icon-btn"
-                style={{
-                  alignSelf: 'flex-start',
-                  width: 'auto',
-                  padding: '6px 12px',
-                  fontSize: 13
-                }}
-                onClick={() => void toggleRelay()}
-                disabled={relayBusy || !relay}
-              >
-                {relayBusy
-                  ? 'Working…'
-                  : relay?.running
-                    ? 'Disconnect phone app'
-                    : 'Connect phone app'}
-              </button>
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Streams the interviewer’s question and Hue’s suggested answer to the Hue app on your
-                phone. Unlike the phone mirror above this works on mobile data — the transcript
-                passes through the relay you configured.
-              </span>
-              {relay?.error && (
-                <span style={{ color: 'var(--red)', fontSize: 12, marginTop: 6 }}>
-                  {relay.error}
-                </span>
-              )}
-              {relay?.running && (
-                <>
-                  {relayQr && (
-                    <img
-                      src={relayQr}
-                      alt="QR code — scan with the Hue app to pair your phone"
-                      style={{
-                        width: 160,
-                        height: 160,
-                        borderRadius: 8,
-                        marginTop: 10,
-                        alignSelf: 'flex-start'
-                      }}
-                    />
-                  )}
-                  <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                    Scan with the Hue app. The pairing changes every time Hue restarts — re-scan if
-                    the phone says “disconnected”.
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="shortcuts" />
-              Shortcuts
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Summon Hue (show window)</label>
-              <HotkeyRecorder value={s.summonHotkey} onChange={(v) => set('summonHotkey', v)} />
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Brings Hue to the front from any app. Click, then press a key combo, a single key
-                (e.g. F9), or a mouse button — the Back/Forward side buttons work great.
-              </span>
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Start / stop session</label>
-              <HotkeyRecorder
-                value={s.startSessionHotkey}
-                onChange={(v) => set('startSessionHotkey', v)}
-              />
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Works globally — even during a call — to start or stop a session. Click, then press
-                a key combo, a single key, or a mouse button (Back/Forward, etc.).
-              </span>
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Capture screen</label>
-              <HotkeyRecorder
-                value={s.captureScreenHotkey}
-                onChange={(v) => set('captureScreenHotkey', v)}
-              />
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                During a session, snapshots your screen and asks Hue about it — handy when the
-                interviewer shares a coding prompt. Hue hides itself for the shot; the image is sent
-                only to your configured AI provider and never saved to disk.
-              </span>
-            </div>
-          </div>
-
-          {/*
-            Saved applications, above the two sections they scope.
-
-            The order is the argument: everything below this — the job title,
-            the posting and its analysis, the résumé and its story bank — belongs
-            to whichever radio is selected. Putting the switcher underneath any
-            of them would read as scoping only that one field.
-          */}
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="applications" />
-              Applications
-            </div>
-            <span style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 8 }}>
-              One per job you’re interviewing for. Each keeps its own job title, posting, analysis
-              and résumé, so switching back to an application restores everything you had prepared
-              for it — no re-pasting, no re-uploading.
-            </span>
-
-            <div className="settings-field" style={{ gap: 6 }}>
-              {targets.map((target) => {
-                const active = target.id === s.activeTargetId
-                return (
-                  <div
-                    key={target.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '6px 8px',
-                      borderRadius: 6,
-                      background: active
-                        ? 'var(--surface-raised, rgba(127,127,127,0.10))'
-                        : 'transparent'
-                    }}
-                  >
+                  </div>
+                  <div className="settings-field">
+                    <label className="settings-label">Model</label>
                     <input
-                      type="radio"
-                      name="hue-application"
-                      checked={active}
-                      // Disabled only while something is in flight. The refusals
-                      // — mid-session, an unanswered gap — are handled in the
-                      // click so the reason can be *said*: a radio that silently
-                      // will not move is the thing that makes people reinstall.
-                      disabled={targetBusy}
-                      onChange={() => void onSwitchTarget(target.id)}
-                      id={`hue-app-${target.id}`}
+                      className="settings-input"
+                      value={s.model}
+                      onChange={(e) => set('model', e.target.value)}
                     />
-                    {renamingId === target.id ? (
+                  </div>
+                </>
+              ) : compat && cfg ? (
+                <>
+                  <div className="settings-field">
+                    <label className="settings-label">{cfg.label} API key</label>
+                    <SecretInput
+                      value={apiKey}
+                      onChange={(next) => setStr(cfg.keyField, next)}
+                      placeholder={cfg.keyPlaceholder}
+                    />
+                    <details style={{ marginTop: 6 }}>
+                      <summary
+                        style={{ color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}
+                      >
+                        How do I get a {cfg.label} API key?
+                      </summary>
+                      <ol
+                        style={{
+                          color: 'var(--text-muted)',
+                          fontSize: 12,
+                          margin: '6px 0 0',
+                          paddingLeft: 18,
+                          lineHeight: 1.5
+                        }}
+                      >
+                        {cfg.steps.map((step, i) => (
+                          <li key={i}>{step}</li>
+                        ))}
+                      </ol>
+                      <a
+                        href={cfg.consoleUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ fontSize: 12, display: 'inline-block', marginTop: 4 }}
+                      >
+                        {cfg.consoleUrl}
+                      </a>
+                    </details>
+                  </div>
+                  <div className="settings-field">
+                    <label className="settings-label">Model</label>
+                    {llmModels.length > 0 ? (
+                      <select
+                        className="settings-input"
+                        value={modelVal}
+                        onChange={(e) => setStr(cfg.modelField, e.target.value)}
+                      >
+                        {modelVal && !llmModels.includes(modelVal) && (
+                          <option value={modelVal}>{modelVal} (custom)</option>
+                        )}
+                        {llmModels.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
                       <input
                         className="settings-input"
-                        autoFocus
-                        value={renameDraft}
-                        maxLength={80}
-                        onChange={(e) => setRenameDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            const name = renameDraft
-                            setRenamingId(null)
-                            void runTargetAction(() => window.hue.targets.rename(target.id, name))
-                          }
-                          if (e.key === 'Escape') setRenamingId(null)
-                        }}
-                        onBlur={() => {
-                          const name = renameDraft
-                          setRenamingId(null)
-                          void runTargetAction(() => window.hue.targets.rename(target.id, name))
-                        }}
-                        style={{ flex: 1 }}
+                        value={modelVal}
+                        onChange={(e) => setStr(cfg.modelField, e.target.value)}
+                        placeholder="Detect models, or type a model name"
                       />
-                    ) : (
-                      <label
-                        htmlFor={`hue-app-${target.id}`}
-                        style={{ flex: 1, cursor: 'pointer', fontSize: 13, minWidth: 0 }}
-                      >
-                        <span style={{ fontWeight: active ? 600 : 400 }}>{target.name}</span>
-                        {target.jobTitle && target.jobTitle !== target.name && (
-                          <span style={{ color: 'var(--text-muted)' }}> — {target.jobTitle}</span>
-                        )}
-                        {/*
-                          What is actually set up in this slot. Without it every
-                          row looks equally ready, and the one you switch to
-                          turns out to be the empty one you made last week.
-                        */}
-                        <span
-                          style={{ display: 'block', color: 'var(--text-muted)', fontSize: 11 }}
-                        >
-                          {[
-                            target.hasResume ? 'résumé' : null,
-                            target.hasJobDescription ? 'posting' : null
-                          ]
-                            .filter(Boolean)
-                            .join(' · ') || 'nothing saved yet'}
-                        </span>
-                      </label>
                     )}
-                    {active && renamingId !== target.id && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
                       <button
-                        className="settings-btn"
-                        disabled={targetBusy}
-                        onClick={() => {
-                          setRenameDraft(target.name === UNTITLED_TARGET ? '' : target.name)
-                          setRenamingId(target.id)
-                        }}
+                        type="button"
+                        className="icon-btn"
+                        style={{ width: 'auto', padding: '4px 10px', fontSize: 12 }}
+                        onClick={() => detectLlmModels(compat, apiKey)}
+                        disabled={llmStatus === 'detecting' || !apiKey}
                       >
-                        Rename
+                        {llmStatus === 'detecting' ? 'Detecting…' : 'Detect models'}
                       </button>
-                    )}
-                    <button
-                      className="settings-btn"
-                      disabled={targetBusy || targets.length <= 1}
-                      title={
-                        targets.length <= 1
-                          ? 'The last application can’t be deleted.'
-                          : 'Delete this application'
-                      }
-                      onClick={() => {
-                        if (confirmDeleteId !== target.id) {
-                          setConfirmDeleteId(target.id)
-                          setTargetNote(
-                            `Click Delete again to remove “${target.name}”. Its posting, analysis and résumé go with it, and there’s no undo.`
-                          )
-                          return
-                        }
-                        setConfirmDeleteId(null)
-                        void runTargetAction(() => window.hue.targets.delete(target.id))
-                      }}
-                    >
-                      {confirmDeleteId === target.id ? 'Delete?' : '×'}
-                    </button>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                        {llmStatus === 'detecting'
+                          ? 'Fetching available models…'
+                          : llmStatus === 'ok'
+                            ? `${llmModels.length} model(s) available.`
+                            : llmStatus === 'unreachable'
+                              ? 'Could not list models — check the key, or type a model name.'
+                              : 'Enter your key, then detect the available models.'}
+                      </span>
+                    </div>
                   </div>
-                )
-              })}
-            </div>
-
-            <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-              <button
-                className="settings-btn"
-                disabled={targetBusy || targets.length >= MAX_TARGETS}
-                onClick={() => {
-                  if (switchBlockedReason) {
-                    setTargetNote(switchBlockedReason)
-                    return
-                  }
-                  void runTargetAction(() => window.hue.targets.create(''))
-                }}
-              >
-                + New
-              </button>
-              <button
-                className="settings-btn"
-                disabled={targetBusy || targets.length >= MAX_TARGETS}
-                title="Copy this application, résumé and analysis included — for the same role at another company."
-                onClick={() => {
-                  if (switchBlockedReason) {
-                    setTargetNote(switchBlockedReason)
-                    return
-                  }
-                  void runTargetAction(() =>
-                    window.hue.targets.duplicate(
-                      activeTarget ? `${activeTarget.name} copy` : UNTITLED_TARGET
-                    )
-                  )
-                }}
-              >
-                Duplicate
-              </button>
-              {targets.length >= MAX_TARGETS && (
-                <span style={{ color: 'var(--text-muted)', fontSize: 12, alignSelf: 'center' }}>
-                  {MAX_TARGETS} is the limit — delete one to add another.
-                </span>
+                </>
+              ) : (
+                <>
+                  <div className="settings-field">
+                    <label className="settings-label">Ollama server URL</label>
+                    <input
+                      className="settings-input"
+                      value={s.ollamaBaseUrl}
+                      onChange={(e) => set('ollamaBaseUrl', e.target.value)}
+                      placeholder="http://localhost:11434"
+                    />
+                  </div>
+                  <div className="settings-field">
+                    <label className="settings-label">Model</label>
+                    {ollamaModels.length > 0 ? (
+                      <select
+                        className="settings-input"
+                        value={s.ollamaModel}
+                        onChange={(e) => set('ollamaModel', e.target.value)}
+                      >
+                        {!ollamaModels.includes(s.ollamaModel) && (
+                          <option value={s.ollamaModel}>{s.ollamaModel} (not installed)</option>
+                        )}
+                        {ollamaModels.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        className="settings-input"
+                        value={s.ollamaModel}
+                        onChange={(e) => set('ollamaModel', e.target.value)}
+                        placeholder="llama3.2"
+                      />
+                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        style={{ width: 'auto', padding: '4px 10px', fontSize: 12 }}
+                        onClick={() => detectOllama(s.ollamaBaseUrl)}
+                        disabled={ollamaStatus === 'detecting'}
+                      >
+                        {ollamaStatus === 'detecting' ? 'Detecting…' : 'Detect models'}
+                      </button>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                        {ollamaStatus === 'detecting'
+                          ? 'Scanning Ollama server…'
+                          : ollamaStatus === 'ok'
+                            ? `${ollamaModels.length} model(s) detected.`
+                            : ollamaStatus === 'unreachable'
+                              ? 'No Ollama server found — is it running? You can also type a model name manually.'
+                              : ''}
+                      </span>
+                    </div>
+                  </div>
+                </>
               )}
             </div>
 
-            {targetNote && (
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 6 }}>
-                {targetNote}
-              </span>
-            )}
-            {sessionActive && (
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 6 }}>
-                A session is running. Hue built its prompt from this application when the session
-                started, so switching now is held until you stop.
-              </span>
-            )}
-          </div>
+            <div className={sectionClass('mode')}>
+              <div className="settings-section-title">
+                <SectionIcon name="mode" />
+                Mode
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Hue&apos;s role</label>
+                <select
+                  className="settings-input"
+                  value={s.hueMode}
+                  onChange={(e) => set('hueMode', e.target.value as HueMode)}
+                >
+                  <option value="companion">Companion — help me answer the interviewer</option>
+                  <option value="interviewer">Interviewer — ask me questions (practice)</option>
+                </select>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  {s.hueMode === 'companion'
+                    ? 'Hue treats incoming speech as the interviewer’s question and shows a suggested answer as text (it stays silent so it never talks over you).'
+                    : 'Hue conducts a mock interview, asking you questions out loud and waiting for your answers.'}
+                </span>
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Listen to</label>
+                <select
+                  className="settings-input"
+                  value={s.audioSource}
+                  onChange={(e) => set('audioSource', e.target.value as AudioSource)}
+                >
+                  <option value="microphone">My microphone</option>
+                  <option value="system">System / call audio (loopback)</option>
+                </select>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  {s.audioSource === 'system'
+                    ? 'Captures the audio coming out of your speakers — e.g. the interviewer on a Zoom/Meet call. Supported on Windows; you may be asked to pick a screen to share.'
+                    : 'Captures your microphone. In Companion mode, speak or relay the interviewer’s question for Hue to answer.'}
+                </span>
+              </div>
+            </div>
 
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="interview" />
-              Interview context
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Job title</label>
-              <input
-                className="settings-input"
-                value={s.jobTitle}
-                onChange={(e) => set('jobTitle', e.target.value)}
-                placeholder="Senior Frontend Engineer"
-              />
-            </div>
-            {/*
-              The posting itself, directly under the one-line title it replaces
-              the guesswork of. A job title tells Hue almost nothing — two
-              postings with the same title measure completely different things —
-              so this is the field that decides whether an answer is aimed at
-              this employer or at the average one.
-            */}
-            <div className="settings-field">
-              <label className="settings-label">Job description</label>
-              <textarea
-                className="settings-input"
-                rows={8}
-                maxLength={JOB_DESCRIPTION_LIMIT}
-                value={s.jobDescription}
-                onChange={(e) => set('jobDescription', e.target.value)}
-                placeholder="Paste the job posting here — the full text, responsibilities and requirements included."
-              />
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Hue uses this to answer the way <em>this</em> employer is measuring — weighting your
-                own stories toward what the posting actually asks for. It never claims a skill from
-                the posting that isn’t already in your résumé: where the two don’t meet, it gives
-                you an honest bridge instead of a sentence you’d have to defend.
-              </span>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  marginTop: 8,
-                  flexWrap: 'wrap'
-                }}
-              >
+            <div className={sectionClass('phone-mirror')}>
+              <div className="settings-section-title">
+                <SectionIcon name="phone-mirror" />
+                Phone mirror — opens a web page
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Mirror the session to your phone</label>
                 <button
                   type="button"
                   className="icon-btn"
@@ -2012,58 +1835,454 @@ export function Settings({
                     padding: '6px 12px',
                     fontSize: 13
                   }}
-                  onClick={() => void onAnalyseJob()}
-                  disabled={jobAnalysing || !s.jobDescription.trim()}
+                  onClick={() => void togglePhone()}
+                  disabled={phoneBusy || !phone}
                 >
-                  {jobSpec ? 'Re-analyse' : 'Analyse posting'}
+                  {phoneBusy
+                    ? 'Working…'
+                    : phone?.running
+                      ? 'Disable phone mirror'
+                      : 'Enable phone mirror'}
                 </button>
-                {(jobSpec || s.jobDescription) && !jobAnalysing && (
-                  <button type="button" className="link-btn" onClick={() => void onClearJobSpec()}>
-                    Clear
-                  </button>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Streams the interviewer’s question and Hue’s suggested answer to your phone’s
+                  browser over your Wi-Fi — nothing leaves your network. Takes effect immediately.
+                </span>
+                {phone?.running && (
+                  <>
+                    {phoneQr && (
+                      <img
+                        src={phoneQr}
+                        alt="QR code — scan with your phone to open Hue's mirror page"
+                        style={{
+                          width: 160,
+                          height: 160,
+                          borderRadius: 8,
+                          marginTop: 10,
+                          alignSelf: 'flex-start'
+                        }}
+                      />
+                    )}
+                    <span
+                      style={{
+                        fontSize: 12,
+                        marginTop: 8,
+                        userSelect: 'text',
+                        wordBreak: 'break-all'
+                      }}
+                    >
+                      {phone.url}
+                    </span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                      Scan with your phone’s <strong>browser</strong> (same Wi-Fi as this PC) and
+                      keep the page open. Not for the Hue app — that’s the “Phone app” code below.
+                      The link changes each time Hue restarts, so re-scan if the phone says
+                      “reconnecting”.
+                    </span>
+                  </>
                 )}
               </div>
-              {jobAnalysing ? (
-                <UploadProgress percent={jobProgress} label={jobStatus ?? 'Working…'} />
-              ) : (
-                <>
-                  {jobError && (
-                    <span style={{ color: 'var(--red)', fontSize: 12, marginTop: 6 }}>
-                      {jobError}
+            </div>
+
+            <div className={sectionClass('phone-app')}>
+              <div className="settings-section-title">
+                <SectionIcon name="phone-app" />
+                Phone app — scan this one in Hue
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Relay URL</label>
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={s.relayBaseUrl}
+                  placeholder="https://relay.hue.app"
+                  onChange={(e) => set('relayBaseUrl', e.target.value)}
+                />
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Where the Hue relay is running. Changing this takes effect the next time you
+                  connect the phone app below.
+                </span>
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Mirror the session to the Hue phone app</label>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  style={{
+                    alignSelf: 'flex-start',
+                    width: 'auto',
+                    padding: '6px 12px',
+                    fontSize: 13
+                  }}
+                  onClick={() => void toggleRelay()}
+                  disabled={relayBusy || !relay}
+                >
+                  {relayBusy
+                    ? 'Working…'
+                    : relay?.running
+                      ? 'Disconnect phone app'
+                      : 'Connect phone app'}
+                </button>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Streams the interviewer’s question and Hue’s suggested answer to the Hue app on
+                  your phone. Unlike the phone mirror above this works on mobile data — the
+                  transcript passes through the relay you configured.
+                </span>
+                {relay?.error && (
+                  <span style={{ color: 'var(--red)', fontSize: 12, marginTop: 6 }}>
+                    {relay.error}
+                  </span>
+                )}
+                {relay?.running && (
+                  <>
+                    {relayQr && (
+                      <img
+                        src={relayQr}
+                        alt="QR code — scan with the Hue app to pair your phone"
+                        style={{
+                          width: 160,
+                          height: 160,
+                          borderRadius: 8,
+                          marginTop: 10,
+                          alignSelf: 'flex-start'
+                        }}
+                      />
+                    )}
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                      Scan with the Hue app. The pairing changes every time Hue restarts — re-scan
+                      if the phone says “disconnected”.
                     </span>
-                  )}
-                  {jobSpec && (
-                    // Dimmed and marked when the box no longer holds the text
-                    // this was built from. Reading a confident summary of a
-                    // posting you have since replaced is worse than reading no
-                    // summary, because nothing on screen says it is out of date.
-                    <div style={{ marginTop: 10, opacity: jobSpecStale ? 0.55 : 1 }}>
-                      <AddedChip label={describeJobSpec(jobSpec)} />
-                      {jobSpecStale && (
-                        <span
-                          style={{
-                            color: 'var(--text-muted)',
-                            fontSize: 12,
-                            marginLeft: 8
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className={sectionClass('shortcuts')}>
+              <div className="settings-section-title">
+                <SectionIcon name="shortcuts" />
+                Shortcuts
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Summon Hue (show window)</label>
+                <HotkeyRecorder value={s.summonHotkey} onChange={(v) => set('summonHotkey', v)} />
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Brings Hue to the front from any app. Click, then press a key combo, a single key
+                  (e.g. F9), or a mouse button — the Back/Forward side buttons work great.
+                </span>
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Start / stop session</label>
+                <HotkeyRecorder
+                  value={s.startSessionHotkey}
+                  onChange={(v) => set('startSessionHotkey', v)}
+                />
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Works globally — even during a call — to start or stop a session. Click, then
+                  press a key combo, a single key, or a mouse button (Back/Forward, etc.).
+                </span>
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Capture screen</label>
+                <HotkeyRecorder
+                  value={s.captureScreenHotkey}
+                  onChange={(v) => set('captureScreenHotkey', v)}
+                />
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  During a session, snapshots your screen and asks Hue about it — handy when the
+                  interviewer shares a coding prompt. Hue hides itself for the shot; the image is
+                  sent only to your configured AI provider and never saved to disk.
+                </span>
+              </div>
+            </div>
+
+            {/*
+            Saved applications, above the two sections they scope.
+
+            The order is the argument: everything below this — the job title,
+            the posting and its analysis, the résumé and its story bank — belongs
+            to whichever radio is selected. Putting the switcher underneath any
+            of them would read as scoping only that one field.
+          */}
+            <div className={sectionClass('applications')}>
+              <div className="settings-section-title">
+                <SectionIcon name="applications" />
+                Applications
+              </div>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 8 }}>
+                One per job you’re interviewing for. Each keeps its own job title, posting, analysis
+                and résumé, so switching back to an application restores everything you had prepared
+                for it — no re-pasting, no re-uploading.
+              </span>
+
+              <div className="settings-field" style={{ gap: 6 }}>
+                {targets.map((target) => {
+                  const active = target.id === s.activeTargetId
+                  return (
+                    <div
+                      key={target.id}
+                      className={
+                        active ? 'settings-app-row settings-app-row--active' : 'settings-app-row'
+                      }
+                    >
+                      <input
+                        type="radio"
+                        className="settings-radio"
+                        name="hue-application"
+                        checked={active}
+                        // Disabled only while something is in flight. The refusals
+                        // — mid-session, an unanswered gap — are handled in the
+                        // click so the reason can be *said*: a radio that silently
+                        // will not move is the thing that makes people reinstall.
+                        disabled={targetBusy}
+                        onChange={() => void onSwitchTarget(target.id)}
+                        id={`hue-app-${target.id}`}
+                      />
+                      {renamingId === target.id ? (
+                        <input
+                          className="settings-input"
+                          autoFocus
+                          value={renameDraft}
+                          maxLength={80}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              const name = renameDraft
+                              setRenamingId(null)
+                              void runTargetAction(() => window.hue.targets.rename(target.id, name))
+                            }
+                            if (e.key === 'Escape') setRenamingId(null)
+                          }}
+                          onBlur={() => {
+                            const name = renameDraft
+                            setRenamingId(null)
+                            void runTargetAction(() => window.hue.targets.rename(target.id, name))
+                          }}
+                          style={{ flex: 1 }}
+                        />
+                      ) : (
+                        <label htmlFor={`hue-app-${target.id}`} className="settings-app-label">
+                          <span style={{ fontWeight: active ? 600 : 400 }}>{target.name}</span>
+                          {target.jobTitle && target.jobTitle !== target.name && (
+                            <span style={{ color: 'var(--text-muted)' }}> — {target.jobTitle}</span>
+                          )}
+                          {/*
+                            What is actually set up in this slot. Without it every
+                            row looks equally ready, and the one you switch to
+                            turns out to be the empty one you made last week.
+                          */}
+                          <span className="settings-app-meta">
+                            {[
+                              target.hasResume ? 'résumé' : null,
+                              target.hasJobDescription ? 'posting' : null
+                            ]
+                              .filter(Boolean)
+                              .join(' · ') || 'nothing saved yet'}
+                          </span>
+                        </label>
+                      )}
+                      {active && renamingId !== target.id && (
+                        <button
+                          className="settings-btn"
+                          disabled={targetBusy}
+                          onClick={() => {
+                            setRenameDraft(target.name === UNTITLED_TARGET ? '' : target.name)
+                            setRenamingId(target.id)
                           }}
                         >
-                          edited since analysis — re-analyse to update
-                        </span>
+                          Rename
+                        </button>
                       )}
-                      {jobSpec.mustHaves.length > 0 && (
-                        <div style={{ marginTop: 8 }}>
-                          <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                            What they say they require
-                          </div>
-                          <div
+                      <button
+                        className="settings-btn settings-btn--danger"
+                        aria-label={`Delete ${target.name}`}
+                        disabled={targetBusy || targets.length <= 1}
+                        title={
+                          targets.length <= 1
+                            ? 'The last application can’t be deleted.'
+                            : 'Delete this application'
+                        }
+                        onClick={() => {
+                          if (confirmDeleteId !== target.id) {
+                            setConfirmDeleteId(target.id)
+                            setTargetNote(
+                              `Click Delete again to remove “${target.name}”. Its posting, analysis and résumé go with it, and there’s no undo.`
+                            )
+                            return
+                          }
+                          setConfirmDeleteId(null)
+                          void runTargetAction(() => window.hue.targets.delete(target.id))
+                        }}
+                      >
+                        {confirmDeleteId === target.id ? 'Delete?' : '×'}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                <button
+                  className="settings-btn"
+                  disabled={targetBusy || targets.length >= MAX_TARGETS}
+                  onClick={() => {
+                    if (switchBlockedReason) {
+                      setTargetNote(switchBlockedReason)
+                      return
+                    }
+                    void runTargetAction(() => window.hue.targets.create(''))
+                  }}
+                >
+                  + New
+                </button>
+                <button
+                  className="settings-btn"
+                  disabled={targetBusy || targets.length >= MAX_TARGETS}
+                  title="Copy this application, résumé and analysis included — for the same role at another company."
+                  onClick={() => {
+                    if (switchBlockedReason) {
+                      setTargetNote(switchBlockedReason)
+                      return
+                    }
+                    void runTargetAction(() =>
+                      window.hue.targets.duplicate(
+                        activeTarget ? `${activeTarget.name} copy` : UNTITLED_TARGET
+                      )
+                    )
+                  }}
+                >
+                  Duplicate
+                </button>
+                {targets.length >= MAX_TARGETS && (
+                  <span style={{ color: 'var(--text-muted)', fontSize: 12, alignSelf: 'center' }}>
+                    {MAX_TARGETS} is the limit — delete one to add another.
+                  </span>
+                )}
+              </div>
+
+              {targetNote && (
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 6 }}>
+                  {targetNote}
+                </span>
+              )}
+              {sessionActive && (
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 6 }}>
+                  A session is running. Hue built its prompt from this application when the session
+                  started, so switching now is held until you stop.
+                </span>
+              )}
+            </div>
+
+            <div className={sectionClass('interview')}>
+              <div className="settings-section-title">
+                <SectionIcon name="interview" />
+                Interview context
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Job title</label>
+                <input
+                  className="settings-input"
+                  value={s.jobTitle}
+                  onChange={(e) => set('jobTitle', e.target.value)}
+                  placeholder="Senior Frontend Engineer"
+                />
+              </div>
+              {/*
+              The posting itself, directly under the one-line title it replaces
+              the guesswork of. A job title tells Hue almost nothing — two
+              postings with the same title measure completely different things —
+              so this is the field that decides whether an answer is aimed at
+              this employer or at the average one.
+            */}
+              <div className="settings-field">
+                <label className="settings-label">Job description</label>
+                <textarea
+                  className="settings-input"
+                  rows={8}
+                  maxLength={JOB_DESCRIPTION_LIMIT}
+                  value={s.jobDescription}
+                  onChange={(e) => set('jobDescription', e.target.value)}
+                  placeholder="Paste the job posting here — the full text, responsibilities and requirements included."
+                />
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Hue uses this to answer the way <em>this</em> employer is measuring — weighting
+                  your own stories toward what the posting actually asks for. It never claims a
+                  skill from the posting that isn’t already in your résumé: where the two don’t
+                  meet, it gives you an honest bridge instead of a sentence you’d have to defend.
+                </span>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    marginTop: 8,
+                    flexWrap: 'wrap'
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    style={{
+                      alignSelf: 'flex-start',
+                      width: 'auto',
+                      padding: '6px 12px',
+                      fontSize: 13
+                    }}
+                    onClick={() => void onAnalyseJob()}
+                    disabled={jobAnalysing || !s.jobDescription.trim()}
+                  >
+                    {jobSpec ? 'Re-analyse' : 'Analyse posting'}
+                  </button>
+                  {(jobSpec || s.jobDescription) && !jobAnalysing && (
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => void onClearJobSpec()}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                {jobAnalysing ? (
+                  <UploadProgress percent={jobProgress} label={jobStatus ?? 'Working…'} />
+                ) : (
+                  <>
+                    {jobError && (
+                      <span style={{ color: 'var(--red)', fontSize: 12, marginTop: 6 }}>
+                        {jobError}
+                      </span>
+                    )}
+                    {jobSpec && (
+                      // Dimmed and marked when the box no longer holds the text
+                      // this was built from. Reading a confident summary of a
+                      // posting you have since replaced is worse than reading no
+                      // summary, because nothing on screen says it is out of date.
+                      <div style={{ marginTop: 10, opacity: jobSpecStale ? 0.55 : 1 }}>
+                        <AddedChip label={describeJobSpec(jobSpec)} />
+                        {jobSpecStale && (
+                          <span
                             style={{
-                              display: 'flex',
-                              flexWrap: 'wrap',
-                              gap: 6,
-                              marginTop: 6
+                              color: 'var(--text-muted)',
+                              fontSize: 12,
+                              marginLeft: 8
                             }}
                           >
-                            {/*
+                            edited since analysis — re-analyse to update
+                          </span>
+                        )}
+                        {jobSpec.mustHaves.length > 0 && (
+                          <div style={{ marginTop: 8 }}>
+                            <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                              What they say they require
+                            </div>
+                            <div
+                              style={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                gap: 6,
+                                marginTop: 6
+                              }}
+                            >
+                              {/*
                               Capped, because a posting can list a dozen and this
                               panel is a confirmation that the right document was
                               read, not the document itself. Only `text` is ever
@@ -2071,539 +2290,553 @@ export function Settings({
                               verifier uses to prove a requirement came from the
                               posting, and it is provenance, not copy.
                             */}
-                            {jobSpec.mustHaves.slice(0, 10).map((req) => (
-                              <span
-                                key={req.id}
-                                style={{
-                                  border: '1px solid var(--border)',
-                                  borderRadius: 999,
-                                  padding: '3px 9px',
-                                  fontSize: 12
-                                }}
-                              >
-                                {req.text}
-                              </span>
-                            ))}
-                            {jobSpec.mustHaves.length > 10 && (
-                              <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                                +{jobSpec.mustHaves.length - 10} more
-                              </span>
-                            )}
+                              {jobSpec.mustHaves.slice(0, 10).map((req) => (
+                                <span
+                                  key={req.id}
+                                  style={{
+                                    border: '1px solid var(--border)',
+                                    borderRadius: 999,
+                                    padding: '3px 9px',
+                                    fontSize: 12
+                                  }}
+                                >
+                                  {req.text}
+                                </span>
+                              ))}
+                              {jobSpec.mustHaves.length > 10 && (
+                                <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                                  +{jobSpec.mustHaves.length - 10} more
+                                </span>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      )}
-                      {jobBrief && jobBrief.likelyQuestions.length > 0 && (
-                        <div style={{ marginTop: 10, color: 'var(--text-muted)', fontSize: 12 }}>
-                          {jobBrief.likelyQuestions.length} anticipated question
-                          {jobBrief.likelyQuestions.length === 1 ? '' : 's'}, {briefMatched} matched
-                          to your stories. Hue carries these into every answer.
-                        </div>
-                      )}
-                      {jobSpec.likelyQuestions.length > 0 && (
-                        // Collapsed: useful to skim before a call, and noise
-                        // while you are still setting the pane up.
-                        <details style={{ marginTop: 10 }}>
-                          <summary
-                            style={{ color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}
-                          >
-                            Questions they’re likely to ask
-                          </summary>
-                          <ul
-                            style={{
-                              color: 'var(--text-muted)',
-                              fontSize: 12,
-                              margin: '6px 0 0',
-                              paddingLeft: 18,
-                              lineHeight: 1.5
-                            }}
-                          >
-                            {jobSpec.likelyQuestions.map((q) => (
-                              <li key={q}>{q}</li>
-                            ))}
-                          </ul>
-                        </details>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Mode</label>
-              <select
-                className="settings-input"
-                value={s.interviewMode}
-                onChange={(e) => set('interviewMode', e.target.value as InterviewMode)}
-              >
-                <option value="practice">Practice (coach me)</option>
-                <option value="star">STAR-structured</option>
-                <option value="live">Live (say-it-now)</option>
-              </select>
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Résumé</label>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf,.docx,.txt"
-                style={{ display: 'none' }}
-                onChange={onResumeFile}
-              />
-              <button
-                type="button"
-                className="icon-btn"
-                style={{
-                  alignSelf: 'flex-start',
-                  width: 'auto',
-                  padding: '6px 12px',
-                  fontSize: 13
-                }}
-                onClick={() => fileInputRef.current?.click()}
-                disabled={resumeIngesting}
-              >
-                {profileBundle ? 'Replace résumé' : 'Upload PDF / DOCX / TXT'}
-              </button>
-              {resumeIngesting ? (
-                <UploadProgress percent={resumeProgress} label={resumeStatus ?? 'Working…'} />
-              ) : (
-                <>
-                  {profileBundle && <AddedChip label={describeBundle(profileBundle)} />}
-                  {resumeStatus && (
-                    <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                      {resumeStatus}
-                    </span>
-                  )}
-                </>
-              )}
-              {/*
+                        )}
+                        {jobBrief && jobBrief.likelyQuestions.length > 0 && (
+                          <div style={{ marginTop: 10, color: 'var(--text-muted)', fontSize: 12 }}>
+                            {jobBrief.likelyQuestions.length} anticipated question
+                            {jobBrief.likelyQuestions.length === 1 ? '' : 's'}, {briefMatched}{' '}
+                            matched to your stories. Hue carries these into every answer.
+                          </div>
+                        )}
+                        {jobSpec.likelyQuestions.length > 0 && (
+                          // Collapsed: useful to skim before a call, and noise
+                          // while you are still setting the pane up.
+                          <details style={{ marginTop: 10 }}>
+                            <summary
+                              style={{
+                                color: 'var(--text-muted)',
+                                fontSize: 12,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              Questions they’re likely to ask
+                            </summary>
+                            <ul
+                              style={{
+                                color: 'var(--text-muted)',
+                                fontSize: 12,
+                                margin: '6px 0 0',
+                                paddingLeft: 18,
+                                lineHeight: 1.5
+                              }}
+                            >
+                              {jobSpec.likelyQuestions.map((q) => (
+                                <li key={q}>{q}</li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Mode</label>
+                <select
+                  className="settings-input"
+                  value={s.interviewMode}
+                  onChange={(e) => set('interviewMode', e.target.value as InterviewMode)}
+                >
+                  <option value="practice">Practice (coach me)</option>
+                  <option value="star">STAR-structured</option>
+                  <option value="live">Live (say-it-now)</option>
+                </select>
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Résumé</label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.docx,.txt"
+                  style={{ display: 'none' }}
+                  onChange={onResumeFile}
+                />
+                <button
+                  type="button"
+                  className="icon-btn"
+                  style={{
+                    alignSelf: 'flex-start',
+                    width: 'auto',
+                    padding: '6px 12px',
+                    fontSize: 13
+                  }}
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={resumeIngesting}
+                >
+                  {profileBundle ? 'Replace résumé' : 'Upload PDF / DOCX / TXT'}
+                </button>
+                {resumeIngesting ? (
+                  <UploadProgress percent={resumeProgress} label={resumeStatus ?? 'Working…'} />
+                ) : (
+                  <>
+                    {profileBundle && <AddedChip label={describeBundle(profileBundle)} />}
+                    {resumeStatus && (
+                      <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                        {resumeStatus}
+                      </span>
+                    )}
+                  </>
+                )}
+                {/*
                 Ingest sends a whole résumé in one request, which is an order of
                 magnitude larger than a live draft, so the provider that is right
                 for drafting is not always able to do it at all. Named here
                 rather than in a separate pane because this is the setting an
                 upload failure sends you looking for.
               */}
-              <label className="settings-label" style={{ marginTop: 10 }}>
-                Ingest provider
-              </label>
-              <select
-                className="settings-input"
-                value={s.ingestProvider}
-                onChange={(e) =>
-                  set('ingestProvider', e.target.value as HueSettings['ingestProvider'])
-                }
-              >
-                <option value="">Same as drafting</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="ollama">Ollama (local)</option>
-                <option value="google">Google</option>
-                <option value="groq">Groq</option>
-                <option value="mistral">Mistral</option>
-                <option value="cohere">Cohere</option>
-                <option value="deepseek">DeepSeek</option>
-              </select>
-              {/*
+                <label className="settings-label" style={{ marginTop: 10 }}>
+                  Ingest provider
+                </label>
+                <select
+                  className="settings-input"
+                  value={s.ingestProvider}
+                  onChange={(e) =>
+                    set('ingestProvider', e.target.value as HueSettings['ingestProvider'])
+                  }
+                >
+                  <option value="">Same as drafting</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="ollama">Ollama (local)</option>
+                  <option value="google">Google</option>
+                  <option value="groq">Groq</option>
+                  <option value="mistral">Mistral</option>
+                  <option value="cohere">Cohere</option>
+                  <option value="deepseek">DeepSeek</option>
+                </select>
+                {/*
                 Warned before the upload rather than after it. The failure this
                 prevents costs a minute of waiting and then returns a raw
                 provider rate-limit body, which a user reasonably reads as Hue
                 being broken.
               */}
-              {ingestWillExceedQuota ? (
-                <span style={{ color: '#d08b2c', fontSize: 12, marginTop: 4 }}>
-                  Ingest is set to run on Groq, which cannot complete it. Reading a whole résumé
-                  needs about 10,000 tokens in one request and Groq’s free tier caps that at 8,000,
-                  so the upload will fail. Pick Google or Ollama here — drafting can stay on Groq,
-                  where its speed is worth having.
-                </span>
-              ) : (
-                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                  Reading a whole résumé takes far more tokens at once than drafting an answer does,
-                  so the fastest provider is not always able to do it. Leave this on “Same as
-                  drafting” unless an upload tells you otherwise.
-                </span>
-              )}
-              {profileBundle ? (
-                <div style={{ marginTop: 8, fontSize: 13 }}>
-                  <div>{describeBundle(profileBundle)}</div>
-                  {currentGap ? (
-                    /*
+                {ingestWillExceedQuota ? (
+                  <span style={{ color: '#d08b2c', fontSize: 12, marginTop: 4 }}>
+                    Ingest is set to run on Groq, which cannot complete it. Reading a whole résumé
+                    needs about 10,000 tokens in one request and Groq’s free tier caps that at
+                    8,000, so the upload will fail. Pick Google or Ollama here — drafting can stay
+                    on Groq, where its speed is worth having.
+                  </span>
+                ) : (
+                  <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                    Reading a whole résumé takes far more tokens at once than drafting an answer
+                    does, so the fastest provider is not always able to do it. Leave this on “Same
+                    as drafting” unless an upload tells you otherwise.
+                  </span>
+                )}
+                {profileBundle ? (
+                  <div style={{ marginTop: 8, fontSize: 13 }}>
+                    <div>{describeBundle(profileBundle)}</div>
+                    {currentGap ? (
+                      /*
                       One question at a time. The whole list used to render at
                       once, and a dozen stacked textareas reads as a form to be
                       completed rather than a conversation to be had — the user
                       scrolls it, sizes up the work, and closes the pane. A
                       single question with a visible end to it is answerable.
                     */
-                    <div className="settings-field" style={{ marginTop: 10, gap: 10 }}>
-                      {/*
+                      <div className="settings-field" style={{ marginTop: 10, gap: 10 }}>
+                        {/*
                         Two kinds of question now share this queue, and they are
                         asked for opposite reasons — one because the résumé says
                         nothing, the other because it says a technology and no
                         story explains it. One caption covering both would be
                         true of neither.
                       */}
-                      <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                        {currentGap.kind === 'technical' ? (
-                          <>
-                            Your résumé lists this, but none of your stories say what you did with
-                            it — so it’s the first thing an interviewer will push on. Answer in your
-                            own words; specifics, versions and numbers are what make it yours.
-                          </>
-                        ) : (
-                          <>
-                            These cover the things your résumé can’t show — which are exactly the
-                            ones an AI would otherwise make up. “I don’t have one” is a real answer,
-                            and Hue records it as one rather than inventing a story.
-                          </>
-                        )}
-                      </div>
-                      {currentGap.subject && (
-                        // The receipt: this question came off the page, not off a list.
-                        <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-                          From your résumé: {currentGap.subject}
+                        <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                          {currentGap.kind === 'technical' ? (
+                            <>
+                              Your résumé lists this, but none of your stories say what you did with
+                              it — so it’s the first thing an interviewer will push on. Answer in
+                              your own words; specifics, versions and numbers are what make it
+                              yours.
+                            </>
+                          ) : (
+                            <>
+                              These cover the things your résumé can’t show — which are exactly the
+                              ones an AI would otherwise make up. “I don’t have one” is a real
+                              answer, and Hue records it as one rather than inventing a story.
+                            </>
+                          )}
                         </div>
-                      )}
-                      <div className="gap-progress">
-                        <span className="gap-progress-count">
-                          Question {gapNumberShown} of {gapTotal}
-                        </span>
-                        <span className="gap-dots">
-                          {Array.from({ length: gapTotal }, (_, i) => (
-                            <span
-                              key={i}
-                              className={i < gapNumberShown ? 'gap-dot gap-dot-filled' : 'gap-dot'}
-                            />
-                          ))}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: 13 }}>{currentGap.question}</div>
-                      <textarea
-                        className="settings-input"
-                        rows={3}
-                        value={gapDrafts[currentGap.id] ?? ''}
-                        disabled={gapBusy === currentGap.id}
-                        onChange={(e) =>
-                          setGapDrafts((d) => ({ ...d, [currentGap.id]: e.target.value }))
-                        }
-                        placeholder="Tell it the way you’d tell it out loud…"
-                      />
-                      {gapNotes[currentGap.id] && (
-                        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                          {gapNotes[currentGap.id]}
-                        </span>
-                      )}
-                      <div className="gap-nav">
-                        <button
-                          type="button"
-                          className="link-btn"
-                          disabled={gapBusy === currentGap.id || gapPosition === 0}
-                          onClick={() => setGapCursorId(stepCursor(openGapIds, currentGap.id, -1))}
-                        >
-                          ← Back
-                        </button>
-                        <button
-                          type="button"
-                          className="link-btn"
+                        {currentGap.subject && (
+                          // The receipt: this question came off the page, not off a list.
+                          <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                            From your résumé: {currentGap.subject}
+                          </div>
+                        )}
+                        <div className="gap-progress">
+                          <span className="gap-progress-count">
+                            Question {gapNumberShown} of {gapTotal}
+                          </span>
+                          <span className="gap-dots">
+                            {Array.from({ length: gapTotal }, (_, i) => (
+                              <span
+                                key={i}
+                                className={
+                                  i < gapNumberShown ? 'gap-dot gap-dot-filled' : 'gap-dot'
+                                }
+                              />
+                            ))}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 13 }}>{currentGap.question}</div>
+                        <textarea
+                          className="settings-input"
+                          rows={3}
+                          value={gapDrafts[currentGap.id] ?? ''}
                           disabled={gapBusy === currentGap.id}
-                          onClick={() => void onSkipGap(currentGap.id)}
-                        >
-                          I don’t have one
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          disabled={
-                            gapBusy === currentGap.id ||
-                            // Nothing typed and nowhere further to go, so Next
-                            // would be a button that does nothing.
-                            (!(gapDrafts[currentGap.id] ?? '').trim() &&
-                              gapPosition === openGaps.length - 1)
+                          onChange={(e) =>
+                            setGapDrafts((d) => ({ ...d, [currentGap.id]: e.target.value }))
                           }
-                          style={{ width: 'auto', padding: '4px 10px', fontSize: 12 }}
-                          onClick={() => onNextGap(currentGap.id)}
-                        >
-                          {gapBusy === currentGap.id ? 'Saving…' : 'Next →'}
-                        </button>
+                          placeholder="Tell it the way you’d tell it out loud…"
+                        />
+                        {gapNotes[currentGap.id] && (
+                          <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                            {gapNotes[currentGap.id]}
+                          </span>
+                        )}
+                        <div className="gap-nav">
+                          <button
+                            type="button"
+                            className="link-btn"
+                            disabled={gapBusy === currentGap.id || gapPosition === 0}
+                            onClick={() =>
+                              setGapCursorId(stepCursor(openGapIds, currentGap.id, -1))
+                            }
+                          >
+                            ← Back
+                          </button>
+                          <button
+                            type="button"
+                            className="link-btn"
+                            disabled={gapBusy === currentGap.id}
+                            onClick={() => void onSkipGap(currentGap.id)}
+                          >
+                            I don’t have one
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            disabled={
+                              gapBusy === currentGap.id ||
+                              // Nothing typed and nowhere further to go, so Next
+                              // would be a button that does nothing.
+                              (!(gapDrafts[currentGap.id] ?? '').trim() &&
+                                gapPosition === openGaps.length - 1)
+                            }
+                            style={{ width: 'auto', padding: '4px 10px', fontSize: 12 }}
+                            onClick={() => onNextGap(currentGap.id)}
+                          >
+                            {gapBusy === currentGap.id ? 'Saving…' : 'Next →'}
+                          </button>
+                        </div>
                       </div>
+                    ) : (
+                      <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                        Gap scan complete.
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+                      <button type="button" className="link-btn" onClick={onRefreshProfile}>
+                        Reload profile
+                      </button>
+                      <button type="button" className="link-btn" onClick={onDeleteProfile}>
+                        Delete my profile
+                      </button>
                     </div>
-                  ) : (
-                    <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                      Gap scan complete.
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-                    <button type="button" className="link-btn" onClick={onRefreshProfile}>
-                      Reload profile
-                    </button>
-                    <button type="button" className="link-btn" onClick={onDeleteProfile}>
-                      Delete my profile
-                    </button>
                   </div>
-                </div>
-              ) : (
-                // The legacy freeform field stays visible only while there is no
-                // bundle. It is still what the prompt falls back to, so an
-                // existing install keeps working — but it is no longer the path
-                // an upload takes.
-                <textarea
-                  className="settings-input"
-                  style={{ marginTop: 8 }}
-                  value={s.resumeSummary}
-                  onChange={(e) => set('resumeSummary', e.target.value)}
-                  rows={3}
-                  placeholder="Upload a résumé above, or type a few sentences about your background…"
-                />
-              )}
-            </div>
-          </div>
-
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="asr" />
-              Transcription (ASR)
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Tier</label>
-              <select
-                className="settings-input"
-                value={s.asrTier}
-                onChange={(e) => set('asrTier', e.target.value as AsrTier)}
-              >
-                <option value="auto">Auto (cloud if a key is set, else on-device)</option>
-                <option value="on-device">On-device Whisper</option>
-                <option value="cloud">Cloud</option>
-              </select>
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                {s.asrTier === 'on-device'
-                  ? 'Runs Whisper locally — private and free, no API key needed.'
-                  : 'Cloud transcription is faster and more accurate; pick a provider and add its key below.'}
-              </span>
-            </div>
-            {s.asrTier !== 'on-device' && (
-              <>
-                <div className="settings-field">
-                  <label className="settings-label">Cloud provider</label>
-                  <select
+                ) : (
+                  // The legacy freeform field stays visible only while there is no
+                  // bundle. It is still what the prompt falls back to, so an
+                  // existing install keeps working — but it is no longer the path
+                  // an upload takes.
+                  <textarea
                     className="settings-input"
-                    value={s.cloudAsrProvider}
-                    onChange={(e) => set('cloudAsrProvider', e.target.value as CloudAsrProvider)}
-                  >
-                    <option value="deepgram">Deepgram Nova-3</option>
-                    <option value="assemblyai">AssemblyAI</option>
-                    <option value="groq">Groq Whisper</option>
-                  </select>
-                </div>
-                <div className="settings-field">
-                  <label className="settings-label">
-                    {CLOUD_ASR[s.cloudAsrProvider].label} API key
-                  </label>
-                  <SecretInput
-                    value={s[CLOUD_ASR[s.cloudAsrProvider].keyField] as string}
-                    onChange={(next) => setStr(CLOUD_ASR[s.cloudAsrProvider].keyField, next)}
+                    style={{ marginTop: 8 }}
+                    value={s.resumeSummary}
+                    onChange={(e) => set('resumeSummary', e.target.value)}
+                    rows={3}
+                    placeholder="Upload a résumé above, or type a few sentences about your background…"
                   />
-                  <details style={{ marginTop: 6 }}>
-                    <summary
-                      style={{ color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}
-                    >
-                      How do I get a {CLOUD_ASR[s.cloudAsrProvider].label} API key?
-                    </summary>
-                    <ol
-                      style={{
-                        color: 'var(--text-muted)',
-                        fontSize: 12,
-                        margin: '6px 0 0',
-                        paddingLeft: 18,
-                        lineHeight: 1.5
-                      }}
-                    >
-                      {CLOUD_ASR[s.cloudAsrProvider].steps.map((step, i) => (
-                        <li key={i}>{step}</li>
-                      ))}
-                    </ol>
-                    <a
-                      href={CLOUD_ASR[s.cloudAsrProvider].consoleUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ fontSize: 12, display: 'inline-block', marginTop: 4 }}
-                    >
-                      {CLOUD_ASR[s.cloudAsrProvider].consoleUrl}
-                    </a>
-                  </details>
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="tts" />
-              Voice (TTS)
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Voice</label>
-              <select
-                className="settings-input"
-                value={s.ttsVoice}
-                onChange={(e) => set('ttsVoice', e.target.value)}
-              >
-                {KOKORO_VOICES.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Speed</label>
-              <div className="range-row">
-                <input
-                  type="range"
-                  min={0.5}
-                  max={1.5}
-                  step={0.05}
-                  value={s.ttsSpeed}
-                  onChange={(e) => set('ttsSpeed', Number(e.target.value))}
-                />
-                <span className="range-value">{s.ttsSpeed.toFixed(2)}×</span>
+                )}
               </div>
             </div>
-          </div>
 
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="stealth" />
-              Stealth
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Hide Hue from screen sharing</label>
-              <button
-                type="button"
-                className="icon-btn"
-                style={{
-                  alignSelf: 'flex-start',
-                  width: 'auto',
-                  padding: '6px 12px',
-                  fontSize: 13
-                }}
-                onClick={() => void toggleStealth()}
-                disabled={stealthBusy || !stealth || !stealth.supported}
-              >
-                {stealthBusy ? 'Working…' : stealth?.enabled ? 'Disable stealth' : 'Enable stealth'}
-              </button>
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Asks the OS to leave this window out of screen shares and screen-capture APIs, so it
-                stays visible to you but not to the people you share with. Takes effect immediately.
-              </span>
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                It hides the window and nothing else: the Hue process, its tray icon and the audio
-                devices it holds open are all still there, and it cannot do anything about a camera
-                pointed at your screen.
-              </span>
-              {stealth && !stealth.supported && (
+            <div className={sectionClass('asr')}>
+              <div className="settings-section-title">
+                <SectionIcon name="asr" />
+                Transcription (ASR)
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Tier</label>
+                <select
+                  className="settings-input"
+                  value={s.asrTier}
+                  onChange={(e) => set('asrTier', e.target.value as AsrTier)}
+                >
+                  <option value="auto">Auto (cloud if a key is set, else on-device)</option>
+                  <option value="on-device">On-device Whisper</option>
+                  <option value="cloud">Cloud</option>
+                </select>
                 <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                  Unavailable on this system — Linux and Windows 10 builds older than 2004 provide
-                  no equivalent, so the switch would do nothing.
+                  {s.asrTier === 'on-device'
+                    ? 'Runs Whisper locally — private and free, no API key needed.'
+                    : 'Cloud transcription is faster and more accurate; pick a provider and add its key below.'}
                 </span>
+              </div>
+              {s.asrTier !== 'on-device' && (
+                <>
+                  <div className="settings-field">
+                    <label className="settings-label">Cloud provider</label>
+                    <select
+                      className="settings-input"
+                      value={s.cloudAsrProvider}
+                      onChange={(e) => set('cloudAsrProvider', e.target.value as CloudAsrProvider)}
+                    >
+                      <option value="deepgram">Deepgram Nova-3</option>
+                      <option value="assemblyai">AssemblyAI</option>
+                      <option value="groq">Groq Whisper</option>
+                    </select>
+                  </div>
+                  <div className="settings-field">
+                    <label className="settings-label">
+                      {CLOUD_ASR[s.cloudAsrProvider].label} API key
+                    </label>
+                    <SecretInput
+                      value={s[CLOUD_ASR[s.cloudAsrProvider].keyField] as string}
+                      onChange={(next) => setStr(CLOUD_ASR[s.cloudAsrProvider].keyField, next)}
+                    />
+                    <details style={{ marginTop: 6 }}>
+                      <summary
+                        style={{ color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}
+                      >
+                        How do I get a {CLOUD_ASR[s.cloudAsrProvider].label} API key?
+                      </summary>
+                      <ol
+                        style={{
+                          color: 'var(--text-muted)',
+                          fontSize: 12,
+                          margin: '6px 0 0',
+                          paddingLeft: 18,
+                          lineHeight: 1.5
+                        }}
+                      >
+                        {CLOUD_ASR[s.cloudAsrProvider].steps.map((step, i) => (
+                          <li key={i}>{step}</li>
+                        ))}
+                      </ol>
+                      <a
+                        href={CLOUD_ASR[s.cloudAsrProvider].consoleUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ fontSize: 12, display: 'inline-block', marginTop: 4 }}
+                      >
+                        {CLOUD_ASR[s.cloudAsrProvider].consoleUrl}
+                      </a>
+                    </details>
+                  </div>
+                </>
               )}
             </div>
-          </div>
 
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="answering" />
-              Answering
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Speculative drafting</label>
-              <button
-                className="capture-btn"
-                style={{ alignSelf: 'flex-start' }}
-                onClick={() => set('speculativeDrafting', !s.speculativeDrafting)}
-              >
-                {s.speculativeDrafting ? 'Turn off drafting early' : 'Draft while they speak'}
-              </button>
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Starts drafting an answer from a partial transcript, before the interviewer
-                finishes, so the suggestion is ready sooner. It sends more requests than waiting
-                does, and drafts that turn out to be wrong are thrown away — so it costs extra
-                tokens to buy latency. Companion mode only.
-              </span>
-            </div>
-          </div>
-
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="docking" />
-              Docking
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Anchor position</label>
-              <div className="anchor-grid">
-                {ANCHOR_CELLS.map((anchor) => (
-                  <button
-                    key={anchor}
-                    type="button"
-                    className={`anchor-cell${s.windowAnchor === anchor ? ' anchor-cell--on' : ''}`}
-                    aria-label={ANCHOR_LABELS[anchor]}
-                    aria-pressed={s.windowAnchor === anchor}
-                    title={ANCHOR_LABELS[anchor]}
-                    onClick={() => set('windowAnchor', anchor)}
-                  >
-                    <span className="anchor-dot" />
-                  </button>
-                ))}
+            <div className={sectionClass('tts')}>
+              <div className="settings-section-title">
+                <SectionIcon name="tts" />
+                Voice (TTS)
               </div>
-              <button
-                className="capture-btn"
-                style={{ alignSelf: 'flex-start', marginTop: 8 }}
-                onClick={() => set('windowAnchor', 'free')}
-                disabled={s.windowAnchor === 'free'}
-              >
-                {s.windowAnchor === 'free' ? 'Free — drag it anywhere' : 'Unpin'}
-              </button>
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Parks Hue in a fixed corner of whichever screen it is on, clear of the taskbar, and
-                puts it back there if your displays change. Dragging the window releases the anchor
-                — your position is remembered either way, including across restarts.
-              </span>
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Edge margin</label>
-              <div className="range-row">
-                <input
-                  type="range"
-                  min={0}
-                  max={64}
-                  step={4}
-                  value={s.windowAnchorMargin}
-                  onChange={(e) => set('windowAnchorMargin', Number(e.target.value))}
-                />
-                <span className="range-value">{s.windowAnchorMargin}px</span>
+              <div className="settings-field">
+                <label className="settings-label">Voice</label>
+                <select
+                  className="settings-input"
+                  value={s.ttsVoice}
+                  onChange={(e) => set('ttsVoice', e.target.value)}
+                >
+                  {KOKORO_VOICES.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Speed</label>
+                <div className="range-row">
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={1.5}
+                    step={0.05}
+                    value={s.ttsSpeed}
+                    onChange={(e) => set('ttsSpeed', Number(e.target.value))}
+                  />
+                  <span className="range-value">{s.ttsSpeed.toFixed(2)}×</span>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div className="settings-section">
-            <div className="settings-section-title">
-              <SectionIcon name="appearance" />
-              Appearance
-            </div>
-            <div className="settings-field">
-              <label className="settings-label">Window transparency</label>
-              <div className="range-row">
-                <input
-                  type="range"
-                  min={0.4}
-                  max={1}
-                  step={0.05}
-                  value={s.windowOpacity}
-                  onChange={(e) => {
-                    const v = Number(e.target.value)
-                    set('windowOpacity', v)
-                    // Live preview — apply immediately so the slider is tangible.
-                    document.documentElement.style.setProperty('--bg-alpha', String(v))
+            <div className={sectionClass('stealth')}>
+              <div className="settings-section-title">
+                <SectionIcon name="stealth" />
+                Stealth
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Hide Hue from screen sharing</label>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  style={{
+                    alignSelf: 'flex-start',
+                    width: 'auto',
+                    padding: '6px 12px',
+                    fontSize: 13
                   }}
-                />
-                <span className="range-value">{Math.round(s.windowOpacity * 100)}%</span>
-                {/*
+                  onClick={() => void toggleStealth()}
+                  disabled={stealthBusy || !stealth || !stealth.supported}
+                >
+                  {stealthBusy
+                    ? 'Working…'
+                    : stealth?.enabled
+                      ? 'Disable stealth'
+                      : 'Enable stealth'}
+                </button>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Asks the OS to leave this window out of screen shares and screen-capture APIs, so
+                  it stays visible to you but not to the people you share with. Takes effect
+                  immediately.
+                </span>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  It hides the window and nothing else: the Hue process, its tray icon and the audio
+                  devices it holds open are all still there, and it cannot do anything about a
+                  camera pointed at your screen.
+                </span>
+                {stealth && !stealth.supported && (
+                  <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                    Unavailable on this system — Linux and Windows 10 builds older than 2004 provide
+                    no equivalent, so the switch would do nothing.
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className={sectionClass('answering')}>
+              <div className="settings-section-title">
+                <SectionIcon name="answering" />
+                Answering
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Speculative drafting</label>
+                <button
+                  className="capture-btn"
+                  style={{ alignSelf: 'flex-start' }}
+                  onClick={() => set('speculativeDrafting', !s.speculativeDrafting)}
+                >
+                  {s.speculativeDrafting ? 'Turn off drafting early' : 'Draft while they speak'}
+                </button>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Starts drafting an answer from a partial transcript, before the interviewer
+                  finishes, so the suggestion is ready sooner. It sends more requests than waiting
+                  does, and drafts that turn out to be wrong are thrown away — so it costs extra
+                  tokens to buy latency. Companion mode only.
+                </span>
+              </div>
+            </div>
+
+            <div className={sectionClass('docking')}>
+              <div className="settings-section-title">
+                <SectionIcon name="docking" />
+                Docking
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Anchor position</label>
+                <div className="anchor-grid">
+                  {ANCHOR_CELLS.map((anchor) => (
+                    <button
+                      key={anchor}
+                      type="button"
+                      className={`anchor-cell${s.windowAnchor === anchor ? ' anchor-cell--on' : ''}`}
+                      aria-label={ANCHOR_LABELS[anchor]}
+                      aria-pressed={s.windowAnchor === anchor}
+                      title={ANCHOR_LABELS[anchor]}
+                      onClick={() => set('windowAnchor', anchor)}
+                    >
+                      <span className="anchor-dot" />
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className="capture-btn"
+                  style={{ alignSelf: 'flex-start', marginTop: 8 }}
+                  onClick={() => set('windowAnchor', 'free')}
+                  disabled={s.windowAnchor === 'free'}
+                >
+                  {s.windowAnchor === 'free' ? 'Free — drag it anywhere' : 'Unpin'}
+                </button>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Parks Hue in a fixed corner of whichever screen it is on, clear of the taskbar,
+                  and puts it back there if your displays change. Dragging the window releases the
+                  anchor — your position is remembered either way, including across restarts.
+                </span>
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Edge margin</label>
+                <div className="range-row">
+                  <input
+                    type="range"
+                    min={0}
+                    max={64}
+                    step={4}
+                    value={s.windowAnchorMargin}
+                    onChange={(e) => set('windowAnchorMargin', Number(e.target.value))}
+                  />
+                  <span className="range-value">{s.windowAnchorMargin}px</span>
+                </div>
+              </div>
+            </div>
+
+            <div className={sectionClass('appearance')}>
+              <div className="settings-section-title">
+                <SectionIcon name="appearance" />
+                Appearance
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Window transparency</label>
+                <div className="range-row">
+                  <input
+                    type="range"
+                    min={0.4}
+                    max={1}
+                    step={0.05}
+                    value={s.windowOpacity}
+                    onChange={(e) => {
+                      const v = Number(e.target.value)
+                      set('windowOpacity', v)
+                      // Live preview — apply immediately so the slider is tangible.
+                      document.documentElement.style.setProperty('--bg-alpha', String(v))
+                    }}
+                  />
+                  <span className="range-value">{Math.round(s.windowOpacity * 100)}%</span>
+                  {/*
                   Settings is opaque now, so the slider can no longer be
                   previewed by looking through the pane at the desktop. This
                   swatch is the replacement, and it is the better test: it shows
@@ -2611,23 +2844,36 @@ export function Settings({
                   stands in for an arbitrary background rather than whichever
                   one happens to be behind the window right now.
                 */}
-                <span
-                  className="opacity-preview"
-                  title={`Preview at ${Math.round(s.windowOpacity * 100)}%`}
-                  aria-hidden="true"
-                >
-                  <span className="opacity-preview-fill" style={{ opacity: s.windowOpacity }} />
+                  <span
+                    className="opacity-preview"
+                    title={`Preview at ${Math.round(s.windowOpacity * 100)}%`}
+                    aria-hidden="true"
+                  >
+                    <span className="opacity-preview-fill" style={{ opacity: s.windowOpacity }} />
+                  </span>
+                </div>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  How opaque the floating window is. Lower lets more of the desktop show through.
+                  Settings itself stays solid regardless, so your keys and notes are always
+                  readable.
                 </span>
               </div>
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                How opaque the floating window is. Lower lets more of the desktop show through.
-                Settings itself stays solid regardless, so your keys and notes are always readable.
-              </span>
             </div>
           </div>
         </div>
 
         <div className="drawer-footer">
+          {/*
+            The pane shows one category at a time now, so unsaved work can be
+            in a section that is not on screen. Saying so beside the button is
+            what keeps "Save settings" from looking like it applies only to
+            what is visible.
+          */}
+          {/* Always rendered, text swapped — a note that appears and disappears
+              would shift the button under the cursor at the moment it is aimed at. */}
+          <span className="drawer-footer-note">
+            {dirty ? 'Unsaved changes' : 'Everything is saved'}
+          </span>
           <button className={`save-btn${saved ? ' save-btn--saved' : ''}`} onClick={save}>
             {saved ? 'Saved' : 'Save settings'}
           </button>

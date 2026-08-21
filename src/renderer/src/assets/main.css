@@ -923,20 +923,433 @@
   font-size: 15px;
 }
 
-.drawer-body {
+/* ── Categorised settings: rail + pane ──
+
+   What this replaces, and why.
+
+   The body used to be `repeat(auto-fit, minmax(300px, 1fr))` over all fourteen
+   sections. An auto-fit grid packs by what fits, so it had no opinion about
+   what belonged beside what: Stealth sat next to Transcription, the column
+   count changed as the window was resized, and finding a setting meant reading
+   every heading. Nothing was missing — it was unfindable, which for a settings
+   pane is the same failure.
+
+   Now: a rail of six categories, one category's sections in the pane at a time,
+   and a search field for the case categories cannot serve — when you remember
+   the word "hotkey" but not that hotkeys live under Window. */
+.drawer-split {
   flex: 1;
-  overflow-y: auto;
-  padding: 20px 24px;
-  /* Full width would otherwise stretch one column of fields across the whole
-     window. Flow the sections into columns instead, and let each section keep
-     its own natural height rather than stretching to match its row. */
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  align-content: start;
-  align-items: start;
-  gap: 22px 28px;
+  /* Fixed rail, fluid pane. `minmax(0, 1fr)` and not `1fr`: a bare `1fr` floors
+     at min-content, so one long unbroken string in a section — an API key, a
+     pasted URL — would push the pane wider than the drawer and take the rail
+     off screen with it. */
+  grid-template-columns: 178px minmax(0, 1fr);
+  min-height: 0;
+}
+
+.settings-nav {
+  border-right: 1px solid var(--border);
+  padding: 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* A grid item's default `min-height: auto` refuses to shrink below its
+     content, so without this the rail would push the row taller than the
+     drawer and scroll the whole pane instead of itself. */
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.settings-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px 8px 14px;
+  border: none;
+  border-radius: var(--r-menu);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  /* Transform and colour only — both compositor-friendly, so the rail stays
+     smooth while a section behind it is mid-ingest. */
+  transition:
+    background 200ms var(--ease-out),
+    color 200ms var(--ease-out);
+}
+.settings-nav-item svg {
+  flex-shrink: 0;
+}
+.settings-nav-item:hover {
+  background: var(--accent-tint);
+  color: var(--text);
+}
+.settings-nav-item:active {
+  transform: translateY(1px);
+}
+.settings-nav-item:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: -2px;
+}
+
+.settings-nav-item--active {
+  background: var(--accent-tint-strong);
+  color: var(--text);
+  font-weight: 600;
+}
+/* The selection mark: a bar on the leading edge, which survives at a glance in
+   a way a background tint alone does not on a translucent surface. */
+.settings-nav-item--active::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  /* Centred on the row rather than sized to it: a full-height bar reads as a
+     border on the button, a short one reads as a marker beside it. */
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+
+/* Dimmed, not hidden, while a search is running: a category with no hits is
+   information — it says "not in here" — and removing the row would make the
+   rail jump every keystroke. */
+.settings-nav-item--dim {
+  opacity: 0.34;
+}
+
+/* The unfinished-setup mark. A dot, not a count: the number of remaining steps
+   is on the panel itself, and a badge that says "3" invites reading it as
+   unread mail. */
+.settings-nav-dot {
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+.drawer-body {
+  /* `flex: 1` is still here for the one place this class is used outside the
+     split — the "Loading…" pane, which is a direct flex child of `.drawer`.
+     Flex properties are inert on a grid item, so it costs nothing here. */
+  flex: 1;
+  /* Same reason as `.settings-nav` above: it is a grid item now, and one long
+     section would otherwise stretch the row rather than scroll inside it. */
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 24px 28px;
+  /* One column, and a reading measure on it. Fourteen sections in a masonry
+     was the old problem; the fix is not a narrower masonry, it is one column
+     of one category. `min(680px, 100%)` keeps field labels near their inputs
+     on a wide window instead of stranding them a screen apart. */
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
+}
+.drawer-body > * {
+  width: min(680px, 100%);
+}
+
+/* The category heading above its sections. Sentence case, and it carries the
+   blurb so a category explains itself before anything in it is read. */
+.settings-pane-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  /* Optically larger below than above: the heading belongs to what follows it. */
+  margin-bottom: -6px;
+}
+.settings-pane-head h3 {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.settings-pane-head p {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  max-width: 58ch;
+  text-wrap: pretty;
+}
+
+/* Search. Sits in the header beside the title, because a filter that scrolls
+   away with the content is a filter nobody finds twice. */
+.settings-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  max-width: 260px;
+  margin-left: auto;
+}
+.settings-search svg {
+  position: absolute;
+  left: 9px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.settings-search input {
+  width: 100%;
+  padding: 6px 26px 6px 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  transition:
+    border-color 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out);
+}
+.settings-search input::placeholder {
+  color: var(--text-muted);
+}
+/* Chromium draws its own clear affordance inside `type="search"`, which landed
+   on top of `.settings-search-clear` as a second, differently-styled × . One
+   control, drawn by us. */
+.settings-search input::-webkit-search-cancel-button,
+.settings-search input::-webkit-search-decoration {
+  appearance: none;
+  display: none;
+}
+.settings-search input:focus {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.settings-search-clear {
+  position: absolute;
+  right: 6px;
+  display: flex;
+  padding: 2px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 200ms var(--ease-out);
+}
+.settings-search-clear:hover {
+  color: var(--text);
+}
+
+/* The secondary button — New, Duplicate, Rename.
+
+   It had no rule at all. The class was used in the Applications section and
+   every one of those buttons rendered as a raw browser control: a white
+   bevelled box with black label text, sitting inside a dark pane. Exactly the
+   failure `.link-btn` above was written to fix, repeated.
+
+   Ink is the primary fill (see base.css), so a secondary action is a tinted
+   outline: present enough to be a button, quiet enough not to compete with
+   Save. */
+.settings-btn {
+  padding: 5px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 200ms var(--ease-out),
+    border-color 200ms var(--ease-out),
+    color 200ms var(--ease-out),
+    transform 120ms var(--ease-out);
+}
+.settings-btn:hover:not(:disabled) {
+  background: var(--accent-tint);
+  border-color: var(--accent-border);
+}
+.settings-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.settings-btn:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+.settings-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* The delete affordance in a list row. Square-ish rather than a pill so it
+   reads as an icon target, and it only takes the danger colour on hover —
+   a row of permanently red crosses makes a list look like a list of errors. */
+.settings-btn--danger {
+  padding: 4px 8px;
+  border-color: var(--border);
+  color: var(--text-muted);
+  border-radius: var(--r-menu);
+}
+.settings-btn--danger:hover:not(:disabled) {
+  background: var(--danger-tint);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+
+/* Radio controls in the Applications list.
+
+   `accent-color` alone would tint the native control but leaves its size and
+   ring at the OS default, which on Windows is a chunky blue-white disc that
+   belongs to no palette. Drawn instead, from the same tokens as everything
+   else. */
+.settings-radio {
+  appearance: none;
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: transparent;
+  cursor: pointer;
+  display: grid;
+  place-content: center;
+  transition:
+    border-color 200ms var(--ease-out),
+    background 200ms var(--ease-out);
+}
+.settings-radio::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  transform: scale(0);
+  transition: transform 180ms var(--ease-out);
+}
+.settings-radio:checked {
+  border-color: var(--accent-border);
+}
+.settings-radio:checked::before {
+  transform: scale(1);
+}
+.settings-radio:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.settings-radio:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+.settings-radio:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* One row of the Applications list. Selected reads as a raised surface, not as
+   a border — a bordered row inside a bordered card is two frames around one
+   thing. */
+.settings-app-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: var(--r-card-s);
+  transition: background 200ms var(--ease-out);
+}
+.settings-app-row:hover {
+  background: var(--accent-tint);
+}
+.settings-app-row--active {
+  background: var(--bg-card);
+}
+.settings-app-row--active:hover {
+  background: var(--bg-card);
+}
+.settings-app-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1.45;
+}
+.settings-app-meta {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* Nothing matched. A composed answer rather than a blank pane — it names what
+   was searched for and offers the way out, which a bare "no results" does not. */
+.settings-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 34px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.settings-empty strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Sections outside the current category, or filtered out by a search.
+
+   `display: none` rather than unmounting: several sections hold live work —
+   an ingest in progress, a detected model list, a half-typed gap answer — and
+   while that state lives in the parent today, a hidden-not-destroyed section
+   is the version that stays correct if it ever stops.
+
+   Doubled selector, and it is load-bearing rather than stylistic. `.settings-
+   section { display: flex }` is declared further down this file, and a single
+   class here ties on specificity — so the later `flex` won and every section
+   rendered in every category. The pane's heading changed on a rail click and
+   nothing under it did. Matching the element twice puts this at (0,2,0) so it
+   wins regardless of where either rule sits, which is what stops the next
+   reshuffle of this file quietly breaking navigation again. */
+.settings-section.settings-section--hidden {
+  display: none;
+}
+
+/* Narrow windows: the rail becomes a scrollable strip across the top. Below
+   about 620px a 178px rail is a quarter of the width, which is a worse trade
+   than losing the labels' vertical stack. */
+@media (max-width: 620px) {
+  .drawer-split {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .settings-nav {
+    flex-direction: row;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 10px;
+    gap: 4px;
+    overflow-x: auto;
+  }
+  .settings-nav-item {
+    white-space: nowrap;
+  }
+  .settings-nav-item--active::before {
+    display: none;
+  }
+  .settings-search {
+    max-width: 150px;
+  }
 }
 .drawer-body::-webkit-scrollbar {
   width: 3px;
@@ -950,6 +1363,31 @@
   padding: 14px 20px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Sits before the Save button and pushes it right. Muted rather than a warning
+   colour: unsaved work is the normal state of a form being filled in, not a
+   problem to be alarmed about. */
+.drawer-footer-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-right: auto;
+}
+
+/* The save button was full-width when it was the only thing down here. It now
+   shares the row with the status note, so it takes the width it needs and sits
+   where a primary action belongs — at the end of the row. */
+.drawer-footer .save-btn {
+  width: auto;
+  min-width: 156px;
+  padding: 10px 22px;
+}
+.drawer-footer .save-btn:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
 }
 
 /* ── Settings form ── */
