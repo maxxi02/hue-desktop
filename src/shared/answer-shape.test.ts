@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { answerShapeFor, LABELLED_SHAPE } from './answer-shape.ts'
+import { answerShapeFor, ASSESSMENT_SHAPE, LABELLED_SHAPE } from './answer-shape.ts'
 
 test('practice mode gets the labelled sections', () => {
   assert.equal(answerShapeFor('practice'), LABELLED_SHAPE)
@@ -118,4 +118,36 @@ test('the story is optional, and never something part one leans on', () => {
 test('an unfitting story is omitted rather than bent', () => {
   assert.match(LABELLED_SHAPE, /omit "## scenario" entirely/)
   assert.match(LABELLED_SHAPE, /[Nn]ever invent one/)
+})
+
+// Assessment is not an InterviewMode, so it is exported directly and the dash
+// test above cannot reach it through answerShapeFor. Checked here explicitly:
+// the rule is about this file, not about that function.
+test('the assessment shape contains no em dash or en dash either', () => {
+  assert.doesNotMatch(ASSESSMENT_SHAPE, /[—–]/)
+})
+
+test('the assessment shape names all four markers', () => {
+  for (const marker of ['## approach', '## steps', '## code', '## complexity']) {
+    assert.ok(ASSESSMENT_SHAPE.includes(marker), `missing ${marker}`)
+  }
+})
+
+// LABELLED_SHAPE ends with "never write a heading, a label, a number, or a
+// bullet of your own". Steps are the one exception and must say so, or the two
+// instructions fight and the model picks one.
+test('the assessment shape permits numbering, which every other shape forbids', () => {
+  assert.match(ASSESSMENT_SHAPE, /number/i)
+})
+
+test('the assessment shape keeps code out of the spoken part', () => {
+  assert.match(ASSESSMENT_SHAPE, /never read aloud/i)
+})
+
+// Assessment must be reachable from every interview mode: someone in star mode
+// who is asked to design a function still needs the code answer.
+test('assessment is not folded into the interview modes', () => {
+  for (const mode of ['practice', 'star', 'live'] as const) {
+    assert.notEqual(answerShapeFor(mode), ASSESSMENT_SHAPE)
+  }
 })

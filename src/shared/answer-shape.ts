@@ -88,6 +88,39 @@ const LIVE_SHAPE =
   'Keep it under about 40 words, which is roughly 20 seconds said out loud. ' +
   'One or two sentences is usually right. If the honest answer is a single line, stop there.'
 
+/**
+ * The shape of a code answer.
+ *
+ * Exported directly rather than reached through `answerShapeFor`, because
+ * assessment is not an interview mode. It is orthogonal to practice, star and
+ * live: someone in star mode who is asked to design a function still needs the
+ * code answer. Folding it into that switch would make the two settings fight.
+ *
+ * Explanation leads and code supports, because the user is talking an
+ * interviewer through a design rather than reading syntax aloud. The steps are
+ * what gets said; the code is a prop they glance at.
+ */
+export const ASSESSMENT_SHAPE =
+  'Write the response in up to four parts. Each part begins with a marker alone on its own line. ' +
+  'PART ONE begins with "## approach" and is one sentence naming the shape of the answer, said ' +
+  'first so the interviewer knows where this is going. Keep it under about 25 words. ' +
+  'PART TWO begins with "## steps" and holds the ordered beats of the approach, each one a short ' +
+  'sentence the user can say on its own while pointing at the code. Number them 1., 2., 3. This ' +
+  'is the one place a number is wanted: it is what lets someone glance down, find their place, ' +
+  'and carry on talking. Keep the whole part under about 120 words. ' +
+  'PART THREE is optional and begins with "## code". It holds one compact block in whatever ' +
+  'language the question implies. Write real, working code and keep it short enough to read at a ' +
+  'glance. This part is never read aloud, so it is the only place in the response where ' +
+  'punctuation, symbols and indentation are for the eye rather than the voice. ' +
+  'PART FOUR is optional and begins with "## complexity" and gives time and space cost in under ' +
+  'about 20 words. Include it only when the question is about an algorithm. ' +
+  'Omit "## code" if the question is about approach rather than implementation, and omit ' +
+  '"## complexity" if the question does not turn on cost. A part with nothing real to put in it ' +
+  'is an instruction to invent something. ' +
+  'Outside the code part, write plain speakable prose in the first person, and never write a ' +
+  'heading, a label, or a bullet of your own. The app strips the markers before the user sees ' +
+  'them, so never mention them in the prose.'
+
 export function answerShapeFor(mode: InterviewMode): string {
   switch (mode) {
     case 'star':
