@@ -23,7 +23,7 @@ import {
 } from '../../../shared/job-spec'
 import { parseJobBrief } from '../../../shared/job-brief'
 import { clampCursor, nextAfterAnswered, stepCursor } from '../lib/gapCursor'
-import { isSettingsDirty } from '../lib/settingsDirty'
+import { describeUnsaved, isSettingsDirty } from '../lib/settingsDirty'
 import { displayVersion } from '../../../shared/version'
 import {
   fieldsOf,
@@ -811,7 +811,10 @@ export function Settings({
    * the answer can have changed and there is no second copy of the truth to go
    * stale — which is why `pristine` stopped being a ref.
    */
-  const dirty = s !== null && pristine !== null && isSettingsDirty(s, pristine, gapDrafts)
+  const unsaved =
+    s !== null && pristine !== null
+      ? describeUnsaved(s, pristine, gapDrafts)
+      : { settings: false, gapAnswer: false, any: false }
 
   useEffect(() => {
     window.hue.settings.get().then(markPersisted)
@@ -1486,16 +1489,36 @@ export function Settings({
           // renderer in Electron, which would freeze the pane it is asking about.
           <div className="unsaved-guard" role="alertdialog" aria-label="Unsaved changes">
             <div className="unsaved-guard-body">
-              <strong>You have unsaved changes.</strong>
+              {/*
+                Which kind of work is outstanding decides both the words and the
+                buttons. Save writes settings and nothing else, so offering
+                "Save and close" against a typed gap answer was a button that
+                claimed to save the work and then destroyed it.
+              */}
+              <strong>
+                {unsaved.gapAnswer && !unsaved.settings
+                  ? 'Your answer hasn’t been sent yet.'
+                  : 'You have unsaved changes.'}
+              </strong>
               <span>
-                Closing now would discard them, including any answer you have typed but not sent.
+                {unsaved.gapAnswer && !unsaved.settings
+                  ? 'Send it with Next, or close and lose what you typed. Saving settings won’t keep it — an answer becomes a story only once it’s sent.'
+                  : unsaved.gapAnswer
+                    ? 'Closing now would discard them. Note that Save covers the settings only: the gap answer you typed has to be sent with Next, or it goes too.'
+                    : 'Closing now would discard them.'}
               </span>
               <div className="unsaved-guard-actions">
-                <button type="button" className="icon-btn" onClick={() => void saveAndClose()}>
-                  Save and close
-                </button>
+                {/*
+                  Offered only when there is something Save can actually write.
+                  With a gap answer alone it is a lie, so it is not shown.
+                */}
+                {unsaved.settings && (
+                  <button type="button" className="icon-btn" onClick={() => void saveAndClose()}>
+                    {unsaved.gapAnswer ? 'Save settings and close' : 'Save and close'}
+                  </button>
+                )}
                 <button type="button" className="link-btn" onClick={discardAndClose}>
-                  Discard and close
+                  {unsaved.gapAnswer ? 'Discard the answer and close' : 'Discard and close'}
                 </button>
                 <button type="button" className="link-btn" onClick={() => setClosePending(false)}>
                   Keep editing
@@ -2906,7 +2929,11 @@ export function Settings({
           {/* Always rendered, text swapped — a note that appears and disappears
               would shift the button under the cursor at the moment it is aimed at. */}
           <span className="drawer-footer-note">
-            {dirty ? 'Unsaved changes' : 'Everything is saved'}
+            {unsaved.settings
+              ? 'Unsaved changes'
+              : unsaved.gapAnswer
+                ? 'Answer typed, not sent'
+                : 'Everything is saved'}
           </span>
           <button className={`save-btn${saved ? ' save-btn--saved' : ''}`} onClick={save}>
             {saved ? 'Saved' : 'Save settings'}
