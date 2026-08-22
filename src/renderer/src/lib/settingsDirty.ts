@@ -28,13 +28,50 @@ import type { HueSettings } from '../../../shared/types'
  * reports unsaved changes for work that is already on disk and the guard becomes
  * something the user learns to dismiss.
  */
+/**
+ * The two kinds of unsaved work, reported separately.
+ *
+ * They are separate because **only one of them can be saved by Save.** Settings
+ * are written by `hue:settings:set`; a gap answer is not a setting at all, it is
+ * a model call that turns spoken words into a story. Collapsing both into one
+ * boolean produced a guard that could never be satisfied: a typed gap draft kept
+ * it armed, pressing Save did nothing about it, and the dialog reappeared on
+ * every close attempt.
+ *
+ * It also hid a real loss. The dialog's "Save and close" ran the settings save
+ * and then closed, destroying the typed answer, while the copy above it said
+ * that button saved unsaved work.
+ *
+ * Counting the gap draft is still right — a story someone just composed from
+ * memory is the most expensive thing in this pane to lose. What was wrong was
+ * being unable to say which kind of work was outstanding, so the dialog could
+ * not offer an action that covered it.
+ */
+export interface UnsavedWork {
+  /** Edits to the settings form. Save writes these. */
+  settings: boolean
+  /** A gap answer typed but not sent. Save does NOT write this. */
+  gapAnswer: boolean
+  /** Either kind. What the close guard keys on. */
+  any: boolean
+}
+
+export function describeUnsaved(
+  current: HueSettings,
+  pristine: HueSettings,
+  gapDrafts: Record<string, string>
+): UnsavedWork {
+  const gapAnswer = Object.values(gapDrafts).some((draft) => draft.trim().length > 0)
+  const settings = !sameSettings(current, pristine)
+  return { settings, gapAnswer, any: settings || gapAnswer }
+}
+
 export function isSettingsDirty(
   current: HueSettings,
   pristine: HueSettings,
   gapDrafts: Record<string, string>
 ): boolean {
-  if (Object.values(gapDrafts).some((draft) => draft.trim().length > 0)) return true
-  return !sameSettings(current, pristine)
+  return describeUnsaved(current, pristine, gapDrafts).any
 }
 
 /**
