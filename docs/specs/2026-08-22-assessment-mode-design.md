@@ -141,27 +141,43 @@ two instructions to fight: the numbering is what lets someone glance down,
 find where they were, and carry on talking. Every other part of the assessment
 answer keeps the no-ornament rule.
 
-### 5. The `## code` hazard
+### 5. What a code beat breaks in `answer-beats.ts`
 
-`answer-beats.ts` splits on a line that is exactly a known marker. A code block
-can legally contain such a line:
+Three problems, established by running the module's own regexes against real
+code rather than by reading them. They are listed worst-first, and the worst one
+is not the one this section originally claimed.
 
-```python
-## normalise the route key before hashing
-def key(req): ...
+**a. `body.trim()` dedents the first line of every indented block.** `parseBeats`
+flushes with `buffer.join('\n').trim()`. On
+
+```
+    def key(req):
+        return req.path
 ```
 
-Under today's parser that comment starts a new beat and the answer shatters
-mid-render, while the user is reading it out loud. Two changes:
+that returns `"def key(req):\n        return req.path"` — first line dedented,
+second untouched. The block is corrupted, and it is corrupted _every time_, not
+on an unusual input. Fix: trim a code beat's body by line-stripping leading and
+trailing **blank lines** only, never leading whitespace on a content line.
 
-- The `## code` beat runs to the **next known label at column zero**, and lines
-  inside it are never re-examined for markers.
-- The streaming-safety rule already in that module — withhold a trailing line
-  that could still become a marker — must not apply inside a code beat, or the
-  last line of code is withheld until the answer completes.
+**b. Trailing comment lines flicker while streaming.** `withholdPartialMarker`
+holds back an unterminated last line that could still become a marker, and
+`PARTIAL_MARKER` (`/^#{1,2}[ \t]*[a-z]*$/i`) matches `# key` and `# TODO`. So a
+one-word comment at the end of the buffer vanishes and reappears as the next
+token lands. Fix: suppress the withholding rule once inside a code beat.
 
-Both get tests. This is the single most likely thing to break, because it only
-fails on inputs a fixture writer would not naturally think to write.
+**c. An indented exact-label line splits the beat.** `MARKER` is tested against
+`line.trim()`, so `    ## code` inside a block matches and starts a new beat.
+Narrow — it needs a comment that is exactly one of the four label words — but
+free to prevent. Fix: inside a code beat, only a marker at column zero closes it.
+
+Worth recording what is _not_ a hazard, so nobody spends a fix on it: `MARKER`
+requires a single word, so `## normalise the route key before hashing` never
+matches, and `#!/usr/bin/env node` and `# TODO: fix` do not either. An earlier
+draft of this spec claimed otherwise.
+
+All three get tests. (a) is the one that would otherwise ship, because a fixture
+writer naturally writes unindented code.
 
 ### 6. Grounding gains a third state
 
