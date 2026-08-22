@@ -80,8 +80,15 @@ test('a marker with no body yet emits nothing', () => {
   assert.deepEqual(parseBeats('## what\n'), [])
 })
 
-test('the vocabulary is exactly the five the prompt names', () => {
-  assert.deepEqual([...BEAT_LABELS], ['what', 'why', 'how', 'when', 'scenario'])
+// Still closed, and now spanning two kinds of answer. The list is pinned rather
+// than counted so that adding a marker to a prompt without adding it here, or
+// the reverse, fails loudly: a marker the prompt asks for that the parser does
+// not know sits on screen as literal "## " text mid-answer.
+test('the vocabulary is exactly the markers the two prompts name', () => {
+  assert.deepEqual(
+    [...BEAT_LABELS],
+    ['what', 'why', 'how', 'when', 'scenario', 'approach', 'steps', 'code', 'complexity']
+  )
 })
 
 // The margin tag is what the user reads mid-interview, and for the story it has
@@ -97,4 +104,72 @@ test('every label has display text', () => {
   for (const label of BEAT_LABELS) {
     assert.ok(BEAT_LABEL_TEXT[label]?.length > 0, `${label} has no display text`)
   }
+})
+
+const CODE_ANSWER =
+  '## approach\nCache the render and stream the shell first.\n' +
+  '## steps\n1. Key the cache on the route.\n2. Stream the shell.\n' +
+  '## code\n' +
+  'function render(req) {\n' +
+  '    const key = routeKey(req)\n' +
+  '    return cache.get(key)\n' +
+  '}\n' +
+  '## complexity\nO(1) lookup, O(n) render.'
+
+test('the four assessment labels are recognised', () => {
+  const beats = parseBeats(CODE_ANSWER)
+  assert.deepEqual(
+    beats.map((b) => b.label),
+    ['approach', 'steps', 'code', 'complexity']
+  )
+})
+
+test('a code beat keeps the indentation of its first line', () => {
+  // parseBeats used to flush with .trim(), which strips leading whitespace from
+  // the START of the joined body, i.e. the first line only. The result was a
+  // block whose first line was dedented and whose others were not.
+  const beats = parseBeats('## code\n    def key(req):\n        return req.path')
+  const code = beats.find((b) => b.label === 'code')
+  assert.ok(code)
+  assert.equal(code.text, '    def key(req):\n        return req.path')
+})
+
+test('a code beat still drops surrounding blank lines', () => {
+  const beats = parseBeats('## code\n\n\nconst a = 1\n\n\n')
+  assert.equal(beats.find((b) => b.label === 'code')?.text, 'const a = 1')
+})
+
+test('a one-word comment at the end of a code beat does not flicker', () => {
+  // withholdPartialMarker holds back an unterminated last line that could still
+  // become a marker, and PARTIAL_MARKER matches "# key". Inside a code beat
+  // that made the last line vanish and reappear as tokens arrived.
+  const beats = parseBeats('## code\nconst a = 1\n# key')
+  assert.equal(beats.find((b) => b.label === 'code')?.text, 'const a = 1\n# key')
+})
+
+test('an unknown trailing marker does not re-arm withholding inside code', () => {
+  // The guard must track whether the LAST KNOWN label was code. Scanning for the
+  // last '##' line of any word would see '## TODO' here, conclude the buffer is
+  // no longer in a code beat, and start withholding the comment again.
+  const beats = parseBeats('## code\nconst a = 1\n## TODO\n# key')
+  assert.equal(beats.find((b) => b.label === 'code')?.text, 'const a = 1\n## TODO\n# key')
+})
+
+test('an indented label line inside code does not split the beat', () => {
+  const beats = parseBeats('## code\nif (x) {\n    ## code\n}')
+  assert.equal(beats.length, 1)
+  assert.equal(beats[0].text, 'if (x) {\n    ## code\n}')
+})
+
+test('a marker at column zero still closes a code beat', () => {
+  const beats = parseBeats('## code\nconst a = 1\n## complexity\nO(1).')
+  assert.deepEqual(
+    beats.map((b) => b.label),
+    ['code', 'complexity']
+  )
+})
+
+test('prose beats are unaffected by the code-beat rules', () => {
+  const beats = parseBeats('## what\n  Leading space is still trimmed here.')
+  assert.equal(beats[0].text, 'Leading space is still trimmed here.')
 })
