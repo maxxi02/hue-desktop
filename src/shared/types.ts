@@ -190,6 +190,19 @@ export interface HueSettings {
    */
   jobBriefJson: string
   /**
+   * Assessment mode: answer coding questions with steps and code instead of a
+   * spoken story. Armed, not forced — Hue still classifies each question, so one
+   * session mixes both kinds because one interview does.
+   *
+   * Off by default because arming it changes which provider is billed, and a
+   * mode that costs money is one the user should enter on purpose.
+   */
+  assessmentEnabled: boolean
+  /** Provider for assessment answers. `''` means "same as drafting". */
+  assessmentProvider: LlmProvider | ''
+  /** Global trigger that arms/disarms assessment mode. Same encoding as the other hotkeys. */
+  assessmentHotkey: string
+  /**
    * Saved applications — `Target[]` as JSON. See `shared/targets.ts`.
    *
    * The fields above (`jobTitle` through `jobBriefJson`, plus the two résumé
@@ -324,6 +337,9 @@ export const DEFAULT_SETTINGS: HueSettings = {
   jobDescription: '',
   jobSpecJson: '',
   jobBriefJson: '',
+  assessmentEnabled: false,
+  assessmentProvider: '',
+  assessmentHotkey: '',
   // Empty rather than a seeded list: `ensureTargets` adopts whatever is already
   // in the fields on first run, which is the only behaviour that upgrades an
   // existing install without inventing a name for work it did not do.

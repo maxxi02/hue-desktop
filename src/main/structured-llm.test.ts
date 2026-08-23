@@ -58,3 +58,33 @@ test('MissingApiKey names the provider and points at Settings, not at the networ
   assert.equal(err.provider, 'Anthropic')
   assert.match(err.message, /Settings/)
 })
+
+/**
+ * A third role, for the same reason there was a second.
+ *
+ * Drafting wants the cheapest, fastest model: the user reshapes the prose as
+ * they speak it. Code is the opposite trade, where a plausible-looking wrong
+ * answer costs more than a slow one, so assessment can be pointed somewhere
+ * stronger without making every behavioural answer pay for it.
+ */
+test('the assessment role falls back to drafting when unset', () => {
+  assert.equal(providerFor('assessment', 'groq', '', ''), 'groq')
+})
+
+test('the assessment role uses its own provider when set', () => {
+  assert.equal(providerFor('assessment', 'groq', 'google', 'anthropic'), 'anthropic')
+})
+
+test('the assessment provider does not disturb the other two roles', () => {
+  assert.equal(providerFor('drafting', 'groq', 'google', 'anthropic'), 'groq')
+  assert.equal(providerFor('ingest', 'groq', 'google', 'anthropic'), 'google')
+})
+
+/**
+ * The parameter is optional, so every existing three-argument call keeps its
+ * meaning. Pinned because the fallback is what stops an un-migrated settings
+ * record from routing assessment to an empty provider.
+ */
+test('omitting the assessment provider entirely still falls back to drafting', () => {
+  assert.equal(providerFor('assessment', 'groq', 'google'), 'groq')
+})

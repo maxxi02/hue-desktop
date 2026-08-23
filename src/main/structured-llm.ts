@@ -268,13 +268,28 @@ export const PROVIDER_BASE_URLS: Record<OpenAiCompatProvider, string> = {
  * story-mining call is 11-12k tokens in one request. Groq's Developer tier is
  * unavailable to buy, so this is not a wait-and-it-resolves problem. `''` means
  * "same as drafting", which is the default and right for every other provider.
+ *
+ * Assessment is the third role, and it is a different kind of reason from the
+ * first two. Ingest is split because Groq physically cannot run it; assessment
+ * is split because the trade reverses. Drafting wants the cheapest and fastest
+ * model, since the user reshapes the prose as they say it out loud. Code is the
+ * opposite: a plausible-looking wrong answer costs more than a slow one, so this
+ * role can be pointed somewhere stronger without making every behavioural answer
+ * pay for it.
+ *
+ * `assessmentProvider` is optional so that every existing three-argument call
+ * keeps its exact meaning, and so a settings record written before this field
+ * existed routes to drafting rather than to an empty provider.
  */
 export function providerFor(
-  role: 'drafting' | 'ingest',
+  role: 'drafting' | 'ingest' | 'assessment',
   llmProvider: LlmProvider,
-  ingestProvider: LlmProvider | ''
+  ingestProvider: LlmProvider | '',
+  assessmentProvider: LlmProvider | '' = ''
 ): LlmProvider {
-  return role === 'ingest' && ingestProvider ? ingestProvider : llmProvider
+  if (role === 'ingest' && ingestProvider) return ingestProvider
+  if (role === 'assessment' && assessmentProvider) return assessmentProvider
+  return llmProvider
 }
 
 /** Ollama's OpenAI-compatible surface hangs off the user's own host. */
@@ -394,10 +409,12 @@ const LOCAL_INGEST_TIMEOUT_MS = 10 * 60 * 1000
  * runtime into every `node --test` run of this module. Same reason
  * `job-spec-ingest.ts` defers its own imports.
  */
-export async function clientForSettings(role: 'drafting' | 'ingest'): Promise<LlmClient> {
+export async function clientForSettings(
+  role: 'drafting' | 'ingest' | 'assessment'
+): Promise<LlmClient> {
   const { getSettings } = await import('./settings')
   const s = getSettings()
-  const provider = providerFor(role, s.llmProvider, s.ingestProvider)
+  const provider = providerFor(role, s.llmProvider, s.ingestProvider, s.assessmentProvider)
 
   if (provider === 'anthropic') {
     if (!s.anthropicApiKey) throw new MissingApiKey('Anthropic')
