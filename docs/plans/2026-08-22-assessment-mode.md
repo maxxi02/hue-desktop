@@ -1213,7 +1213,7 @@ git commit -m "feat(assessment): a visible toggle and a global hotkey"
 - Consumes: everything above.
 - Produces: nothing.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `settingsNav.test.ts`:
 
@@ -1225,12 +1225,12 @@ test('assessment mode is findable by the words people use for it', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node --test src/renderer/src/lib/settingsNav.test.ts`
 Expected: FAIL — no `assessment` section is registered.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add to `SETTINGS_SECTIONS` in `settingsNav.ts`:
 
@@ -1247,7 +1247,7 @@ Add `'assessment'` to `SectionIconName` in `SectionIcon.tsx` with a glyph (two c
 
 Wrap the section in `className={sectionClass('assessment')}` like every other section.
 
-- [ ] **Step 4: Run the full suite and verify manually**
+- [x] **Step 4: Run the full suite and verify manually**
 
 Run: `npm run typecheck && npm run lint && npm test && npm run build`
 Expected: typecheck clean; lint shows only the pre-existing `_omitted` error in `memory-policy.test.ts`; suite green; build clean.
@@ -1262,7 +1262,7 @@ Then verify the whole feature end to end, which no unit test covers:
 6. Disarm. Confirm both questions behave as they did before this feature.
 7. Set the assessment provider to a text-only one, capture a screen. Confirm the fallback note appears rather than a silent downgrade.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npx prettier --write src/renderer/src/components/Settings.tsx src/renderer/src/lib/settingsNav.ts src/renderer/src/lib/settingsNav.test.ts src/renderer/src/components/SectionIcon.tsx
