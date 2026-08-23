@@ -37,6 +37,7 @@ export type SectionIconName =
   | 'answering'
   | 'docking'
   | 'appearance'
+  | 'assessment'
 
 /**
  * The shapes, on a 24 grid.
@@ -48,6 +49,15 @@ export type SectionIconName =
  * one was redrawn: Docking is a thumbtack, Appearance a droplet.
  */
 const GLYPHS: Record<SectionIconName, React.JSX.Element> = {
+  // Angle brackets — the universal mark for code, and the one glyph here that
+  // needs no explanation. Deliberately not a terminal prompt or a bug: this
+  // section is about answering questions about code, not about running it.
+  assessment: (
+    <>
+      <path d="M9 8l-4 4 4 4" />
+      <path d="M15 8l4 4-4 4" />
+    </>
+  ),
   // Stacked cards — several applications, one of them on top. The offset is the
   // whole point of the glyph: a single card would read as 'document'.
   applications: (

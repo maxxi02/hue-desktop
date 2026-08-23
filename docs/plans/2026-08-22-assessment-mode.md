@@ -1128,13 +1128,13 @@ git commit -m "feat(assessment): render a code beat verbatim"
 - Consumes: `assessmentEnabled`, `assessmentHotkey` (Task 5).
 - Produces: nothing.
 
-- [ ] **Step 1: Register the hotkey**
+- [x] **Step 1: Register the hotkey**
 
 In `hotkeys.ts`, add `assessmentHotkey` alongside `summonHotkey`, `startSessionHotkey` and `captureScreenHotkey`, using the identical encoding (accelerator string or `Mouse:<Button>`). On fire, flip `assessmentEnabled` in settings and notify the renderer over a new `hue:assessment:changed` event.
 
 In `ipc.ts`, add `next.assessmentHotkey !== prev.assessmentHotkey` to the existing condition that calls `applyHotkeys()`.
 
-- [ ] **Step 2: Add the chip**
+- [x] **Step 2: Add the chip**
 
 In the card header in `App.tsx`, render a small button showing the state:
 
@@ -1150,7 +1150,7 @@ In the card header in `App.tsx`, render a small button showing the state:
 </button>
 ```
 
-- [ ] **Step 3: Style it**
+- [x] **Step 3: Style it**
 
 ```css
 /* Armed state must be visible at a glance: this mode changes what every answer
@@ -1185,12 +1185,12 @@ In the card header in `App.tsx`, render a small button showing the state:
 }
 ```
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `npm run typecheck && npm run build`
 Expected: clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npx prettier --write src/renderer/src/App.tsx src/main/hotkeys.ts src/main/ipc.ts src/renderer/src/assets/main.css

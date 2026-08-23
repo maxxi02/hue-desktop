@@ -137,6 +137,13 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     keywords: 'speculative drafting latency speed draft early guess'
   },
   {
+    id: 'assessment',
+    category: 'interview',
+    title: 'Assessment mode',
+    keywords:
+      'coding code algorithm leetcode technical whiteboard hackerrank codepad complexity assessment'
+  },
+  {
     id: 'assistant',
     category: 'models',
     title: 'Assistant',

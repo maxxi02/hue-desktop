@@ -2819,6 +2819,69 @@ export function Settings({
               </div>
             </div>
 
+            <div className={sectionClass('assessment')}>
+              <div className="settings-section-title">
+                <SectionIcon name="assessment" />
+                Assessment mode
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Coding questions</label>
+                <button
+                  className="capture-btn"
+                  style={{ alignSelf: 'flex-start' }}
+                  onClick={() => set('assessmentEnabled', !s.assessmentEnabled)}
+                >
+                  {s.assessmentEnabled ? 'Turn off code answers' : 'Answer coding questions'}
+                </button>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Arms Hue to answer technical questions with an approach, numbered steps and a code
+                  block instead of a spoken story. It arms the mode rather than forcing it — Hue
+                  still decides per question, so one session mixes both kinds because one interview
+                  does. Code answers are never spoken aloud and are never drafted early. Companion
+                  mode only.
+                </span>
+
+                <label className="settings-label" style={{ marginTop: 10 }}>
+                  Assessment provider
+                </label>
+                <select
+                  className="settings-input"
+                  value={s.assessmentProvider}
+                  onChange={(e) =>
+                    set('assessmentProvider', e.target.value as HueSettings['assessmentProvider'])
+                  }
+                >
+                  <option value="">Same as drafting</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="ollama">Ollama (local)</option>
+                  <option value="google">Google</option>
+                  <option value="groq">Groq</option>
+                  <option value="mistral">Mistral</option>
+                  <option value="cohere">Cohere</option>
+                  <option value="deepseek">DeepSeek</option>
+                </select>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Worth pointing somewhere stronger than your drafting provider. Drafting wants the
+                  cheapest and fastest model, because you reshape the prose as you say it. Code is
+                  the opposite trade: a wrong answer that looks right costs more than a slow one. If
+                  the provider you pick cannot read images, screenshots fall back to the drafting
+                  model and Hue tells you when that happens.
+                </span>
+
+                <label className="settings-label" style={{ marginTop: 10 }}>
+                  Arm / disarm hotkey
+                </label>
+                <HotkeyRecorder
+                  value={s.assessmentHotkey}
+                  onChange={(v) => set('assessmentHotkey', v)}
+                />
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Works while another app is focused, so you can arm it the moment the interview
+                  turns technical without leaving the call.
+                </span>
+              </div>
+            </div>
+
             <div className={sectionClass('docking')}>
               <div className="settings-section-title">
                 <SectionIcon name="docking" />

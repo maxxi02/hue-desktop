@@ -92,3 +92,16 @@ test('each category can be found by searching its own label', () => {
     assert.ok(shown.size > 0, `searching "${word}" from ${c.id} found nothing`)
   }
 })
+
+/**
+ * Findable by what people actually call it.
+ *
+ * "Assessment mode" is our name for it; nobody searching for this feature will
+ * type that first. They will type the name of the thing they are about to sit,
+ * which is why the platform names are in the keywords alongside the concepts.
+ */
+test('assessment mode is findable by the words people use for it', () => {
+  for (const term of ['assessment', 'coding', 'algorithm', 'leetcode']) {
+    assert.ok(visibleSections('interview', term).has('assessment'), `no hit for ${term}`)
+  }
+})
