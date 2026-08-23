@@ -159,3 +159,36 @@ test('a session with no receipts is not reviewable, so start-then-stop files no 
   // signal the review exists to deliver, not an empty one.
   assert.equal(isReviewable([{ role: 'assistant', grounding: ungrounded }]), true)
 })
+
+/**
+ * A code answer must survive a restart, and the cost of it not doing so is not
+ * the receipt.
+ *
+ * `isStoredSession` validates with `turns.every(isReviewTurn)`, so a receipt the
+ * reviver does not recognise rejects the WHOLE session rather than that one
+ * turn. Before `general-knowledge` was named in `isGrounding`, a single coding
+ * question would therefore have silently deleted the entire interview from
+ * history on reload.
+ */
+test('a general-knowledge receipt round-trips instead of condemning the session', () => {
+  const general: Grounding = { kind: 'general-knowledge' }
+  const raw = JSON.stringify([
+    createSession(
+      [
+        { role: 'assistant', grounding: general },
+        { role: 'assistant', grounding: grounded }
+      ],
+      '2026-01-01T00:00:00.000Z',
+      'technical-round'
+    )
+  ])
+  const loaded = parseSessionHistory(raw)
+  assert.deepEqual(
+    loaded.map((s) => s.id),
+    ['technical-round']
+  )
+  assert.deepEqual(loaded[0].turns, [
+    { role: 'assistant', grounding: general },
+    { role: 'assistant', grounding: grounded }
+  ])
+})

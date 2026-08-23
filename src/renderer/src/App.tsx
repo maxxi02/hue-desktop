@@ -244,6 +244,21 @@ function Receipt({ grounding }: { grounding: Grounding }): React.JSX.Element {
       </div>
     )
   }
+  // Provenance, not a warning. A code answer was never a candidate for a story,
+  // so the ungrounded styling would be crying wolf: the user learns to ignore
+  // the mark here and then ignores it on the behavioural answers, where it is
+  // the whole point. Muted rather than red for exactly that reason.
+  if (grounding.kind === 'general-knowledge') {
+    return (
+      <div
+        className="receipt receipt--general"
+        title="This answer comes from general knowledge rather than your story bank, which is expected for a technical question."
+      >
+        <span className="receipt-mark" aria-hidden="true" />
+        General knowledge, not from your résumé
+      </div>
+    )
+  }
   return (
     <div
       className="receipt receipt--ungrounded"

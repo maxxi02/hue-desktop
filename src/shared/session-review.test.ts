@@ -89,7 +89,7 @@ test('an ungrounded turn never credits a story, however confident the model was 
 
 test('a session with zero grounded answers reports that honestly rather than as an empty success', () => {
   const review = reviewSession([asked, uncited(), asked, uncited()], bundle())
-  assert.deepEqual(review.answers, { total: 2, grounded: 0, ungrounded: 2 })
+  assert.deepEqual(review.answers, { total: 2, grounded: 0, ungrounded: 2, generalKnowledge: 0 })
   assert.deepEqual(review.competencies, [])
   assert.match(describeReview(review), /0 of 2/)
 })
@@ -99,7 +99,7 @@ test('user turns and half-finished answers are not counted as answers, or the fa
   // has none, and counting it as unanchored would blame the model for latency.
   const streaming: ReviewTurn = { role: 'assistant' }
   const review = reviewSession([asked, streaming, asked, cited(story())], bundle())
-  assert.deepEqual(review.answers, { total: 1, grounded: 1, ungrounded: 0 })
+  assert.deepEqual(review.answers, { total: 1, grounded: 1, ungrounded: 0, generalKnowledge: 0 })
 })
 
 test('competencies come only from cited stories, never from the bank at large', () => {
@@ -188,7 +188,7 @@ test('a session with no profile degrades to "no scorecard" rather than throwing 
   // moment a session ends — the one moment this app cannot afford an exception.
   const review = reviewSession([asked, uncited(), uncited()], null)
   assert.equal(review.hasProfile, false)
-  assert.deepEqual(review.answers, { total: 2, grounded: 0, ungrounded: 2 })
+  assert.deepEqual(review.answers, { total: 2, grounded: 0, ungrounded: 2, generalKnowledge: 0 })
   assert.deepEqual(review.storiesUsed, [])
   assert.deepEqual(review.storiesUnused, [])
   assert.deepEqual(review.openGapsUntouched, [])
@@ -203,4 +203,64 @@ test('an empty session is described as empty rather than as a perfect one', () =
 test('the summary leads with the anchored count, which is the sentence that judges the session', () => {
   const review = reviewSession([cited(story()), cited(failureStory), uncited()], bundle())
   assert.equal(describeReview(review), '2 of 3 answers from your bank · 3 competencies')
+})
+
+test('a general-knowledge answer is neither grounded nor a miss', () => {
+  // `ungrounded` is computed as `receipts.length - grounded.length`, a
+  // subtraction, so a general-knowledge receipt counts as ungrounded unless it
+  // is excluded from the population first. That would report a session of
+  // coding questions as a session of hallucinations, which teaches the user to
+  // ignore the indicator everywhere, including on the behavioural answers where
+  // it is load-bearing.
+  const review = reviewSession(
+    [
+      { role: 'assistant', grounding: { kind: 'general-knowledge' } },
+      { role: 'assistant', grounding: { kind: 'general-knowledge' } },
+      { role: 'assistant', grounding: { kind: 'ungrounded', claimedId: null } }
+    ],
+    null
+  )
+  assert.equal(review.answers.grounded, 0)
+  assert.equal(review.answers.ungrounded, 1)
+  assert.equal(review.answers.total, 1)
+  assert.equal(review.answers.generalKnowledge, 2)
+})
+
+/**
+ * A technical round is a real session, not an empty one.
+ *
+ * `describeReview` early-returns on `total === 0`, and `total` now counts only
+ * the answers a story could have anchored. A session of nothing but coding
+ * questions therefore reaches that branch with real work behind it, and calling
+ * it "No answers in this session" tells the user their interview did not happen.
+ */
+test('a session of only code answers is described by its code answers', () => {
+  const review = reviewSession(
+    [
+      { role: 'assistant', grounding: { kind: 'general-knowledge' } },
+      { role: 'assistant', grounding: { kind: 'general-knowledge' } }
+    ],
+    bundle()
+  )
+  assert.equal(review.answers.total, 0)
+  assert.equal(review.answers.generalKnowledge, 2)
+  assert.equal(describeReview(review), '2 code answers')
+})
+
+test('one code answer is described in the singular', () => {
+  const review = reviewSession(
+    [{ role: 'assistant', grounding: { kind: 'general-knowledge' } }],
+    bundle()
+  )
+  assert.equal(describeReview(review), '1 code answer')
+})
+
+/** Code answers sit beside the anchored count rather than replacing it. */
+test('a mixed session reports both the bank score and the code answers', () => {
+  const review = reviewSession(
+    [cited(story()), uncited(), { role: 'assistant', grounding: { kind: 'general-knowledge' } }],
+    bundle()
+  )
+  assert.match(describeReview(review), /1 of 2 answers from your bank/)
+  assert.match(describeReview(review), /1 code answer/)
 })

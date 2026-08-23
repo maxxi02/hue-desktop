@@ -336,6 +336,21 @@
   border-color: color-mix(in srgb, var(--danger) 22%, transparent);
 }
 
+/* General knowledge is provenance, not a verdict, so it takes the grounded
+   treatment rather than the danger one — and a muted dot rather than the accent,
+   because nothing was anchored and an accent mark would claim it was. A code
+   answer is outside the bank by design; styling it as a miss would train the
+   user to ignore the mark on the behavioural answers, where it is the whole
+   point. */
+.receipt--general {
+  color: var(--text-muted);
+  background: var(--bg-card);
+  border-color: var(--border);
+}
+.receipt--general .receipt-mark {
+  background: var(--text-muted);
+}
+
 /* Screen-capture thumbnail shown in a user bubble. */
 .bubble-capture {
   max-width: 240px;

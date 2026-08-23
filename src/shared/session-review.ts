@@ -75,10 +75,16 @@ export interface OpenGap {
 }
 
 export interface AnswerCounts {
-  /** Answers that carried a receipt. User turns and unfinished turns are excluded. */
+  /**
+   * Answers that carried a receipt and were measurable against the bank. User
+   * turns and unfinished turns are excluded, and so are code answers: `total` is
+   * the population the score is out of, not the number of things Hue said.
+   */
   total: number
   grounded: number
   ungrounded: number
+  /** Code answers, which no story could have anchored. Excluded from the score. */
+  generalKnowledge: number
 }
 
 export interface SessionReview {
@@ -131,11 +137,21 @@ export function reviewSession(
 
   // Counted before the bundle check so an install with no profile still gets an
   // honest "5 answers, none of them anchored" rather than a silent zero.
-  const grounded = receipts.filter((r) => r.kind === 'grounded')
+  //
+  // The exclusion has to happen before the subtraction. `ungrounded` is derived
+  // by taking grounded away from the population, so a code answer left in the
+  // population is silently a miss, and a technical round would report as a
+  // session of hallucinations.
+  const general = receipts.filter((r) => r.kind === 'general-knowledge')
+  // Scored against the bank only. A code answer was never a candidate for a
+  // story, so it is not a miss.
+  const scored = receipts.filter((r) => r.kind !== 'general-knowledge')
+  const grounded = scored.filter((r) => r.kind === 'grounded')
   const answers: AnswerCounts = {
-    total: receipts.length,
+    total: scored.length,
     grounded: grounded.length,
-    ungrounded: receipts.length - grounded.length
+    ungrounded: scored.length - grounded.length,
+    generalKnowledge: general.length
   }
 
   if (!bundle) {
@@ -203,12 +219,24 @@ export function reviewSession(
  * session was rehearsal or invention.
  */
 export function describeReview(review: SessionReview): string {
-  if (review.answers.total === 0) return 'No answers in this session'
+  // Said in full before the early return, because `total` no longer counts code
+  // answers. A technical round reaches the zero branch with real work behind it,
+  // and "No answers in this session" would tell the user their interview did not
+  // happen. Phrased as its own clause rather than folded into the bank score:
+  // the score is out of the answers a story could have anchored, and quietly
+  // widening its denominator would make a good session look worse the more code
+  // questions it contained.
+  const g = review.answers.generalKnowledge
+  const code = g > 0 ? `${g} code ${g === 1 ? 'answer' : 'answers'}` : null
+
+  if (review.answers.total === 0) return code ?? 'No answers in this session'
   if (!review.hasProfile) {
-    return `${review.answers.total} ${review.answers.total === 1 ? 'answer' : 'answers'} · no profile`
+    const n = review.answers.total
+    return [`${n} ${n === 1 ? 'answer' : 'answers'} · no profile`, code].filter(Boolean).join(' · ')
   }
   const parts = [`${review.answers.grounded} of ${review.answers.total} answers from your bank`]
   const c = review.competencies.length
   if (c > 0) parts.push(`${c} ${c === 1 ? 'competency' : 'competencies'}`)
+  if (code) parts.push(code)
   return parts.join(' · ')
 }

@@ -133,6 +133,11 @@ function isGrounding(value: unknown): value is Grounding {
   if (value.kind === 'ungrounded') {
     return value.claimedId === null || typeof value.claimedId === 'string'
   }
+  // No payload to check, so the tag is the whole receipt. It still has to be
+  // named here: an unrecognised kind condemns the entire stored record (see
+  // `isReviewTurn`), so omitting this would make one code answer silently
+  // discard the whole session's history on reload.
+  if (value.kind === 'general-knowledge') return true
   return false
 }
 

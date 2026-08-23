@@ -64,10 +64,20 @@ export interface ParsedResponse {
  * `claimedId` is kept on the ungrounded branch for diagnostics: a rising rate of
  * ids that are *nearly* bank entries is a prompt regression, and it is invisible
  * if this path discards what the model actually said.
+ *
+ * `general-knowledge` is not a third flavour of failure. `grounded` and
+ * `ungrounded` both presuppose the question was one the résumé could answer;
+ * this says it was outside the bank by design, which is the normal and correct
+ * state for a code answer.
+ *
+ * A union member rather than a flag on purpose: every consumer is forced by the
+ * compiler to say what it does with it, and none can quietly treat it as a
+ * hallucination.
  */
 export type Grounding =
   | { kind: 'grounded'; story: ProfileStory }
   | { kind: 'ungrounded'; claimedId: string | null }
+  | { kind: 'general-knowledge' }
 
 /**
  * Matches a whole line that is nothing but a citation.
