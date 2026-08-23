@@ -135,6 +135,22 @@ export function registerIpc(): void {
     abortOpenAiCompatStream(streamId)
   })
 
+  /**
+   * Whether the provider an assessment turn would use can accept an image.
+   *
+   * Asked from the renderer before a capture, because the answer depends on
+   * settings the renderer does not resolve: `assessmentProvider` falls back to
+   * `llmProvider`, and only `providerFor` knows that rule. Returning it here
+   * keeps the fallback decision in one place rather than reimplementing the
+   * precedence on the other side of the boundary.
+   */
+  ipcMain.handle('hue:llm:assessment-vision', () => {
+    const s = getSettings()
+    return providerSupportsVision(
+      providerFor('assessment', s.llmProvider, s.ingestProvider, s.assessmentProvider)
+    )
+  })
+
   ipcMain.handle('hue:ollama:models', (_e, baseUrl: string) => fetchOllamaModels(baseUrl))
   ipcMain.handle('hue:llm:models', (_e, provider: OpenAiCompatProvider, apiKey: string) =>
     fetchOpenAiModels(provider, apiKey)

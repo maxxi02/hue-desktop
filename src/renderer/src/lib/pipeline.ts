@@ -5,7 +5,11 @@ import { parseProfileBundle, profilePromptBlock } from '../../../shared/profile'
 import { groundResponse, stripStreamingCitation, type Grounding } from '../../../shared/grounding'
 import { parseJobSpec, jobSpecPromptBlock, rawJobDescriptionBlock } from '../../../shared/job-spec'
 import { answerShapeFor, ASSESSMENT_SHAPE } from '../../../shared/answer-shape'
-import { assessmentRouting, looksLikeCodingQuestion } from '../../../shared/assessment'
+import {
+  assessmentRouting,
+  captureRouting,
+  looksLikeCodingQuestion
+} from '../../../shared/assessment'
 import { isFillerOnly } from '../../../shared/filler'
 import { parseJobBrief, jobBriefPromptBlock } from '../../../shared/job-brief'
 import { EndpointBuffer } from '../../../shared/endpointing'
@@ -881,14 +885,39 @@ export class VoicePipeline {
       return
     }
 
+    // Asked of main rather than resolved here: `assessmentProvider` falls back to
+    // `llmProvider`, and only `providerFor` owns that precedence. A failure to
+    // answer is treated as no vision, which routes the capture down the path
+    // that has always worked rather than to a provider that may reject the image.
+    let hasVision = false
+    try {
+      hasVision = await window.hue.llm.assessmentVision()
+    } catch {
+      hasVision = false
+    }
+    const routing = captureRouting(this.settings, hasVision)
+    this.currentAssessment = routing.assessment
+    if (routing.fellBack) {
+      // Said out loud rather than swallowed. The reason assessment has its own
+      // provider is that a plausible-looking wrong answer about code costs more
+      // than a slow one, so a user who thinks they are reading the accurate
+      // model when they are not is the worst state this feature can be in.
+      this.callbacks.onError?.(
+        'Your assessment provider cannot read images, so this screenshot went to the drafting model instead.'
+      )
+    }
+
     const content: LlmContentBlock[] = [
       { type: 'image', mediaType: shot.mediaType, dataBase64: shot.dataBase64 },
-      { type: 'text', text: captureInstruction(this.settings) }
+      { type: 'text', text: captureInstruction(this.settings, routing.assessment) }
     ]
     this.messages.push({ role: 'user', content })
     this.pendingCaptureIndex = this.messages.length - 1
     this.callbacks.onScreenCapture?.(shot)
-    this.startResponse({ speak: false, maxTokens: 1024 })
+    // Never spoken, as before. The budget follows the routing: a capture that
+    // reached the assessment path is answered with steps plus code, which does
+    // not fit in the 1024 the prose path used.
+    this.startResponse({ speak: false, maxTokens: routing.assessment ? 1500 : 1024 })
   }
 
   /** Interviewer mode: seed the conversation so Hue asks the opening question. */
@@ -1166,9 +1195,21 @@ function stripCaptureImage(msg: LlmMessage): LlmMessage {
  * common case — the interviewer is sharing a prompt) and lightly adjusted when
  * Hue is the interviewer so the screenshot reads as context rather than a task.
  */
-function captureInstruction(s: HueSettings): string {
+function captureInstruction(s: HueSettings, assessment: boolean): string {
   if (s.hueMode === 'interviewer') {
     return 'This is a screenshot of my screen. Use it as context for the interview if relevant.'
+  }
+  // On the assessment path the shape is already in the system prompt, and it is
+  // more specific than anything said here. This instruction says only what the
+  // image IS, and deliberately stops there: repeating "give a clear approach" in
+  // the user turn would compete with the marker contract in OUTPUT CONTRACT, and
+  // `answer-shape.ts` records what happens when two instructions argue about the
+  // shape of one answer.
+  if (assessment) {
+    return (
+      "This is a screenshot of the interviewer's shared screen: a coding problem, a " +
+      'system-design prompt, or a technical question. Read it carefully and answer it.'
+    )
   }
   return (
     "This is a screenshot of the interviewer's shared screen — likely a coding problem, " +

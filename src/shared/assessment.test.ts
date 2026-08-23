@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { assessmentRouting, looksLikeCodingQuestion } from './assessment.ts'
+import { assessmentRouting, captureRouting, looksLikeCodingQuestion } from './assessment.ts'
 
 const CODING = [
   'How would you design an SSR function?',
@@ -90,4 +90,35 @@ test('an armed session leaves behavioural answers speakable and speculable', () 
   const r = assessmentRouting(S, 'Tell me about a time you disagreed')
   assert.equal(r.speak, true)
   assert.equal(r.speculate, true)
+})
+
+/**
+ * A screenshot is a coding question by presumption while the mode is armed: you
+ * only screenshot something you need read carefully. So it skips the classifier
+ * entirely, and the one gate left is whether the provider can accept an image.
+ */
+test('a capture is an assessment question whenever the mode is armed', () => {
+  assert.equal(captureRouting({ assessmentEnabled: true } as never, true).assessment, true)
+})
+
+test('a capture falls back when the assessment provider cannot see', () => {
+  const r = captureRouting({ assessmentEnabled: true } as never, false)
+  assert.equal(r.assessment, false)
+  assert.equal(r.fellBack, true)
+})
+
+test('a disarmed capture behaves exactly as it does today', () => {
+  const r = captureRouting({ assessmentEnabled: false } as never, true)
+  assert.equal(r.assessment, false)
+  assert.equal(r.fellBack, false)
+})
+
+/**
+ * `fellBack` is only ever true when something was actually given up. A disarmed
+ * session had nothing to fall back from, and reporting one would put a warning
+ * on screen for a feature the user has not turned on.
+ */
+test('a disarmed capture never reports a fallback, even without vision', () => {
+  const r = captureRouting({ assessmentEnabled: false } as never, false)
+  assert.equal(r.fellBack, false)
 })

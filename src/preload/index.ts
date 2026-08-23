@@ -56,7 +56,9 @@ const hue = {
     onDone: (cb: (e: LlmDoneEvent) => void): (() => void) => sub('hue:llm:done', cb),
     onError: (cb: (e: LlmErrorEvent) => void): (() => void) => sub('hue:llm:error', cb),
     models: (provider: OpenAiCompatProvider, apiKey: string): Promise<string[]> =>
-      ipcRenderer.invoke('hue:llm:models', provider, apiKey)
+      ipcRenderer.invoke('hue:llm:models', provider, apiKey),
+    /** Whether the provider an assessment turn would use can accept an image. */
+    assessmentVision: (): Promise<boolean> => ipcRenderer.invoke('hue:llm:assessment-vision')
   },
   ollama: {
     models: (baseUrl: string): Promise<string[]> => ipcRenderer.invoke('hue:ollama:models', baseUrl)

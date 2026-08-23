@@ -111,3 +111,28 @@ export function assessmentRouting(s: HueSettings, question: string): AssessmentR
     maxTokens: assessment ? 1500 : 700
   }
 }
+
+export interface CaptureRouting {
+  assessment: boolean
+  /** True when the mode was armed but the provider cannot accept an image. */
+  fellBack: boolean
+}
+
+/**
+ * A screenshot is presumed to be a coding question while the mode is armed. You
+ * only screenshot something you need read carefully, so it skips the classifier
+ * that a spoken question goes through. The one gate is vision support.
+ *
+ * `fellBack` exists so the card can say so. A silent fallback would leave the
+ * user believing they were reading an answer from the accurate model when they
+ * were reading one from the fast one, which is the single worst way for this
+ * feature to be wrong: the whole reason assessment has its own provider is that
+ * a plausible-looking wrong answer about code costs more than a slow one.
+ *
+ * It is false whenever the mode is disarmed, even with no vision. Nothing was
+ * given up, and a warning about a feature the user has not turned on is noise.
+ */
+export function captureRouting(s: HueSettings, providerHasVision: boolean): CaptureRouting {
+  if (!s.assessmentEnabled) return { assessment: false, fellBack: false }
+  return { assessment: providerHasVision, fellBack: !providerHasVision }
+}

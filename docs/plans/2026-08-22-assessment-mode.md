@@ -861,7 +861,7 @@ git commit -m "feat(assessment): route one stream to a different provider"
 - Consumes: `looksLikeCodingQuestion` (Task 1), `ASSESSMENT_SHAPE` (Task 2), `role` on `LlmStreamRequest` (Task 6), `assessmentEnabled` (Task 5).
 - Produces: `assessmentRouting(settings, questionText)` — a pure helper so the decision is testable without loading `pipeline.ts`, which imports browser globals and cannot run under `node --test`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/shared/assessment.test.ts`:
 
@@ -889,12 +889,12 @@ test('a disarmed session never routes to assessment', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node --test src/shared/assessment.test.ts`
 Expected: FAIL — `assessmentRouting` is not exported.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Add to `src/shared/assessment.ts`:
 
@@ -943,12 +943,12 @@ In `pipeline.ts`:
 - Gate speculation: at line 206 the constructor enables speculation for companion mode; additionally skip firing a speculative draft when `looksLikeCodingQuestion(interimText)` is true.
 - In `buildCompanionPrompt` (1260), select the shape: `assessment ? ASSESSMENT_SHAPE : answerShapeFor(s.interviewMode)` at line 1375. The prompt is built per response, so thread the flag in as a parameter rather than reading instance state inside a module-level function.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `npm run typecheck && npm test`
 Expected: typecheck clean, suite green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npx prettier --write src/shared/assessment.ts src/shared/assessment.test.ts src/renderer/src/lib/pipeline.ts
