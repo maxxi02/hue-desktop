@@ -768,7 +768,7 @@ git commit -m "feat(assessment): settings fields and a third provider role"
 
 This is the plumbing the spec did not account for: `LlmStreamRequest` has no provider field, and `hue:llm:start` reads `getSettings().llmProvider` directly. Each stream starter also reads its own key and model from settings, so the resolved provider must be passed down to the OpenAI-compatible one.
 
-- [ ] **Step 1: Add the field**
+- [x] **Step 1: Add the field**
 
 In `src/shared/types.ts`:
 
@@ -791,7 +791,7 @@ export interface LlmStreamRequest {
 }
 ```
 
-- [ ] **Step 2: Thread it through the dispatch**
+- [x] **Step 2: Thread it through the dispatch**
 
 In `src/main/ipc.ts`, replace the body of `hue:llm:start`:
 
@@ -816,7 +816,7 @@ ipcMain.handle('hue:llm:start', (event, streamId: string, req: LlmStreamRequest)
 
 Add `import { providerFor } from './structured-llm'` to the top of `ipc.ts`.
 
-- [ ] **Step 3: Accept the override in the compat starter**
+- [x] **Step 3: Accept the override in the compat starter**
 
 In `src/main/openai-compat.ts`, add a fourth parameter and use it where the provider is currently derived from settings:
 
@@ -834,12 +834,12 @@ export function startOpenAiCompatStream(
 
 At the `const s = getSettings()` read (line 253), use `provider ?? s.llmProvider` wherever the provider is chosen, and select the key and model fields from that resolved provider via the existing `COMPAT_PROVIDERS` map.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `npm run typecheck && npm test`
 Expected: typecheck clean, full suite green. There is no unit test for IPC dispatch in this codebase; correctness here is checked by Task 7's routing test and by manual verification in Task 11.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npx prettier --write src/shared/types.ts src/main/ipc.ts src/main/openai-compat.ts

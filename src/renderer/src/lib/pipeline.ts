@@ -4,7 +4,8 @@ import { StreamingTTSQueue } from './streamingTTS'
 import { parseProfileBundle, profilePromptBlock } from '../../../shared/profile'
 import { groundResponse, stripStreamingCitation, type Grounding } from '../../../shared/grounding'
 import { parseJobSpec, jobSpecPromptBlock, rawJobDescriptionBlock } from '../../../shared/job-spec'
-import { answerShapeFor } from '../../../shared/answer-shape'
+import { answerShapeFor, ASSESSMENT_SHAPE } from '../../../shared/answer-shape'
+import { assessmentRouting, looksLikeCodingQuestion } from '../../../shared/assessment'
 import { isFillerOnly } from '../../../shared/filler'
 import { parseJobBrief, jobBriefPromptBlock } from '../../../shared/job-brief'
 import { EndpointBuffer } from '../../../shared/endpointing'
@@ -139,6 +140,17 @@ export class VoicePipeline {
    * would otherwise be re-sent in full on every later turn). null when none pends.
    */
   private pendingCaptureIndex: number | null = null
+
+  /**
+   * Whether the in-flight response is an assessment answer.
+   *
+   * Set per question by `assessmentRouting`, and read in two places that run
+   * later than the decision: `startResponse`, which puts the role on the wire,
+   * and `buildSystemPrompt`, which picks the shape. Held on the instance rather
+   * than threaded through every call site because the commit path adopts a
+   * stream started before the final transcript existed.
+   */
+  private currentAssessment = false
 
   /**
    * Whether Hue's responses are spoken aloud. True in interviewer mode (Hue asks
@@ -564,7 +576,15 @@ export class VoicePipeline {
     }
 
     this.messages.push({ role: 'user', content: text })
-    this.startResponse({ speak: this.speakResponses, maxTokens: 700 })
+    const routing = assessmentRouting(this.settings, text)
+    this.currentAssessment = routing.assessment
+    // ANDed, never replaced: `speak` from routing is a permission to speak, and
+    // `speakResponses` is whether this session speaks at all. Companion mode
+    // stays silent on both kinds of answer.
+    this.startResponse({
+      speak: this.speakResponses && routing.speak,
+      maxTokens: routing.maxTokens
+    })
   }
 
   // ── Speculation ─────────────────────────────────────────────────────────
@@ -682,6 +702,15 @@ export class VoicePipeline {
     for (const command of commands) {
       switch (command.kind) {
         case 'fire':
+          // A coding question is not worth drafting speculatively. Speculation
+          // fires several drafts from a half-finished transcript and discards
+          // the wrong ones, which is a good trade for short prose on the cheap
+          // drafting model and a bad one for the longest answers in the app on
+          // the most expensive. Declining the fire leaves the ordinary path to
+          // answer it, which is exactly what happens when no draft is ready.
+          if (this.settings.assessmentEnabled && looksLikeCodingQuestion(command.text)) {
+            break
+          }
           this.startSpeculation(command.specId, command.text)
           break
         case 'abort':
@@ -748,7 +777,9 @@ export class VoicePipeline {
     this.specFinished = false
     void window.hue.llm.start(streamId, {
       messages: [...this.messages, { role: 'user', content: text }],
-      system: buildSystemPrompt(this.settings),
+      // Never an assessment draft: the fire is declined for coding questions
+      // upstream, so a draft that exists is by construction an ordinary answer.
+      system: buildSystemPrompt(this.settings, false),
       maxTokens: 700
     })
   }
@@ -797,12 +828,26 @@ export class VoicePipeline {
       // Generate for real rather than adopting an empty answer, which would
       // leave the turn with nothing on screen and no completion to come.
       this.messages.push({ role: 'user', content: finalText })
-      this.startResponse({ speak: this.speakResponses, maxTokens: 700 })
+      // Routed here too. This path regenerates from the real question, so it is
+      // an ordinary turn in every respect and must reach the same provider and
+      // shape a question of this kind would have reached down the normal path.
+      const routing = assessmentRouting(this.settings, finalText)
+      this.currentAssessment = routing.assessment
+      this.startResponse({
+        speak: this.speakResponses && routing.speak,
+        maxTokens: routing.maxTokens
+      })
       return
     }
 
     this.messages.push({ role: 'user', content: finalText })
     this.assistantText = text
+    // An adopted draft is never an assessment answer: speculation does not fire
+    // for a coding question (see applyInterimCommands), so this text was drafted
+    // against the ordinary shape. Cleared rather than left alone, because a flag
+    // still set from the previous turn would label it a code answer and hand it
+    // the wrong grounding receipt.
+    this.currentAssessment = false
     // Companion mode never speaks its answers aloud; speculation is companion-only.
     this.currentSpeak = false
     this.currentStreamId = finished ? null : streamId
@@ -863,8 +908,11 @@ export class VoicePipeline {
     this.currentStreamId = streamId
     void window.hue.llm.start(streamId, {
       messages: this.messages,
-      system: buildSystemPrompt(this.settings),
-      maxTokens: opts.maxTokens
+      system: buildSystemPrompt(this.settings, this.currentAssessment),
+      maxTokens: opts.maxTokens,
+      // Absent means drafting. Main resolves what the role means right now; this
+      // side only knows which kind of question just arrived.
+      role: this.currentAssessment ? 'assessment' : undefined
     })
   }
 
@@ -1004,6 +1052,18 @@ export class VoicePipeline {
    *    users who have not finished setting the app up.
    */
   private resolveTurnGrounding(raw: string): { answer: string; grounding: Grounding | null } {
+    // Checked before the bundle, because it is true whether or not one exists.
+    // A code answer was never a candidate for a story, so asking which story it
+    // came from is the wrong question rather than a question with a bad answer.
+    // Returning `null` here instead would be indistinguishable from a turn that
+    // produced no receipt at all, and the review would silently stop counting
+    // the technical half of the interview.
+    if (this.currentAssessment) {
+      return {
+        answer: stripStreamingCitation(raw).trim(),
+        grounding: { kind: 'general-knowledge' }
+      }
+    }
     const bundle = parseProfileBundle(this.settings.profileBundleJson)
     if (this.settings.hueMode !== 'companion' || !bundle) {
       // The citation line is still stripped: if a model volunteers one here, it
@@ -1149,10 +1209,14 @@ function jobContext(s: HueSettings): string | null {
   return null
 }
 
-function buildSystemPrompt(s: HueSettings): string {
+function buildSystemPrompt(s: HueSettings, assessment: boolean): string {
   // The two modes are different jobs, not variations on one: in interviewer
   // mode Hue asks the questions, in companion mode it answers them.
-  return s.hueMode === 'interviewer' ? buildInterviewerPrompt(s) : buildCompanionPrompt(s)
+  // Interviewer mode ignores the flag: Hue is asking the questions there, and an
+  // answer shape has nothing to shape.
+  return s.hueMode === 'interviewer'
+    ? buildInterviewerPrompt(s)
+    : buildCompanionPrompt(s, assessment)
 }
 
 /** Hue plays the interviewer, asking the user questions one at a time (spoken). */
@@ -1257,7 +1321,7 @@ function backgroundParts(s: HueSettings): Array<string | null> {
  *
  * Section order is load-bearing in two places, both marked below.
  */
-function buildCompanionPrompt(s: HueSettings): string {
+function buildCompanionPrompt(s: HueSettings, assessment: boolean): string {
   const job = jobContext(s)
   const brief = parseJobBrief(s.jobBriefJson)
   // Empty when no posting has been analysed, or when it was analysed before a
@@ -1368,11 +1432,15 @@ function buildCompanionPrompt(s: HueSettings): string {
     // with anything else.
     section('OUTPUT CONTRACT', [
       'Never ask the interviewer for clarification, and never say you are unsure what they meant. ' +
-        "The user cannot relay a clarifying question mid-call, and an answer that opens by admitting " +
+        'The user cannot relay a clarifying question mid-call, and an answer that opens by admitting ' +
         'confusion makes the user look lost rather than you. If the transcript is only a fragment or ' +
         'is too garbled to read confidently, answer the most likely intended question directly and ' +
         'confidently.',
-      answerShapeFor(s.interviewMode)
+      // Assessment overrides the interview mode rather than combining with it.
+      // The two are orthogonal: someone in star mode who is asked to design a
+      // function still needs the code answer, and STAR structure imposed on it
+      // would produce a Situation and a Task for a binary search.
+      assessment ? ASSESSMENT_SHAPE : answerShapeFor(s.interviewMode)
     ])
   ]
 

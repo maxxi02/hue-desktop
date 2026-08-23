@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { looksLikeCodingQuestion } from './assessment.ts'
+import { assessmentRouting, looksLikeCodingQuestion } from './assessment.ts'
 
 const CODING = [
   'How would you design an SSR function?',
@@ -48,4 +48,46 @@ test('classification survives a partial interim transcript', () => {
   // Routing happens on the interim transcript, so the decision must be
   // reachable before the sentence is finished.
   assert.equal(looksLikeCodingQuestion('how would you implement a'), true)
+})
+
+/**
+ * The routing decision, pinned as a whole rather than one flag at a time.
+ *
+ * `speak` and `speculate` are what stop a code answer being read aloud to the
+ * interviewer or drafted repeatedly against the most expensive model, so a
+ * regression in either is expensive and silent.
+ */
+const S = { assessmentEnabled: true } as never
+
+test('an armed coding question routes to assessment', () => {
+  const r = assessmentRouting(S, 'How would you design an SSR function?')
+  assert.equal(r.assessment, true)
+  assert.equal(r.speak, false)
+  assert.equal(r.speculate, false)
+  assert.equal(r.maxTokens, 1500)
+})
+
+test('an armed behavioural question does not', () => {
+  const r = assessmentRouting(S, 'Tell me about a time you disagreed')
+  assert.equal(r.assessment, false)
+  assert.equal(r.maxTokens, 700)
+})
+
+test('a disarmed session never routes to assessment', () => {
+  const r = assessmentRouting({ assessmentEnabled: false } as never, 'write a function that sorts')
+  assert.equal(r.assessment, false)
+})
+
+/**
+ * Arming the mode must not silence an ordinary answer.
+ *
+ * `speak` is a permission the caller ANDs with its own state, so `true` here
+ * means "no objection", not "speak now". A behavioural question in an armed
+ * session has to come back with both permissions intact, or interviewer mode
+ * goes mute the moment the user arms assessment.
+ */
+test('an armed session leaves behavioural answers speakable and speculable', () => {
+  const r = assessmentRouting(S, 'Tell me about a time you disagreed')
+  assert.equal(r.speak, true)
+  assert.equal(r.speculate, true)
 })
