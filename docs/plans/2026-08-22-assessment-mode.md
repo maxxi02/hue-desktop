@@ -36,7 +36,7 @@
 
 The must-**not**-fire corpus is the important half. A behavioural question dense with technical words ("tell me about a hard technical decision") must stay behavioural, or the mode buries a STAR answer under a code block mid-interview.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/shared/assessment.test.ts`:
 
@@ -94,12 +94,12 @@ test('classification survives a partial interim transcript', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node --test src/shared/assessment.test.ts`
 Expected: FAIL — `Cannot find module './assessment.ts'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `src/shared/assessment.ts`:
 
@@ -180,14 +180,14 @@ export function looksLikeCodingQuestion(text: string): boolean {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node --test src/shared/assessment.test.ts`
 Expected: PASS, 4 tests.
 
 If `'implement fizzbuzz'` or `'Can you code up a debounce for me'` fails, the phrase list is missing an entry — add it, do not weaken the behavioural veto.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npx prettier --write src/shared/assessment.ts src/shared/assessment.test.ts
@@ -211,7 +211,7 @@ git commit -m "feat(assessment): classify a question as wanting code"
 
 `answerShapeFor(mode)` switches on `InterviewMode`, and assessment is **not** an interview mode — it is orthogonal to practice/star/live. Export the constant directly rather than adding a fourth mode, or a user in star mode could not get a code answer.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/shared/answer-shape.test.ts`:
 
@@ -236,12 +236,12 @@ test('the assessment shape keeps code out of the spoken part', () => {
 
 Add `ASSESSMENT_SHAPE` to the existing import at the top of that file.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node --test src/shared/answer-shape.test.ts`
 Expected: FAIL — `ASSESSMENT_SHAPE` is not exported.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Add to `src/shared/answer-shape.ts`, above `answerShapeFor`. **No em dashes or en dashes** — the existing test in this file enforces it.
 
@@ -280,12 +280,12 @@ export const ASSESSMENT_SHAPE =
   'them, so never mention them in the prose.'
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node --test src/shared/answer-shape.test.ts`
 Expected: PASS, including the pre-existing dash test.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npx prettier --write src/shared/answer-shape.ts src/shared/answer-shape.test.ts
@@ -313,7 +313,7 @@ Read spec §5 before starting. The three defects, worst first:
 2. `withholdPartialMarker` withholds a trailing one-word comment (`# key`), so it flickers while streaming.
 3. `MARKER` is tested against `line.trim()`, so an indented `    ## code` inside a block splits the beat.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/shared/answer-beats.test.ts`:
 
@@ -379,12 +379,12 @@ test('prose beats are unaffected by the code-beat rules', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node --test src/shared/answer-beats.test.ts`
 Expected: FAIL on the label test (`approach` is not in the vocabulary) and on the indentation test.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `src/shared/answer-beats.ts`:
 
@@ -512,12 +512,12 @@ export function parseBeats(raw: string): Beat[] {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node --test src/shared/answer-beats.test.ts`
 Expected: PASS — the seven new tests **and** every pre-existing test in the file. If a pre-existing streaming test now fails, the withholding change leaked into prose beats; re-check the `insideCode` guard.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npx prettier --write src/shared/answer-beats.ts src/shared/answer-beats.test.ts
@@ -545,7 +545,7 @@ git commit -m "feat(assessment): beats can hold code without mangling it"
 
 A union member rather than a boolean, so the compiler forces all six consumers to say what they do with it. Run `npm run typecheck` after widening the type and let the errors enumerate the work.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/shared/session-review.test.ts`:
 
@@ -572,12 +572,12 @@ test('a general-knowledge answer is neither grounded nor a miss', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node --test src/shared/session-review.test.ts`
 Expected: FAIL — `'general-knowledge'` is not assignable to `Grounding`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `src/shared/grounding.ts`:
 
@@ -635,12 +635,12 @@ const answers: AnswerCounts = {
 - `App.tsx:239` — render a neutral marker reading `general knowledge, not from your résumé`. Style it with `var(--text-muted)`, not `var(--danger)`: it is provenance, not a warning.
 - `sessionHistory.ts:124` / `:133` — serialise and revive it. It has no payload, so `{ kind: 'general-knowledge' }` round-trips as itself; make sure the reviver returns it rather than falling through to `null`.
 
-- [ ] **Step 4: Run tests and typecheck**
+- [x] **Step 4: Run tests and typecheck**
 
 Run: `npm run typecheck && node --test src/shared/session-review.test.ts src/renderer/src/lib/sessionHistory.test.ts`
 Expected: typecheck clean, tests PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npx prettier --write src/shared/grounding.ts src/shared/session-review.ts src/renderer/src/App.tsx src/renderer/src/lib/pipeline.ts src/renderer/src/lib/sessionHistory.ts
@@ -663,7 +663,7 @@ git commit -m "feat(assessment): a code answer is general knowledge, not ungroun
 - Consumes: nothing.
 - Produces: `assessmentEnabled: boolean`, `assessmentProvider: LlmProvider | ''`, `assessmentHotkey: string` on `HueSettings`; `providerFor(role: 'drafting' | 'ingest' | 'assessment', llmProvider, ingestProvider, assessmentProvider)` — Task 6 calls it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/main/structured-llm.test.ts`:
 
@@ -682,12 +682,12 @@ test('the assessment provider does not disturb the other two roles', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node --test src/main/structured-llm.test.ts`
 Expected: FAIL — `providerFor` takes three arguments.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `src/main/structured-llm.ts`, replace `providerFor`:
 
@@ -738,12 +738,12 @@ And to `DEFAULT_SETTINGS`:
   assessmentHotkey: '',
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npm run typecheck && node --test src/main/structured-llm.test.ts`
 Expected: typecheck clean, tests PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npx prettier --write src/shared/types.ts src/main/structured-llm.ts src/main/structured-llm.test.ts
