@@ -157,6 +157,17 @@ export class VoicePipeline {
   private currentAssessment = false
 
   /**
+   * The last *spoken* question, kept so the user can re-answer it the other way.
+   *
+   * Null after a screen capture, and that is the point rather than an oversight.
+   * `stripCaptureImage` drops the PNG once Hue has answered it, so re-running a
+   * capture would send the model a turn whose image is gone and get a confident
+   * answer about nothing. Refusing is the honest failure; silently answering a
+   * question the model can no longer see is not.
+   */
+  private lastSpokenQuestion: string | null = null
+
+  /**
    * Whether Hue's responses are spoken aloud. True in interviewer mode (Hue asks
    * questions out loud). False in companion mode — the response is a suggested
    * answer shown as text, so speaking it would talk over the user or be heard by
@@ -580,6 +591,7 @@ export class VoicePipeline {
     }
 
     this.messages.push({ role: 'user', content: text })
+    this.lastSpokenQuestion = text
     const routing = assessmentRouting(this.settings, text)
     this.currentAssessment = routing.assessment
     // ANDed, never replaced: `speak` from routing is a permission to speak, and
@@ -835,6 +847,7 @@ export class VoicePipeline {
       // Routed here too. This path regenerates from the real question, so it is
       // an ordinary turn in every respect and must reach the same provider and
       // shape a question of this kind would have reached down the normal path.
+      this.lastSpokenQuestion = finalText
       const routing = assessmentRouting(this.settings, finalText)
       this.currentAssessment = routing.assessment
       this.startResponse({
@@ -845,6 +858,7 @@ export class VoicePipeline {
     }
 
     this.messages.push({ role: 'user', content: finalText })
+    this.lastSpokenQuestion = finalText
     this.assistantText = text
     // An adopted draft is never an assessment answer: speculation does not fire
     // for a coding question (see applyInterimCommands), so this text was drafted
@@ -897,6 +911,10 @@ export class VoicePipeline {
     }
     const routing = captureRouting(this.settings, hasVision)
     this.currentAssessment = routing.assessment
+    // The override cannot re-run a capture: the image is stripped from history
+    // once answered, so a re-run would ask about a screenshot that is no longer
+    // there. See `lastSpokenQuestion`.
+    this.lastSpokenQuestion = null
     if (routing.fellBack) {
       // Said out loud rather than swallowed. The reason assessment has its own
       // provider is that a plausible-looking wrong answer about code costs more
@@ -918,6 +936,40 @@ export class VoicePipeline {
     // reached the assessment path is answered with steps plus code, which does
     // not fit in the 1024 the prose path used.
     this.startResponse({ speak: false, maxTokens: routing.assessment ? 1500 : 1024 })
+  }
+
+  /**
+   * Re-answer the last spoken question down the other path.
+   *
+   * This is the escape hatch the classifier's accuracy rests on. `assessment.ts`
+   * says outright that `looksLikeCodingQuestion` will be wrong sometimes and
+   * that this control is what makes being wrong survivable: without it, one
+   * misclassification mid-interview leaves the user reading a STAR answer to a
+   * question about a binary search with no way out.
+   *
+   * The trailing assistant turn is dropped rather than appended to. The user is
+   * replacing an answer, not asking a follow-up, and leaving the rejected one in
+   * history would teach the model that both shapes are wanted for one question.
+   *
+   * Returns false when there is nothing to re-answer, so the caller can say so
+   * rather than appear to do nothing.
+   */
+  reanswerAs(assessment: boolean): boolean {
+    const question = this.lastSpokenQuestion
+    if (question === null) return false
+    this.abortResponse()
+    while (
+      this.messages.length > 0 &&
+      this.messages[this.messages.length - 1].role === 'assistant'
+    ) {
+      this.messages.pop()
+    }
+    this.currentAssessment = assessment
+    this.startResponse({
+      speak: this.speakResponses && !assessment,
+      maxTokens: assessment ? 1500 : 700
+    })
+    return true
   }
 
   /** Interviewer mode: seed the conversation so Hue asks the opening question. */

@@ -3,7 +3,7 @@ import { useVoiceMode } from './hooks/useVoiceMode'
 import type { PipelineState } from './lib/pipeline'
 import { isAtBottom } from './lib/stickToBottom'
 import { paragraphs } from './lib/paragraphs'
-import { parseBeats, BEAT_LABEL_TEXT } from '@shared/answer-beats'
+import { parseBeats, isCodeBeat, isAssessmentBeat, BEAT_LABEL_TEXT } from '@shared/answer-beats'
 import type { VoiceTurn, CaptureTurn } from './hooks/useVoiceMode'
 import type { ScreenCapture } from '@shared/types'
 import { describeStory, type Grounding } from '@shared/grounding'
@@ -542,6 +542,14 @@ export default function App(): React.JSX.Element {
    * three clicks from the moment it is wanted. It is transient state for the
    * same reason glance mode is — nobody wants to launch into a stats screen.
    */
+  /**
+   * Why the override could not run, shown under the answer.
+   *
+   * A button that silently does nothing reads as broken, and this one refuses
+   * for a real reason: a capture's image is stripped from history once answered,
+   * so re-running it would ask about a screenshot that is gone.
+   */
+  const [overrideNote, setOverrideNote] = useState<string | null>(null)
   const [usageOpen, setUsageOpen] = useState(false)
   /**
    * Glance mode: the card becomes a teleprompter for the current suggested
@@ -993,13 +1001,28 @@ export default function App(): React.JSX.Element {
                     main.css. The list only ever grows at its end. */}
                 {parseBeats(latestAnswer.text).map((beat, i) => (
                   <div
-                    className={beat.label === 'scenario' ? 'beat beat--scenario' : 'beat'}
+                    className={
+                      beat.label === 'scenario'
+                        ? 'beat beat--scenario'
+                        : isAssessmentBeat(beat)
+                          ? 'beat beat--stacked'
+                          : 'beat'
+                    }
                     key={i}
                   >
                     {beat.label && (
                       <span className="beat-label">{BEAT_LABEL_TEXT[beat.label]}</span>
                     )}
-                    <p>{beat.text}</p>
+                    {/* A code beat is never spoken, so it is the one place the
+                        prose path is wrong: <p> collapses the indentation that
+                        makes the block readable. The margin tag is unchanged
+                        because BEAT_LABEL_TEXT.code already reads "do not read
+                        aloud", which is what the user needs to know about it. */}
+                    {isCodeBeat(beat) ? (
+                      <pre className="beat-code">{beat.text}</pre>
+                    ) : (
+                      <p>{beat.text}</p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1016,6 +1039,34 @@ export default function App(): React.JSX.Element {
                 <Receipt grounding={latestAnswer.grounding} />
               </div>
             )}
+            {/* The escape hatch the classifier's accuracy rests on. It will be
+                wrong sometimes, and without a way out one misclassification
+                mid-interview strands the user with the wrong kind of answer.
+
+                The receipt is the signal: `general-knowledge` is set on exactly
+                the turns that took the assessment path, so the label follows
+                from state that already exists rather than from a second flag
+                plumbed through for the button's benefit. */}
+            {latestAnswer?.grounding && (
+              <button
+                type="button"
+                className="link-btn glance-override"
+                onClick={() => {
+                  if (voice.reanswerAs(latestAnswer.grounding?.kind !== 'general-knowledge')) {
+                    setOverrideNote(null)
+                  } else {
+                    // A capture, or nothing asked yet. Saying so beats a button
+                    // that looks broken.
+                    setOverrideNote('Nothing to re-answer yet — screenshots cannot be re-run.')
+                  }
+                }}
+              >
+                {latestAnswer.grounding.kind === 'general-knowledge'
+                  ? 'Answer normally'
+                  : 'Answer as code'}
+              </button>
+            )}
+            {overrideNote && <div className="error-msg">{overrideNote}</div>}
           </div>
         </main>
       ) : usageOpen ? (

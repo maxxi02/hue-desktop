@@ -185,3 +185,20 @@ export function parseBeats(raw: string): Beat[] {
   flush()
   return beats
 }
+
+/**
+ * Beats belonging to an assessment answer.
+ *
+ * They are laid out differently from the behavioural ones, and the reason is
+ * their tags rather than their content. The `.beat` grid gives the margin tag a
+ * fixed narrow column, which fits "what", "why" and "when" and does not fit
+ * "approach", "complexity" or "do not read aloud" — those wrap into two and
+ * three lines beside the prose. Widening that column would move the prose on
+ * every answer, including the behavioural ones this feature does not touch, so
+ * these stack their tag above the text instead and leave the grid alone.
+ */
+const ASSESSMENT_LABELS: readonly BeatLabel[] = ['approach', 'steps', 'code', 'complexity']
+
+export function isAssessmentBeat(beat: Beat): boolean {
+  return beat.label !== null && ASSESSMENT_LABELS.includes(beat.label)
+}

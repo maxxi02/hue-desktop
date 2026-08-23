@@ -64,6 +64,11 @@ export interface UseVoiceMode {
   stop: () => Promise<void>
   /** Capture the screen and ask the assistant about it (no-op if no session). */
   captureScreen: () => Promise<void>
+  /**
+   * Re-answer the last spoken question the other way. Returns false when there
+   * is nothing to re-answer (no question yet, or the last turn was a capture).
+   */
+  reanswerAs: (assessment: boolean) => boolean
   /** Wipe the conversation: LLM history, last transcript, and the launch greeting. */
   clear: () => void
 }
@@ -261,6 +266,10 @@ export function useVoiceMode(): UseVoiceMode {
     await pipelineRef.current?.captureScreen()
   }, [])
 
+  const reanswerAs = useCallback((assessment: boolean): boolean => {
+    return pipelineRef.current?.reanswerAs(assessment) ?? false
+  }, [])
+
   const clear = useCallback((): void => {
     pipelineRef.current?.clearHistory()
     setUserTranscript(null)
@@ -311,6 +320,7 @@ export function useVoiceMode(): UseVoiceMode {
     start,
     stop,
     captureScreen,
+    reanswerAs,
     clear
   }
 }

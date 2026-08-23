@@ -973,7 +973,7 @@ git commit -m "feat(assessment): route coding questions through the assessment p
 
 A screenshot is a coding question by presumption while armed — you only screenshot something you need read carefully — so it does not go through `looksLikeCodingQuestion`. The constraint is vision support.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test('a capture is an assessment question whenever the mode is armed', () => {
@@ -993,12 +993,12 @@ test('a disarmed capture behaves exactly as it does today', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node --test src/shared/assessment.test.ts`
 Expected: FAIL — `captureRouting` is not exported.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Add to `src/shared/assessment.ts`:
 
@@ -1027,12 +1027,12 @@ In `ipc.ts`, add a handler returning whether the resolved assessment provider su
 
 `captureInstruction` gains the assessment shape when routing says so.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `npm run typecheck && npm test`
 Expected: clean and green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npx prettier --write src/shared/assessment.ts src/shared/assessment.test.ts src/renderer/src/lib/pipeline.ts src/main/ipc.ts src/preload/index.ts

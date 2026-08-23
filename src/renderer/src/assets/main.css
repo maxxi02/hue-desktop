@@ -581,6 +581,25 @@
   color: var(--text-muted);
 }
 
+/* A code beat is the one surface in the app that is not read aloud, so it is the
+   one place where monospace, preserved whitespace and horizontal scrolling are
+   right. `pre-wrap` would reflow the block and break the alignment that makes it
+   readable at a glance, so the block scrolls in its own container and the page
+   never does. */
+.beat-code {
+  margin: 6px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card-s);
+  background: var(--bg-elevated);
+  font-family: ui-monospace, SFMono-Regular, 'Cascadia Mono', Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 2;
+}
+
 /* Same treatment in the transcript, at that pane's own rhythm. */
 .bubble-text p {
   margin: 0;
@@ -2387,4 +2406,47 @@ textarea.settings-input {
   letter-spacing: 0.04em;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* The re-answer override, under the receipt.
+   Quiet on purpose: it is a correction the user reaches for occasionally, not a
+   control they should be weighing on every answer. Sitting below the receipt
+   puts it after everything that is read aloud, so it can never be mistaken for
+   part of the answer. */
+.glance-override {
+  margin-top: 6px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.glance-override:hover {
+  opacity: 1;
+}
+
+/* An assessment beat stacks its tag above the text instead of setting it in the
+   margin.
+
+   The margin column is a fixed 4.5ch, which fits "what" and "when" and does not
+   fit "approach", "complexity" or "do not read aloud" — those wrapped to two and
+   three lines beside the prose. Widening the column would have moved the prose on
+   every behavioural answer too, to fix a problem none of them have, so the
+   layout changes only where the long tags are. */
+.beat--stacked {
+  display: block;
+}
+.beat--stacked .beat-label {
+  display: block;
+  padding-top: 0;
+  margin-bottom: 2px;
+}
+
+/* Newlines are content in a stacked beat, not whitespace.
+
+   ASSESSMENT_SHAPE asks for the steps numbered "1.", "2.", "3." on lines of
+   their own, and that is the whole point of them: the user glances down
+   mid-sentence and needs to find which step they were on. A <p> collapses those
+   newlines and the beat arrives as one run-on line, which is exactly what the
+   numbering existed to prevent. `pre-line` keeps the breaks and still collapses
+   runs of spaces, so ordinary prose in `approach` is unaffected. */
+.beat--stacked p {
+  white-space: pre-line;
 }
