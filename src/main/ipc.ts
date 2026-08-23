@@ -10,6 +10,7 @@ import {
   isOpenAiCompatProvider,
   providerSupportsVision
 } from './openai-compat'
+import { providerFor } from './structured-llm'
 import { transcribeCloud } from './asr-cloud'
 import { applyHotkeys } from './hotkeys'
 import {
@@ -109,11 +110,19 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle('hue:llm:start', (event, streamId: string, req: LlmStreamRequest) => {
-    const provider = getSettings().llmProvider
+    const s = getSettings()
+    // Resolved here, once, for this one request. The renderer decides the role
+    // per question; main decides which provider that role means right now.
+    const provider = providerFor(
+      req.role === 'assessment' ? 'assessment' : 'drafting',
+      s.llmProvider,
+      s.ingestProvider,
+      s.assessmentProvider
+    )
     if (provider === 'ollama') {
       startOllamaStream(event.sender, streamId, req)
     } else if (isOpenAiCompatProvider(provider)) {
-      startOpenAiCompatStream(event.sender, streamId, req)
+      startOpenAiCompatStream(event.sender, streamId, req, provider)
     } else {
       startLlmStream(event.sender, streamId, req)
     }

@@ -210,7 +210,16 @@ const active = new Map<string, ActiveStream>()
 export function startOpenAiCompatStream(
   sender: WebContents,
   streamId: string,
-  req: LlmStreamRequest
+  req: LlmStreamRequest,
+  /**
+   * Which compatible provider serves this request, overriding `llmProvider`.
+   *
+   * Explicit rather than re-derived from settings: `hue:llm:start` has already
+   * resolved the role for this one request, and reading `llmProvider` again here
+   * would silently send an assessment question to the drafting provider. Optional
+   * so every existing three-argument call keeps its meaning.
+   */
+  override?: OpenAiCompatProvider
 ): void {
   const send = (channel: string, payload: unknown): void => {
     if (!sender.isDestroyed()) sender.send(channel, payload)
@@ -251,7 +260,10 @@ export function startOpenAiCompatStream(
       // reason `structured-llm.ts` defers its own settings import.
       const { getSettings } = await import('./settings')
       const s = getSettings()
-      const provider = s.llmProvider
+      // The override wins. Everything below — the key, the model field, the base
+      // URL, the extraBody quirks — is selected from this one binding, so the
+      // whole request follows the resolved provider rather than half of it.
+      const provider = override ?? s.llmProvider
       providerLabel = provider
       if (!isOpenAiCompatProvider(provider)) {
         throw new Error(`startOpenAiCompatStream called for non-compatible provider: ${provider}`)

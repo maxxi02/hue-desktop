@@ -419,6 +419,15 @@ export interface LlmStreamRequest {
   /** Fully-rendered system prompt (built in the renderer from interview context). */
   system: string
   maxTokens?: number
+  /**
+   * Which provider role serves this one request. Absent means drafting.
+   *
+   * Per-request rather than read from settings in main, because assessment mode
+   * is decided per question: one session alternates between a fast drafting
+   * model and a capable assessment one, and the renderer is what knows which
+   * kind of question just arrived.
+   */
+  role?: 'drafting' | 'assessment'
 }
 
 export interface LlmDeltaEvent {
