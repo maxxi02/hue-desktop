@@ -1056,7 +1056,7 @@ git commit -m "feat(assessment): screen captures route to the assessment provide
 
 No syntax highlighting — see Global Constraints. Monospace with the step numbers carrying the structure.
 
-- [ ] **Step 1: Add the CSS**
+- [x] **Step 1: Add the CSS**
 
 In `src/renderer/src/assets/main.css`, near the other beat rules:
 
@@ -1081,17 +1081,17 @@ In `src/renderer/src/assets/main.css`, near the other beat rules:
 }
 ```
 
-- [ ] **Step 2: Render it**
+- [x] **Step 2: Render it**
 
 In the beat renderer in `App.tsx`, branch on `isCodeBeat(beat)` and emit `<pre className="beat-code">{beat.text}</pre>` instead of the prose paragraph path. Keep the margin tag rendering unchanged — `BEAT_LABEL_TEXT.code` already reads "do not read aloud".
 
-- [ ] **Step 3: Add the override control**
+- [x] **Step 3: Add the override control**
 
 Below the answer, render a single `link-btn` reading `Answer as code` when the last answer was not an assessment answer, and `Answer normally` when it was. Clicking re-sends the same question through the other path by calling the pipeline's existing re-answer entry point with the routing forced.
 
 This is the escape hatch the classifier's accuracy depends on — see spec §2. It is not optional.
 
-- [ ] **Step 4: Verify by rendering**
+- [x] **Step 4: Verify by rendering**
 
 Run: `npm run build`
 Expected: builds clean.
@@ -1104,7 +1104,7 @@ npx electron scratch/shot.cjs preview.html preview.png 1000 700
 
 Confirm indentation is preserved, long lines scroll inside the block, and the page itself does not scroll horizontally. Delete the harness afterwards.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npx prettier --write src/renderer/src/App.tsx src/renderer/src/assets/main.css

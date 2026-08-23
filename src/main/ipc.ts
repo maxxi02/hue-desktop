@@ -86,7 +86,8 @@ export function registerIpc(): void {
     if (
       next.summonHotkey !== prev.summonHotkey ||
       next.startSessionHotkey !== prev.startSessionHotkey ||
-      next.captureScreenHotkey !== prev.captureScreenHotkey
+      next.captureScreenHotkey !== prev.captureScreenHotkey ||
+      next.assessmentHotkey !== prev.assessmentHotkey
     ) {
       applyHotkeys()
     }

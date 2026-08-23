@@ -1,6 +1,6 @@
 import { globalShortcut, type BrowserWindow } from 'electron'
 import { uIOhook } from 'uiohook-napi'
-import { getSettings } from './settings'
+import { getSettings, updateSettings } from './settings'
 
 const MOUSE_PREFIX = 'Mouse:'
 
@@ -67,6 +67,23 @@ export function toggleSession(): void {
 export function triggerCaptureScreen(): void {
   const win = liveWindow()
   if (win && !win.webContents.isDestroyed()) win.webContents.send('hue:hotkey:capture-screen')
+}
+
+/**
+ * Arm or disarm assessment mode, and tell the renderer.
+ *
+ * The flip is written to settings rather than held in the renderer, because this
+ * hotkey fires while another app is focused and the state has to survive a
+ * window that may not even be visible. The event is what keeps the chip honest:
+ * without it the mode would be armed and the UI would still read as off.
+ */
+export function toggleAssessment(): void {
+  const next = !getSettings().assessmentEnabled
+  updateSettings({ assessmentEnabled: next })
+  const win = liveWindow()
+  if (win && !win.webContents.isDestroyed()) {
+    win.webContents.send('hue:assessment:changed', next)
+  }
 }
 
 // Map a uIOhook mouse button number to our internal name. On Windows libuiohook
@@ -145,6 +162,7 @@ export function applyHotkeys(): void {
   registerTrigger(s.summonHotkey, toggleVisibility)
   registerTrigger(s.startSessionHotkey, toggleSession)
   registerTrigger(s.captureScreenHotkey, triggerCaptureScreen)
+  registerTrigger(s.assessmentHotkey, toggleAssessment)
 }
 
 /** Start the input hook and bind the saved summon + start-session triggers. */

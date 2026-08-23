@@ -2450,3 +2450,34 @@ textarea.settings-input {
 .beat--stacked p {
   white-space: pre-line;
 }
+
+/* Armed state must be visible at a glance: this mode changes what every answer
+   looks like and which provider is billed, so it cannot be invisible. */
+.assess-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    background 200ms var(--ease-out),
+    color 200ms var(--ease-out),
+    border-color 200ms var(--ease-out);
+}
+.assess-chip:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.assess-chip--on {
+  background: var(--accent-tint-strong);
+  border-color: var(--accent-border);
+  color: var(--text);
+}
+.assess-chip:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}

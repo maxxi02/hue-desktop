@@ -533,6 +533,7 @@ function SessionReviewPanel({
 
 export default function App(): React.JSX.Element {
   const voice = useVoiceMode()
+  const [assessmentOn, setAssessmentOn] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   /**
    * The usage panel, which takes the main area the way the review does.
@@ -607,7 +608,16 @@ export default function App(): React.JSX.Element {
     void window.hue.settings.get().then((s) => {
       document.documentElement.style.setProperty('--bg-alpha', String(s.windowOpacity))
       setBundle(parseProfileBundle(s.profileBundleJson))
+      setAssessmentOn(s.assessmentEnabled)
     })
+  }, [])
+
+  // The global hotkey flips the setting in main, which may happen while Hue is
+  // not even the focused window. Without this the mode would be armed and the
+  // chip would still read as off, which is the one thing a state indicator must
+  // never do.
+  useEffect(() => {
+    return window.hue.hotkey.onAssessmentChanged((on) => setAssessmentOn(on))
   }, [])
 
   useEffect(() => {
@@ -881,6 +891,25 @@ export default function App(): React.JSX.Element {
         </div>
         <div className="header-pills">
           <div className={`state-pill state-pill--${voice.state}`}>{STATE_LABELS[voice.state]}</div>
+          {/* Kept in glance mode, unlike the mode pill above. That one is
+              standing information; this one changes what every answer looks
+              like and which provider is billed, so a user who cannot see
+              whether it is armed cannot tell why the answers changed. */}
+          {companion && (
+            <button
+              type="button"
+              className={assessmentOn ? 'assess-chip assess-chip--on' : 'assess-chip'}
+              aria-pressed={assessmentOn}
+              title="Answer coding questions with steps and code, using the assessment provider"
+              onClick={() => {
+                const next = !assessmentOn
+                setAssessmentOn(next)
+                void window.hue.settings.set({ assessmentEnabled: next })
+              }}
+            >
+              assess
+            </button>
+          )}
           {/* The mode pill is standing information — which side of the call Hue
               is listening to — and glance mode is where standing information
               costs the most. The state pill stays because it changes, and a

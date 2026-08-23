@@ -158,7 +158,10 @@ const hue = {
     /** Fired by the configurable start-session shortcut (or the tray) to start/stop a session. */
     onToggleSession: (cb: () => void): (() => void) => sub('hue:hotkey:toggle-session', cb),
     /** Fired by the configurable capture-screen shortcut to snapshot the screen. */
-    onCaptureScreen: (cb: () => void): (() => void) => sub('hue:hotkey:capture-screen', cb)
+    onCaptureScreen: (cb: () => void): (() => void) => sub('hue:hotkey:capture-screen', cb),
+    /** Assessment mode was armed or disarmed by the global hotkey. */
+    onAssessmentChanged: (cb: (on: boolean) => void): (() => void) =>
+      sub('hue:assessment:changed', cb)
   }
 }
 
