@@ -112,6 +112,10 @@ export const ASSESSMENT_SHAPE =
   'language the question implies. Write real, working code and keep it short enough to read at a ' +
   'glance. This part is never read aloud, so it is the only place in the response where ' +
   'punctuation, symbols and indentation are for the eye rather than the voice. ' +
+  'Write the code bare. Do not fence it in triple backticks, do not name the language, and do ' +
+  'not put a sentence in front of it: the app renders this part as code already, so a fence ' +
+  'arrives on screen as literal backticks and a sentence arrives as a line the user cannot run. ' +
+  'The first character under the marker must be the first character of the code. ' +
   'PART FOUR is optional and begins with "## complexity" and gives time and space cost in under ' +
   'about 20 words. Include it only when the question is about an algorithm. ' +
   'Omit "## code" if the question is about approach rather than implementation, and omit ' +

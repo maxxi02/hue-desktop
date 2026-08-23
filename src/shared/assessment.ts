@@ -136,3 +136,28 @@ export function captureRouting(s: HueSettings, providerHasVision: boolean): Capt
   if (!s.assessmentEnabled) return { assessment: false, fellBack: false }
   return { assessment: providerHasVision, fellBack: !providerHasVision }
 }
+
+/**
+ * Whether a screen capture may proceed, given who would receive the image.
+ *
+ * Pure booleans rather than provider names, so it carries no import and cannot
+ * join the module cycle between the provider tables. `ipc.ts` resolves the two
+ * providers and asks this.
+ *
+ * The rule the guard originally got wrong: with the mode armed, the image goes
+ * to the ASSESSMENT provider, so testing the drafting one refused captures by
+ * naming a provider that was never going to see the screenshot. That is exactly
+ * the setup this feature exists for, a cheap text-only model drafting prose
+ * beside a stronger one that can read a screen, so the feature was unusable in
+ * its own best configuration. Found by running it, not by reading it.
+ *
+ * Drafting still matters when armed: `captureRouting` falls back to it when the
+ * assessment provider cannot see, and that fallback needs somewhere to land.
+ */
+export function captureAllowed(
+  armed: boolean,
+  assessmentHasVision: boolean,
+  draftingHasVision: boolean
+): boolean {
+  return (armed && assessmentHasVision) || draftingHasVision
+}

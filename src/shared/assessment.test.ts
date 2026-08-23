@@ -1,6 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { assessmentRouting, captureRouting, looksLikeCodingQuestion } from './assessment.ts'
+import {
+  assessmentRouting,
+  captureAllowed,
+  captureRouting,
+  looksLikeCodingQuestion
+} from './assessment.ts'
 
 const CODING = [
   'How would you design an SSR function?',
@@ -121,4 +126,30 @@ test('a disarmed capture behaves exactly as it does today', () => {
 test('a disarmed capture never reports a fallback, even without vision', () => {
   const r = captureRouting({ assessmentEnabled: false } as never, false)
   assert.equal(r.fellBack, false)
+})
+
+/**
+ * The capture guard, which was wrong in the one configuration that matters.
+ *
+ * Verified against the running app: armed with a vision-capable assessment
+ * provider and a text-only drafting provider, the capture was refused and the
+ * message named the drafting provider, which was never going to receive the
+ * image.
+ */
+test('an armed capture is allowed when the assessment provider can see', () => {
+  assert.equal(captureAllowed(true, true, false), true)
+})
+
+test('an armed capture falls back to drafting, so drafting vision still allows it', () => {
+  assert.equal(captureAllowed(true, false, true), true)
+})
+
+test('an armed capture with neither provider able to see is refused', () => {
+  assert.equal(captureAllowed(true, false, false), false)
+})
+
+/** Disarmed, the assessment provider is irrelevant however capable it is. */
+test('a disarmed capture depends only on the drafting provider', () => {
+  assert.equal(captureAllowed(false, true, false), false)
+  assert.equal(captureAllowed(false, false, true), true)
 })

@@ -11,6 +11,7 @@ import {
   providerSupportsVision
 } from './openai-compat'
 import { providerFor } from './structured-llm'
+import { captureAllowed } from '../shared/assessment'
 import { transcribeCloud } from './asr-cloud'
 import { applyHotkeys } from './hotkeys'
 import {
@@ -419,10 +420,35 @@ export function registerIpc(): void {
     // 400 from the vendor at the worst possible moment. Asked of the table in
     // openai-compat rather than by name, so a new text-only provider is one
     // entry, not another branch here.
-    const provider = getSettings().llmProvider
-    if (!providerSupportsVision(provider)) {
+    //
+    // Asked of the provider that would actually RECEIVE the image, which is not
+    // always `llmProvider`. With assessment mode armed the capture goes to the
+    // assessment provider, and that is the configuration this feature was built
+    // for: a cheap, fast, text-only model drafting prose beside a stronger one
+    // that can read a screen. Testing `llmProvider` alone refused the capture by
+    // naming a provider that was never going to see it, which made the feature
+    // unusable in exactly the setup it exists to serve.
+    //
+    // The fallback in `captureScreen` handles the other direction: armed but the
+    // assessment provider cannot see, so the image goes to drafting instead.
+    // That case still needs drafting to support vision, which is what the second
+    // half of this condition keeps.
+    const s2 = getSettings()
+    const assessmentProvider = providerFor(
+      'assessment',
+      s2.llmProvider,
+      s2.ingestProvider,
+      s2.assessmentProvider
+    )
+    const allowed = captureAllowed(
+      s2.assessmentEnabled,
+      providerSupportsVision(assessmentProvider),
+      providerSupportsVision(s2.llmProvider)
+    )
+    if (!allowed) {
+      const blocker = s2.assessmentEnabled ? assessmentProvider : s2.llmProvider
       throw new Error(
-        `${provider} is text-only, so it can't read a screenshot. ` +
+        `${blocker} is text-only, so it can't read a screenshot. ` +
           'Switch the AI provider in Settings to use screen capture.'
       )
     }

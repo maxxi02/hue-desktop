@@ -173,3 +173,61 @@ test('prose beats are unaffected by the code-beat rules', () => {
   const beats = parseBeats('## what\n  Leading space is still trimmed here.')
   assert.equal(beats[0].text, 'Leading space is still trimmed here.')
 })
+
+/**
+ * Fenced code, which is what a real provider actually sends.
+ *
+ * ASSESSMENT_SHAPE asks for the code bare. Observed against a live model, it
+ * came back introduced by a sentence and wrapped in ```python. Rendered into the
+ * <pre> verbatim that is literal backticks and an unrunnable line, in the one
+ * block the user may be retyping into a shared editor.
+ */
+test('a code beat drops a markdown fence and the sentence above it', () => {
+  const raw =
+    '## code\n' +
+    "Let's explore a Python implementation:\n" +
+    '```python\n' +
+    'def f(x):\n' +
+    '    return x + 1\n' +
+    '```\n'
+  const beat = parseBeats(raw).find((b) => b.label === 'code')
+  assert.ok(beat)
+  assert.equal(beat.text, 'def f(x):\n    return x + 1')
+})
+
+test('a fence with no language tag is stripped too', () => {
+  const beat = parseBeats('## code\n```\nx = 1\n```\n').find((b) => b.label === 'code')
+  assert.equal(beat?.text, 'x = 1')
+})
+
+/**
+ * The opening fence lands long before the closing one. Waiting for a matched
+ * pair would render raw backticks for the whole time the code is arriving, on a
+ * surface someone is reading mid-interview.
+ */
+test('the opening fence is dropped while the code is still streaming', () => {
+  const beat = parseBeats('## code\n```python\ndef f(x):\n    return x').find(
+    (b) => b.label === 'code'
+  )
+  assert.equal(beat?.text, 'def f(x):\n    return x')
+})
+
+test('unfenced code, which is what the prompt asks for, is untouched', () => {
+  const beat = parseBeats('## code\ndef f(x):\n    return x + 1\n').find((b) => b.label === 'code')
+  assert.equal(beat?.text, 'def f(x):\n    return x + 1')
+})
+
+/** Indentation is the thing the whole block exists to preserve. */
+test('indentation inside a fence survives the strip', () => {
+  const raw = '## code\n```py\nclass A:\n    def f(self):\n        return 1\n```\n'
+  const beat = parseBeats(raw).find((b) => b.label === 'code')
+  assert.equal(beat?.text, 'class A:\n    def f(self):\n        return 1')
+})
+
+/** A fence is only ever stripped from code. Prose keeps whatever it was given. */
+test('a fence in a prose beat is left alone', () => {
+  const beat = parseBeats('## approach\nuse ```x``` carefully\n').find(
+    (b) => b.label === 'approach'
+  )
+  assert.equal(beat?.text, 'use ```x``` carefully')
+})

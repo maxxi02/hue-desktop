@@ -114,6 +114,39 @@ function isLabel(word: string): word is BeatLabel {
  * first line dedented and its second not. That is corruption on ordinary input,
  * not on an exotic one.
  */
+/** A markdown fence: three or more backticks, optionally followed by a language. */
+const FENCE = /^\s*`{3,}\s*[a-z0-9+#-]*\s*$/i
+
+/**
+ * Strip a markdown code fence, and anything the model wrote before it.
+ *
+ * `ASSESSMENT_SHAPE` asks for the code bare. Models fence it anyway, and often
+ * introduce it first ("Let's explore a Python implementation:"), which was
+ * observed against a real provider rather than guessed. Rendered into the <pre>
+ * verbatim, that reaches the user as literal backticks and a sentence they
+ * cannot run, in the one block they may be retyping into a shared editor.
+ *
+ * Asked in the prompt AND enforced here, on the principle `resume-grounding.ts`
+ * already applies to invented employers: an instruction the model can ignore is
+ * not a guarantee, so the thing that matters is checked rather than requested.
+ *
+ * **Streaming is why the two fences are handled separately.** The opening fence
+ * lands long before the closing one, so waiting for a matched pair would render
+ * raw backticks for the whole time the code is arriving. The opening fence (and
+ * any preamble above it) is dropped as soon as it is seen; the closing fence is
+ * dropped if and when it arrives.
+ *
+ * Untouched when there is no fence, which is the compliant case and the one the
+ * prompt asks for.
+ */
+function stripCodeFence(lines: string[]): string[] {
+  const open = lines.findIndex((l) => FENCE.test(l))
+  if (open === -1) return lines
+  const rest = lines.slice(open + 1)
+  const close = rest.findIndex((l) => FENCE.test(l))
+  return close === -1 ? rest : rest.slice(0, close)
+}
+
 function trimBlankLines(lines: string[]): string {
   let start = 0
   let end = lines.length
@@ -129,7 +162,8 @@ export function parseBeats(raw: string): Beat[] {
 
   const flush = (): void => {
     // A code body is line-trimmed; prose is string-trimmed. See `trimBlankLines`.
-    const body = label === 'code' ? trimBlankLines(buffer) : buffer.join('\n').trim()
+    const body =
+      label === 'code' ? trimBlankLines(stripCodeFence(buffer)) : buffer.join('\n').trim()
     // An empty body is a marker whose prose has not arrived yet. Emitting it
     // would render a bare tag against blank space.
     if (body.length > 0) beats.push({ label, text: body })
