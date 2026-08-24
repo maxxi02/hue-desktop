@@ -167,8 +167,30 @@ test('the summary counts open gaps, since that is the only actionable half', () 
 
 // --- Ingest contract additions (ported from hue-ingest/src/profile.ts) ---
 
-test('BUNDLE_VERSION stays 1 — an existing saved bundle must keep loading', () => {
-  assert.equal(BUNDLE_VERSION, 1)
+/*
+ * This used to assert `BUNDLE_VERSION === 1`, which pinned the constant rather
+ * than the property the name describes. The version moved to 2 when mined
+ * stories gained a verified `evidence` quote, and the contract that actually
+ * matters survived it: a bundle written by an older build still loads.
+ *
+ * Asserting the property instead means the next bump is free where it is
+ * harmless, and still fails here the moment one of them stops old bundles
+ * loading — which is the only thing this test was ever for.
+ */
+test('a bundle written by an older version still loads', () => {
+  const old = { ...bundle(), version: 1 }
+  // No `evidence` on its stories, because the field did not exist yet.
+  assert.ok(old.stories.every((s) => !('evidence' in s)))
+
+  const parsed = parseProfileBundle(JSON.stringify(old))
+  assert.ok(parsed, 'a version 1 bundle no longer parses')
+  assert.equal(parsed.version, 1)
+  assert.equal(parsed.stories.length, old.stories.length)
+})
+
+test('BUNDLE_VERSION only ever moves forward', () => {
+  assert.ok(Number.isInteger(BUNDLE_VERSION))
+  assert.ok(BUNDLE_VERSION >= 1)
 })
 
 test('every high-risk competency is a real competency', () => {

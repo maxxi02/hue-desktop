@@ -140,6 +140,7 @@ function story(overrides: Partial<Story> = {}): Story {
     action: 'Replaced the synchronous pricing call.',
     result: 'It got faster.',
     metrics: [],
+    evidence: 'Cut p99 checkout latency by 40%',
     source: 'resume',
     ...overrides
   }
@@ -200,4 +201,93 @@ test('pruning strips an unverified metric from a mined story but keeps the story
   const profile = profileWith({ roles: [role()] })
   const pruned = pruneUngrounded(profile, [story({ metrics: ['40%', '92% adoption'] })], RESUME)
   assert.deepEqual(pruned.stories[0].metrics, ['40%'])
+})
+
+/*
+ * The evidence quote.
+ *
+ * These cover the hole that let a call-centre résumé — no roles, no metrics —
+ * produce twenty-five stories about capstone projects and systems analysis
+ * classes. Both of the old story checks were proxies for a document that names
+ * employers and prints figures, so on a résumé with neither they asserted
+ * nothing at all and every fabrication passed a gate that never ran.
+ */
+
+test('a story whose evidence quote is absent from the document is an error', () => {
+  const profile = profileWith({ roles: [role()] })
+  const issues = checkStories(
+    [story({ evidence: 'Led the Q3 capstone project in my IT program' })],
+    profile,
+    RESUME
+  )
+  assert.equal(issues.length, 1)
+  assert.equal(issues[0].severity, 'error')
+  assert.equal(issues[0].field, 'evidence')
+  assert.match(issues[0].message, /not in the source document/)
+})
+
+test('a story whose evidence quote is in the document passes', () => {
+  const profile = profileWith({ roles: [role()] })
+  assert.deepEqual(
+    checkStories([story({ evidence: 'Led the migration of 30 services' })], profile, RESUME),
+    []
+  )
+})
+
+test('an evidence quote is matched through the punctuation a PDF layer mangles', () => {
+  const profile = profileWith({ roles: [role()] })
+  // The model quotes what it read; the text layer it read had a different dash
+  // and a stray comma. Failing on that would reject a correct extraction.
+  assert.deepEqual(
+    checkStories([story({ evidence: 'Acme Robotics — 2021 - 2024' })], profile, RESUME),
+    []
+  )
+})
+
+test('a story with no evidence quote at all is an error', () => {
+  const profile = profileWith({ roles: [role()] })
+  const issues = checkStories([story({ evidence: '' })], profile, RESUME)
+  assert.equal(issues.length, 1)
+  assert.equal(issues[0].field, 'evidence')
+  assert.match(issues[0].message, /cites no evidence/)
+})
+
+test('a gap-answer story needs no evidence quote', () => {
+  const profile = profileWith({ roles: [role()] })
+  // The whole point of the gap flow is recording what the résumé never said.
+  assert.deepEqual(
+    checkStories([story({ source: 'gap-answer', evidence: '' })], profile, RESUME),
+    []
+  )
+})
+
+test('pruning drops an ungrounded story rather than detaching it', () => {
+  const profile = profileWith({ roles: [role()] })
+  const pruned = pruneUngrounded(
+    profile,
+    [
+      story({ id: 'real', evidence: 'Built the ingestion pipeline' }),
+      story({ id: 'invented', evidence: 'Presented at the STI College capstone defence' })
+    ],
+    RESUME
+  )
+
+  assert.deepEqual(
+    pruned.stories.map((s) => s.id),
+    ['real']
+  )
+  assert.ok(pruned.dropped.some((d) => d.field === 'evidence'))
+})
+
+test('pruning keeps a gap-answer story that no quote could support', () => {
+  const profile = profileWith({ roles: [role()] })
+  const pruned = pruneUngrounded(
+    profile,
+    [story({ id: 'told-me', source: 'gap-answer', evidence: '' })],
+    RESUME
+  )
+  assert.deepEqual(
+    pruned.stories.map((s) => s.id),
+    ['told-me']
+  )
 })

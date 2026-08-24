@@ -120,6 +120,36 @@ function digitsOf(text: string): string[] {
   )
 }
 
+/**
+ * Below this, a "quote" is too short to be evidence of anything.
+ *
+ * `containsClaim` falls back to all-tokens-present, and on a two or three word
+ * span that fallback is close to free: "team project" is in half the documents
+ * ever written. Twelve normalised characters is roughly three real words, which
+ * is the shortest span that can still identify a passage rather than a topic.
+ */
+const MIN_EVIDENCE_CHARS = 12
+
+/**
+ * Is this story's quote actually in the document?
+ *
+ * The check the file's own header says cannot be done on STAR prose — and it is
+ * right about prose. So the model is required to hand over the span it worked
+ * from, and *that* is checked. A paraphrase of a real accomplishment yields a
+ * quote; an invented accomplishment cannot.
+ *
+ * This is the gate's only defence on a résumé with no employment history and no
+ * printed figures. Both of the older story checks — role reference and metric
+ * list — are proxies for a document that has those things, and on a one-page
+ * fresher résumé they assert nothing whatsoever. That is not hypothetical: it
+ * is how twenty-five stories about a software degree were admitted onto a
+ * call-centre profile and then quoted back at the user as questions.
+ */
+export function evidencePresent(haystack: string, evidence: string): boolean {
+  if (normalise(evidence).length < MIN_EVIDENCE_CHARS) return false
+  return containsClaim(haystack, evidence)
+}
+
 function metricPresent(haystack: string, value: string): boolean {
   const digits = digitsOf(value)
   // No digits at all means it isn't really a metric; let the text check decide.
@@ -244,6 +274,17 @@ export function checkStories(
       })
     }
     if (story.source === 'gap-answer') return
+    if (!evidencePresent(sourceText, story.evidence ?? '')) {
+      issues.push({
+        severity: 'error',
+        path: `stories[${i}].evidence`,
+        field: 'evidence',
+        value: story.evidence ?? '',
+        message: story.evidence
+          ? `Story "${story.id}" quotes "${story.evidence}", which is not in the source document.`
+          : `Story "${story.id}" cites no evidence from the source document.`
+      })
+    }
     for (const metric of story.metrics) {
       if (verified.has(normalise(metric))) continue
       if (metricPresent(sourceText, metric)) continue
@@ -307,6 +348,29 @@ export function pruneUngrounded(
 
   const roleIds = new Set(keptRoles.map((r) => r.id))
   const keptStories = stories
+    /*
+     * A story with no quote in the document is dropped outright, and this is
+     * the one place in this file where dropping beats detaching.
+     *
+     * Everywhere else the rule is the opposite: a story whose *role* was
+     * dropped keeps its narrative, because the narrative is still the user's
+     * own and a bank with holes in it is what makes the model improvise. That
+     * reasoning depends on the story being true. A story the document does not
+     * support is not the user's own — nobody wrote it, and keeping it is how
+     * an invention reaches a live interview with the user's name on it.
+     */
+    .filter((s) => {
+      if (s.source === 'gap-answer') return true
+      if (evidencePresent(sourceText, s.evidence ?? '')) return true
+      dropped.push({
+        severity: 'error',
+        path: `stories[${s.id}]`,
+        field: 'evidence',
+        value: s.evidence ?? '',
+        message: `Story "${s.id}" is not supported by anything in the source document.`
+      })
+      return false
+    })
     // A story whose role was dropped loses its anchor. Keep the story but
     // detach it rather than deleting it — the narrative is still the user's
     // own, and a story bank with holes in it is what makes the model improvise.

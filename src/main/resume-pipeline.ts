@@ -13,6 +13,7 @@ import {
 import type { Gap, Profile, ProfileBundle, Story } from './resume-types.ts'
 import {
   GAP_ANSWER_SCHEMA,
+  GAP_DRAFT_SCHEMA,
   GAP_QUESTIONS_SCHEMA,
   JD_SCHEMA,
   PROFILE_SCHEMA,
@@ -34,9 +35,52 @@ import {
 
 /** ADR-004 budgets the whole bundle at ~3k tokens. Past this it stops being cheap to cache. */
 export const MAX_BUNDLE_TOKENS = 6000
-/** Profile & Ingest specifies 15–25 mined stories. */
+/** Profile & Ingest specifies 15–25 mined stories — for a résumé that can support them. */
 export const MAX_STORIES = 25
 export const MIN_STORIES = 15
+
+/**
+ * How much story a single anchor in the document is worth.
+ *
+ * A role is the rich one: a job has a beginning, a hard problem, a decision, a
+ * conflict and a departure in it. An education line is worth about half that,
+ * and a skills section — however long — is worth one chunk however many entries
+ * it has, because a list of adjectives is not experience and treating it as
+ * such is what produced the failure below.
+ */
+const STORIES_PER_ROLE = 4
+const STORIES_PER_EDUCATION = 2
+const STORIES_FOR_SKILLS = 2
+
+/**
+ * How many stories this particular document can honestly support.
+ *
+ * The mining prompt used to ask for 15–25 unconditionally, and that turned out
+ * to be the whole bug. Handed a one-page résumé with no employment history, a
+ * model told to produce fifteen stories does not produce three and stop — it
+ * produces fifteen, because that is what it was asked for, and eleven of them
+ * are furniture. The observed case invented a capstone project, a systems
+ * analysis class, a peer-tutoring stint and a part-time job for a candidate
+ * whose résumé mentions none of them, and the gap scan then quoted those back
+ * as questions about "the software development project".
+ *
+ * So the count is derived from the document rather than asserted at it. A
+ * résumé with two jobs gets asked for a real bank; a résumé with none gets
+ * asked for a handful, and the rest of the bank is built the honest way, out of
+ * gap answers the candidate actually gives.
+ *
+ * `min` is half the ceiling rather than `MIN_STORIES`, because a floor that
+ * exceeds what the document holds is the same instruction to invent, one
+ * sentence further down.
+ */
+export function storyBudget(profile: Profile): { min: number; max: number } {
+  const anchors =
+    profile.roles.length * STORIES_PER_ROLE +
+    profile.education.length * STORIES_PER_EDUCATION +
+    (profile.skills.length > 0 ? STORIES_FOR_SKILLS : 0)
+  const max = Math.max(1, Math.min(MAX_STORIES, anchors))
+  return { min: Math.max(1, Math.min(MIN_STORIES, Math.ceil(max / 2))), max }
+}
 /** "5–8 targeted questions in-app" — more than that and nobody finishes the flow. */
 export const MAX_GAP_QUESTIONS = 8
 
@@ -78,6 +122,16 @@ const MAX_TECHNOLOGIES_PER_PROBE = 3
 
 const MAX_FIELD_CHARS = 1200
 const MAX_METRICS_PER_STORY = 6
+/**
+ * A quote long enough to identify a passage and short enough not to be one.
+ *
+ * Generous rather than tight: clipping mid-quote turns a grounded story into a
+ * dropped one, and the field is stored in a bundle that is budgeted in
+ * thousands of tokens, so a few hundred characters per story is affordable.
+ */
+const MAX_EVIDENCE_CHARS = 400
+/** Matches the clamp `buildGaps` applies to a generated question, so an edit cannot outgrow one. */
+const MAX_QUESTION_CHARS = 400
 
 /**
  * Output budget per step, sized to what that step actually emits.
@@ -104,6 +158,7 @@ const STEP_TOKENS = {
   gapScan: 1_000,
   techProbe: 1_500,
   gapAnswer: 1_500,
+  gapDraft: 800,
   jobDescription: 3_000
 } as const
 
@@ -194,9 +249,20 @@ For each story:
 - \`situation\` / \`task\` / \`action\` / \`result\`: two or three sentences each, first person.
 - \`metrics\`: only figures printed in the resume. Empty is the correct answer when the
   resume quantifies nothing — the candidate will be asked to fill that in later.
+- \`evidence\`: the span of the resume this story is built on, **copied out word for word**.
+  Not a summary of it, not your own description of where it came from — the characters as
+  they appear in the document, long enough to identify the passage. This is checked against
+  the document automatically, and a story whose quote is not found there is deleted.
+  If you cannot point at a passage, there is no story to mine: leave it out.
 
 Cover the roles broadly rather than exhausting the most recent one, and prefer distinct
-situations over several angles on the same project.`
+situations over several angles on the same project.
+
+You are given a number of stories to mine, and it is derived from how much the document
+actually contains. It is a ceiling, never a quota. Returning four stories from a one-page
+resume is a correct and complete answer; padding to the ceiling with plausible material the
+document does not contain is the single worst thing you can do here, because the candidate
+will be asked about it in an interview and will not recognise their own life.`
 
 const GAP_SYSTEM = `You find what a candidate's story bank cannot answer, and ask about it.
 
@@ -272,6 +338,32 @@ the result is what it did. Keep every technology name, version, and figure they 
 spelled the way they spelled it: those are the details that make the story theirs, and
 paraphrasing "Postgres 14 with logical replication" into "a relational database" throws
 away the only part an interviewer will follow up on.`
+
+const GAP_DRAFT_SYSTEM = `You write a candidate a first draft of their own answer, from their own material.
+
+You are given their verified profile and every story already in their bank, and one question
+they have been asked. Write the answer **in their voice, first person**, as a short paragraph
+they would say out loud — not a bulleted structure, not an essay.
+
+The single rule, and it outranks everything else: **every fact in the draft must already be
+in the material you were given.** A company, a technology, a number, a job title, a team
+size, a date — if it is not in the profile or in a story, it does not go in the draft. You
+are re-aiming what they have already told us at a question they have not yet answered. You
+are not remembering anything on their behalf.
+
+This is the opposite of a helpful assistant filling in blanks. The candidate reads this draft
+back in a live interview. A plausible detail you supplied is one they cannot defend, and they
+will not know which sentence to distrust.
+
+Where the material is thin, the draft is thin, and that is right — leave the specifics they
+would have to supply as an obvious blank in the prose ("the number I remember is …") rather
+than choosing one.
+
+If the material genuinely has nothing to say about this question — no story touches it, the
+profile does not cover that ground — set \`usable\` to false, set \`draft\` to null, and say in
+\`reason\`, in one sentence and in plain language, what is missing. That is a good outcome, not
+a failure: it tells the candidate this is a question only they can answer, which is exactly
+what the gap flow exists to find out.`
 
 const JD_SYSTEM = `You prepare a candidate for one specific job description.
 
@@ -457,7 +549,11 @@ export function normaliseProfile(raw: unknown): Profile {
   }
 }
 
-export function normaliseStories(raw: unknown, source: Story['source'] = 'resume'): Story[] {
+export function normaliseStories(
+  raw: unknown,
+  source: Story['source'] = 'resume',
+  limit: number = MAX_STORIES
+): Story[] {
   const list = Array.isArray((raw as { stories?: unknown })?.stories)
     ? (raw as { stories: unknown[] }).stories
     : []
@@ -480,11 +576,15 @@ export function normaliseStories(raw: unknown, source: Story['source'] = 'resume
         action,
         result: clamp(story.result),
         metrics: stringList(story.metrics, MAX_METRICS_PER_STORY),
+        // Kept verbatim and clipped, never repaired: the whole value of this
+        // field is that it is the document's own characters, so a normalised
+        // one would pass a check it should have failed.
+        evidence: clamp(story.evidence, MAX_EVIDENCE_CHARS),
         source
       }
     })
     .filter((story): story is Story => story !== null)
-    .slice(0, MAX_STORIES)
+    .slice(0, limit)
 }
 
 /**
@@ -823,6 +923,10 @@ export async function runIngest(
   })
   const rawProfile = normaliseProfile(extracted)
 
+  // Worked out before the call and enforced after it. Asking is not enough: the
+  // ceiling exists because a model overruns one, so a model has to be unable to.
+  const budget = storyBudget(rawProfile)
+
   opts.onPhase?.('mining-stories')
   const mined = await llm.structured<unknown>({
     label: 'story mining',
@@ -832,9 +936,9 @@ export async function runIngest(
     user:
       `Structured profile:\n${JSON.stringify(rawProfile, null, 2)}\n\n` +
       `Resume:\n\n${sourceText}\n\n` +
-      `Mine ${MIN_STORIES}–${MAX_STORIES} stories.`
+      `Mine ${budget.min}–${budget.max} stories.`
   })
-  const rawStories = normaliseStories(mined)
+  const rawStories = normaliseStories(mined, 'resume', budget.max)
 
   // The grounding gate. Everything above is a proposal; nothing past this line
   // has a claim in it that the document does not support.
@@ -914,7 +1018,10 @@ export async function runIngest(
       storiesMined: rawStories.length,
       storiesKept: pruned.stories.length,
       estimatedTokens: estimateTokens(bundle),
-      thin: pruned.stories.length < MIN_STORIES,
+      // Measured against what this document could support, not against a
+      // constant. A résumé budgeted at six stories that yields six is not thin;
+      // calling it thin would make the warning permanent and therefore silent.
+      thin: pruned.stories.length < budget.min,
       overusedTags: overusedTags(pruned.stories)
     }
   }
@@ -1071,6 +1178,115 @@ export async function answerGap(
     accepted: true,
     reason: null
   }
+}
+
+export interface GapDraft {
+  /** Prose for the textarea, or null when the bank gave the drafter nothing to work from. */
+  text: string | null
+  /** Why there is no draft, in the user's language. Null on success. */
+  reason: string | null
+}
+
+/**
+ * Drafts an answer to one gap question out of the candidate's own material.
+ *
+ * Deliberately does **not** touch the bundle. A draft is a proposal for the
+ * textarea and nothing else: it is saved, if at all, by the user pressing Next,
+ * which runs `answerGap` on whatever they actually left in the box. That split
+ * is the entire safety property. The model can suggest what to say; only the
+ * candidate can decide it is true, and the flow makes them decide it by having
+ * them look at it.
+ *
+ * Reads the bank, never the source document — a story in the bank has already
+ * been through the grounding gate, which is what makes it safe to build on.
+ */
+export async function draftGapAnswer(
+  bundle: ProfileBundle,
+  gapId: string,
+  llm: LlmClient
+): Promise<GapDraft> {
+  const gap = bundle.gaps.find((g) => g.id === gapId)
+  if (!gap) throw new Error(`Unknown gap: ${gapId}`)
+
+  const raw = await llm.structured<{ usable?: unknown; reason?: unknown; draft?: unknown }>({
+    label: 'gap draft',
+    maxTokens: STEP_TOKENS.gapDraft,
+    system: GAP_DRAFT_SYSTEM,
+    schema: GAP_DRAFT_SCHEMA,
+    user:
+      `Profile:\n${JSON.stringify(
+        {
+          headline: bundle.profile.identity.headline,
+          roles: bundle.profile.roles,
+          education: bundle.profile.education,
+          skills: bundle.profile.skills,
+          metrics: bundle.profile.metrics
+        },
+        null,
+        2
+      )}\n\n` +
+      `Stories already in the bank:\n${JSON.stringify(
+        bundle.stories.map((s) => ({
+          id: s.id,
+          role: s.roleId,
+          competencies: s.competencies,
+          situation: s.situation,
+          task: s.task,
+          action: s.action,
+          result: s.result,
+          metrics: s.metrics
+        })),
+        null,
+        2
+      )}\n\n` +
+      `Competency being asked about: ${gap.competency}\n` +
+      (gap.subject ? `Technologies the question is about: ${gap.subject}\n` : '') +
+      `Question: ${gap.question}`,
+    effort: 'medium'
+  })
+
+  const draft = clampNullable(raw.draft, MAX_FIELD_CHARS)
+  if (raw.usable !== true || !draft) {
+    return {
+      text: null,
+      reason:
+        clampNullable(raw.reason, 300) ??
+        'There is nothing in your résumé or your saved stories that answers this one — it needs to come from you.'
+    }
+  }
+  return { text: draft, reason: null }
+}
+
+/**
+ * Rewrites one gap question's text.
+ *
+ * The user owns the wording. A generated question can land on the wrong sense of
+ * a word, name a project they think of by another name, or ask about something
+ * they would rather answer from a different angle — and until now the only
+ * remedy was a rescan, which regenerates a *different* question rather than the
+ * one they wanted.
+ *
+ * What it is a question *about* is not editable, and that is the point of the
+ * narrow signature: `competency` decides where the resulting story lands in the
+ * bank and `status` records a decision already made, so letting a text edit move
+ * either would quietly detach the answer from the thing it answers.
+ *
+ * Reseals, because the bundle is the prompt cache key.
+ */
+export function editGap(bundle: ProfileBundle, gapId: string, question: string): ProfileBundle {
+  const next = clamp(question, MAX_QUESTION_CHARS)
+  if (!next) throw new Error('A question cannot be empty.')
+  if (!bundle.gaps.some((g) => g.id === gapId)) throw new Error(`Unknown gap: ${gapId}`)
+
+  return sealBundle(
+    {
+      version: bundle.version,
+      profile: bundle.profile,
+      stories: bundle.stories,
+      gaps: bundle.gaps.map((g) => (g.id === gapId ? { ...g, question: next } : g))
+    },
+    new Date().toISOString()
+  )
 }
 
 /**

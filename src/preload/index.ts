@@ -86,6 +86,23 @@ const hue = {
     /** Fold a typed answer for one gap question back into the story bank. */
     answerGap: (gapId: string, text: string): Promise<GapAnswerOutcome> =>
       ipcRenderer.invoke('hue:profile:answer-gap', gapId, text),
+    /**
+     * Draft an answer to one question from the résumé and the verified bank.
+     *
+     * Returns prose for the textarea and writes nothing: the draft becomes a
+     * story only when the user presses Next, through `answerGap`, on whatever
+     * they have edited it into. `draft.text` is null when the bank had no basis
+     * for an answer, and `draft.reason` says so in the user's language.
+     */
+    draftGapAnswer: (
+      gapId: string
+    ): Promise<
+      | { ok: true; draft: { text: string | null; reason: string | null } }
+      | { ok: false; message: string }
+    > => ipcRenderer.invoke('hue:profile:draft-gap-answer', gapId),
+    /** Reword one question. No model call — the words are the user's. */
+    editGap: (gapId: string, question: string): Promise<ProfileBundle> =>
+      ipcRenderer.invoke('hue:profile:edit-gap', gapId, question),
     /** Record that the user has no story for this gap. Costs no model call. */
     skipGap: (gapId: string): Promise<ProfileBundle> =>
       ipcRenderer.invoke('hue:profile:skip-gap', gapId),

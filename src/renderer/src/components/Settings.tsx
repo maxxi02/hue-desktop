@@ -14,7 +14,7 @@ import type {
   StealthStatus,
   WindowAnchor
 } from '@shared/types'
-import { describeBundle, parseProfileBundle } from '../../../shared/profile'
+import { BUNDLE_VERSION, describeBundle, parseProfileBundle } from '../../../shared/profile'
 import {
   describeJobSpec,
   parseJobSpec,
@@ -692,6 +692,16 @@ export function Settings({
   const [gapDrafts, setGapDrafts] = useState<Record<string, string>>({})
   const [gapBusy, setGapBusy] = useState<string | null>(null)
   const [gapNotes, setGapNotes] = useState<Record<string, string>>({})
+  /**
+   * The question currently being reworded, and the text so far.
+   *
+   * Separate from `gapDrafts` — which holds answers — because they are two
+   * different pieces of writing about the same gap and a user may well have
+   * both on the go. Sharing one map would silently discard whichever they
+   * started first.
+   */
+  const [gapEditId, setGapEditId] = useState<string | null>(null)
+  const [gapEditText, setGapEditText] = useState('')
   // The question on screen, as an id. See `lib/gapCursor.ts` for why an index
   // cannot work here.
   const [gapCursorId, setGapCursorId] = useState<string | null>(null)
@@ -1393,6 +1403,72 @@ export function Settings({
           [gapId]: outcome.reason ?? 'That answer did not contain a story we could use.'
         }))
       }
+    } finally {
+      setGapBusy(null)
+    }
+  }
+
+  /**
+   * Asks the model for a first draft and puts it in the textarea.
+   *
+   * Writes to `gapDrafts` and nowhere else, so a draft is in exactly the same
+   * place — and exactly as unsaved — as something the user typed. That is the
+   * point: it arrives as a starting point to argue with, not as an answer that
+   * has already been accepted on their behalf.
+   */
+  const onDraftGapAnswer = async (gapId: string): Promise<void> => {
+    setGapBusy(gapId)
+    setGapNotes((n) => ({ ...n, [gapId]: '' }))
+    try {
+      const outcome = await window.hue.profile.draftGapAnswer(gapId)
+      if (!outcome.ok) {
+        setGapNotes((n) => ({ ...n, [gapId]: outcome.message }))
+        return
+      }
+      if (outcome.draft.text === null) {
+        // No basis in the bank. Saying so is the honest outcome and the useful
+        // one — it tells the user this is a question only they can answer.
+        setGapNotes((n) => ({
+          ...n,
+          [gapId]:
+            outcome.draft.reason ??
+            'There is nothing in your résumé that answers this — it has to come from you.'
+        }))
+        return
+      }
+      setGapDrafts((d) => ({ ...d, [gapId]: outcome.draft.text as string }))
+      setGapNotes((n) => ({
+        ...n,
+        [gapId]: 'Drafted from your résumé. Edit it so it sounds like you before saving.'
+      }))
+    } finally {
+      setGapBusy(null)
+    }
+  }
+
+  const onStartEditGap = (gapId: string, question: string): void => {
+    setGapEditId(gapId)
+    setGapEditText(question)
+  }
+
+  const onSaveEditGap = async (gapId: string): Promise<void> => {
+    const question = gapEditText.trim()
+    // Nothing to save, and blanking the question is not a thing the user can
+    // mean — treat it as a cancel rather than an error they have to dismiss.
+    if (!question) {
+      setGapEditId(null)
+      return
+    }
+    setGapBusy(gapId)
+    try {
+      const bundle = await window.hue.profile.editGap(gapId, question)
+      markFieldsPersisted({ profileBundleJson: JSON.stringify(bundle) })
+      setGapEditId(null)
+    } catch (err) {
+      setGapNotes((n) => ({
+        ...n,
+        [gapId]: err instanceof Error ? err.message : 'Could not save that question.'
+      }))
     } finally {
       setGapBusy(null)
     }
@@ -2494,6 +2570,25 @@ export function Settings({
                 {profileBundle ? (
                   <div style={{ marginTop: 8, fontSize: 13 }}>
                     <div>{describeBundle(profileBundle)}</div>
+                    {/*
+                    Named rather than silently repaired, because nothing here can
+                    repair it: the résumé these stories were mined from is not
+                    kept, so there is no document left to check them against. The
+                    only honest options are to say so and to offer the re-upload
+                    that would fix it.
+
+                    Worth a banner rather than a footnote — a v1 bank on a résumé
+                    with no employment history and no printed figures passed a
+                    gate that, on that shape of document, checked nothing at all.
+                  */}
+                    {profileBundle.version < BUNDLE_VERSION && (
+                      <div className="gap-stale">
+                        These stories were mined before Hue checked each one against your résumé, so
+                        some may describe work you never did — and the questions below are written
+                        from them. Replacing your résumé above rebuilds the bank with every story
+                        verified.
+                      </div>
+                    )}
                     {currentGap ? (
                       /*
                       One question at a time. The whole list used to render at
@@ -2554,7 +2649,55 @@ export function Settings({
                             </span>
                           )}
                         </div>
-                        <div className="gap-question">{currentGap.question}</div>
+                        {gapEditId === currentGap.id ? (
+                          <div className="gap-edit">
+                            <textarea
+                              className="settings-input"
+                              rows={3}
+                              autoFocus
+                              value={gapEditText}
+                              disabled={gapBusy === currentGap.id}
+                              onChange={(e) => setGapEditText(e.target.value)}
+                            />
+                            <div className="gap-edit-nav">
+                              <button
+                                type="button"
+                                className="link-btn"
+                                onClick={() => setGapEditId(null)}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                className="link-btn"
+                                disabled={gapBusy === currentGap.id || !gapEditText.trim()}
+                                onClick={() => void onSaveEditGap(currentGap.id)}
+                              >
+                                Save question
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="gap-question-row">
+                            <div className="gap-question">{currentGap.question}</div>
+                            {/*
+                            A generated question can land on the wrong sense of a
+                            word or name a project the user thinks of by another
+                            name. Rewording it beats the old remedy, which was a
+                            rescan — that regenerates a different question rather
+                            than the one they wanted.
+                          */}
+                            <button
+                              type="button"
+                              className="link-btn gap-edit-btn"
+                              disabled={gapBusy === currentGap.id}
+                              onClick={() => onStartEditGap(currentGap.id, currentGap.question)}
+                              title="Reword this question"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        )}
                         <textarea
                           className="settings-input"
                           rows={3}
@@ -2579,6 +2722,21 @@ export function Settings({
                             }
                           >
                             ← Back
+                          </button>
+                          {/*
+                          Sits beside "I don't have one" rather than beside
+                          Next, because both are ways out of a blank page and
+                          the choice between them is the one the user is
+                          actually making. It fills the box; it never saves.
+                        */}
+                          <button
+                            type="button"
+                            className="link-btn"
+                            disabled={gapBusy === currentGap.id}
+                            onClick={() => void onDraftGapAnswer(currentGap.id)}
+                            title="Draft an answer from your résumé and saved stories"
+                          >
+                            {gapBusy === currentGap.id ? 'Drafting…' : 'Draft with AI'}
                           </button>
                           <button
                             type="button"

@@ -24,6 +24,8 @@ import { startRelay, stopRelay, getRelayStatus, publishRelayEvent } from './rela
 import {
   answerProfileGap,
   deleteProfile,
+  draftProfileGapAnswer,
+  editProfileGap,
   ingestResume,
   refreshBundle,
   rescanProfileGaps,
@@ -274,6 +276,22 @@ export function registerIpc(): void {
     // Bounded because the payload crosses a process boundary and the answer is
     // pasted straight into a prompt.
     return answerProfileGap(gapId, String(text ?? '').slice(0, 10_000))
+  })
+
+  // Drafting is its own channel rather than a flag on answer-gap, because the
+  // two do opposite things to the bundle: one writes to it, this one is
+  // forbidden to. Keeping them apart means that property is visible at the
+  // boundary rather than buried in a branch.
+  ipcMain.handle('hue:profile:draft-gap-answer', async (_e, gapId: string) => {
+    if (typeof gapId !== 'string' || !gapId) throw new Error('A gap id is required.')
+    return draftProfileGapAnswer(gapId)
+  })
+
+  ipcMain.handle('hue:profile:edit-gap', async (_e, gapId: string, question: string) => {
+    if (typeof gapId !== 'string' || !gapId) throw new Error('A gap id is required.')
+    // Bounded here as well as in the pipeline: the payload crosses a process
+    // boundary and ends up in a prompt.
+    return editProfileGap(gapId, String(question ?? '').slice(0, 2_000))
   })
 
   ipcMain.handle('hue:profile:skip-gap', async (_e, gapId: string) => {

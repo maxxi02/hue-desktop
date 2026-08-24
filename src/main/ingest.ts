@@ -1,5 +1,12 @@
 import { extractResume, type ExtractResult } from './resume-extract.ts'
-import { answerGap, rescanGaps, runIngest } from './resume-pipeline.ts'
+import {
+  answerGap,
+  draftGapAnswer,
+  editGap,
+  rescanGaps,
+  runIngest,
+  type GapDraft
+} from './resume-pipeline.ts'
 import { sealBundle } from './resume-profile.ts'
 import { clientForSettings, LlmRefusal, MissingApiKey, quotaMessage } from './structured-llm.ts'
 import {
@@ -176,6 +183,51 @@ export async function rescanProfileGaps(): Promise<ProfileBundle> {
     llm
   )) as unknown as ProfileBundle
 
+  const { updateSettings } = await settingsModule()
+  updateSettings({ profileBundleJson: JSON.stringify(next) })
+  return next
+}
+
+/**
+ * Drafts an answer to one question and returns it. Persists nothing.
+ *
+ * The absence of a write here is the feature, not an omission. A draft goes to
+ * the textarea, where the candidate reads it and decides; `answerProfileGap` is
+ * still the only path into the bank, and it still runs on what they left in the
+ * box rather than on what the model proposed.
+ */
+export async function draftProfileGapAnswer(
+  gapId: string
+): Promise<{ ok: true; draft: GapDraft } | { ok: false; message: string }> {
+  const bundle = await currentBundle()
+  if (!bundle) return { ok: false, message: 'No profile is linked yet. Upload your resume first.' }
+
+  try {
+    const llm = await clientForSettings('ingest')
+    // Same single conversion point as `answerProfileGap`, and safe for a
+    // stronger reason: this pass only reads the bundle.
+    const draft = await draftGapAnswer(
+      bundle as unknown as Parameters<typeof draftGapAnswer>[0],
+      gapId,
+      llm
+    )
+    return { ok: true, draft }
+  } catch (err) {
+    const outcome = outcomeForError(err)
+    return { ok: false, message: outcome.ok === false ? outcome.message : 'Drafting failed.' }
+  }
+}
+
+/** Rewrites one question's text. No model call — the user supplied the words. */
+export async function editProfileGap(gapId: string, question: string): Promise<ProfileBundle> {
+  const bundle = await currentBundle()
+  if (!bundle) throw new Error('No profile is linked yet.')
+
+  const next = editGap(
+    bundle as unknown as Parameters<typeof editGap>[0],
+    gapId,
+    question
+  ) as unknown as ProfileBundle
   const { updateSettings } = await settingsModule()
   updateSettings({ profileBundleJson: JSON.stringify(next) })
   return next

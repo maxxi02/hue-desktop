@@ -1600,6 +1600,59 @@
   font-size: 12px;
 }
 
+/* The question and its Edit affordance share a row, with Edit pinned to the
+   top so a two-line question does not drag it down the pane. */
+.gap-question-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.gap-question-row .gap-question {
+  flex: 1;
+}
+
+/* Quiet until wanted: rewording is the rare case, and a button competing with
+   the question for attention would suggest the question is the task. */
+.gap-edit-btn {
+  flex: none;
+  font-size: 11px;
+  opacity: 0.55;
+}
+
+.gap-edit-btn:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.gap-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gap-edit-nav {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+/*
+ * The stale-bundle warning. Amber rather than red: the profile still works and
+ * still loads, and colouring it as breakage would push people to delete a bank
+ * that is mostly fine.
+ */
+.gap-stale {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-left: 2px solid #d08b2c;
+  background: rgb(208 139 44 / 8%);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* Back and skip sit apart from the forward action: the two ways to leave a
    question shouldn't sit under the thumb that's aiming for Next. */
 .gap-nav {

@@ -55,6 +55,15 @@ export interface ProfileStory {
   action: string
   result: string
   metrics: string[]
+  /**
+   * The verbatim résumé span the story was mined from — see `resume-types.ts`.
+   *
+   * Optional here for the same reason `ProfileGap.kind` is: bundles written
+   * before the check existed are still on disk and still readable. Their
+   * absence is exactly what `BUNDLE_VERSION` 2 marks, so Settings can say the
+   * stories in them were never verified rather than quietly implying they were.
+   */
+  evidence?: string
   source: 'resume' | 'gap-answer'
 }
 
@@ -96,7 +105,18 @@ export interface ProfileBundle {
   gaps: ProfileGap[]
 }
 
-export const BUNDLE_VERSION = 1
+/**
+ * 2 — every mined story now carries a verbatim quote from the résumé, and one
+ * that is not in the document is dropped at ingest.
+ *
+ * Version 1 bundles are still valid and still load. They are not still
+ * *trusted*: their story banks were admitted by a gate whose only story checks
+ * were the role reference and the metric list, both of which a résumé with no
+ * employment history and no figures leaves vacuous — so on exactly the résumés
+ * where a model is most tempted to invent, nothing was checked at all. Settings
+ * compares against this constant to say so.
+ */
+export const BUNDLE_VERSION = 2
 
 /** Competencies an interviewer actually probes for. The gap scan is measured against this list. */
 export const COMPETENCIES = [

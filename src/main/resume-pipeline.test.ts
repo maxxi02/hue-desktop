@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { LlmClient, StructuredRequest } from './structured-llm.ts'
 import {
+  BUNDLE_VERSION,
   COMPETENCIES,
   HIGH_RISK_COMPETENCIES,
   profilePromptBlock as promptBlock,
@@ -12,15 +13,19 @@ import type { Competency, Gap, Story } from './resume-types.ts'
 import { contentHash, sealBundle } from './resume-profile.ts'
 import {
   answerGap,
+  draftGapAnswer,
+  editGap,
   findGaps,
   jobDescriptionBrief,
   MAX_BEHAVIORAL_GAP_QUESTIONS,
   MAX_GAP_QUESTIONS,
+  MAX_STORIES,
   normaliseProfile,
   normaliseStories,
   overusedTags,
   rescanGaps,
   runIngest,
+  storyBudget,
   technicalProbeTargets
 } from './resume-pipeline.ts'
 
@@ -115,17 +120,31 @@ function story(
     action: `Action for ${id}.`,
     result: `Result for ${id}.`,
     metrics: [],
+    // Every fixture story quotes the résumé above, because every story the
+    // pipeline keeps now has to. A helper that produced ungrounded stories by
+    // default would make each test's real subject invisible behind a drop.
+    evidence: 'Senior Platform Engineer',
     ...extra
   }
 }
 
 const MINED = {
   stories: [
-    story('conflict-manager-roadmap', 'acme-robotics', ['conflict', 'influence-without-authority']),
+    story(
+      'conflict-manager-roadmap',
+      'acme-robotics',
+      ['conflict', 'influence-without-authority'],
+      {
+        evidence: 'Disagreed with my manager on the Q3 roadmap'
+      }
+    ),
     story('scaling-kubernetes-migration', 'acme-robotics', ['scaling', 'technical-tradeoff'], {
-      metrics: ['30 services']
+      metrics: ['30 services'],
+      evidence: 'Led the migration of 30 services to Kubernetes'
     }),
-    story('mentorship-oncall', 'northwind-data', ['mentorship', 'leadership'])
+    story('mentorship-oncall', 'northwind-data', ['mentorship', 'leadership'], {
+      evidence: 'Mentored two junior engineers through their first on-call rotation'
+    })
   ]
 }
 
@@ -194,7 +213,7 @@ const FIXED_NOW = (): Date => new Date('2026-08-09T12:00:00.000Z')
 test('a resume produces a sealed, grounded bundle', async () => {
   const { bundle, report } = await runIngest(RESUME, scripted(), { now: FIXED_NOW })
 
-  assert.equal(bundle.version, 1)
+  assert.equal(bundle.version, BUNDLE_VERSION)
   assert.equal(bundle.hash.length, 64)
   assert.equal(bundle.createdAt, '2026-08-09T12:00:00.000Z')
   assert.deepEqual(
@@ -934,4 +953,294 @@ test('a long situation is clipped in the gap scan payload', async () => {
   const scan = llm.calls.find((c) => c.label === 'gap scan')!
   assert.ok(!scan.user.includes(long), 'the full situation was sent unclipped')
   assert.match(scan.user, /x{100}/)
+})
+
+/*
+ * The mining budget, and the fabrication it exists to stop.
+ *
+ * Observed on a real bundle: a one-page call-centre résumé — an education line,
+ * seven soft skills, no employment history at all — produced twenty-five STAR
+ * stories about capstone projects, systems analysis classes and peer tutoring,
+ * none of which the document mentions. The behavioral scan then read those
+ * inventions back and asked "you mentioned the software development project
+ * where two team members disagreed on design…", which is the bug as the user
+ * met it.
+ *
+ * Two things had to be true at once for that to happen: the mining prompt
+ * demanded 15–25 stories however little the document held, and the grounding
+ * gate's story checks were both proxies that a résumé with no roles and no
+ * metrics leaves vacuous.
+ */
+
+const FRESHER = `
+Rojan Notorio
+Batangas, Philippines · rojan@example.com
+
+Objective
+Recent Information Technology graduate seeking a customer service role.
+
+Education
+Bachelor of Science in Information Technology, STI College Tanauan, 2026
+
+Skills
+Excellent English communication skills, both written and verbal
+Strong active listening and customer service orientation
+Basic computer literacy: MS Office (Word, Excel, Outlook)
+`
+
+const FRESHER_PROFILE = {
+  identity: {
+    name: 'Rojan Notorio',
+    headline: 'Recent Information Technology graduate',
+    location: 'Batangas, Philippines',
+    email: 'rojan@example.com',
+    links: []
+  },
+  roles: [],
+  education: [
+    {
+      institution: 'STI College Tanauan',
+      credential: 'Bachelor of Science in Information Technology',
+      field: null,
+      end: '2026'
+    }
+  ],
+  skills: [
+    'Excellent English communication skills, both written and verbal',
+    'Strong active listening and customer service orientation'
+  ],
+  metrics: []
+}
+
+/** What the model actually returned: plausible, fluent, and nowhere in the document. */
+const FABRICATED = {
+  stories: Array.from({ length: 25 }, (_, i) =>
+    story(`invented-${i + 1}`, null, ['conflict'], {
+      situation: 'During a capstone project in my IT program, our team had to choose a stack.',
+      action: 'I proposed a decision matrix and facilitated a team discussion.',
+      evidence: 'Capstone project, systems analysis class, 2025'
+    })
+  )
+}
+
+test('the mining budget is what the document can anchor, not a constant', () => {
+  const rich = storyBudget(normaliseProfile(EXTRACTED))
+  const thin = storyBudget(normaliseProfile(FRESHER_PROFILE))
+
+  // Two roles, an education line and a skills section support a real bank.
+  assert.ok(rich.max >= 10, `rich résumé budgeted ${rich.max}`)
+  assert.ok(rich.max <= MAX_STORIES)
+  // No employment history at all supports a handful, and saying otherwise is
+  // an instruction to invent.
+  assert.ok(thin.max <= 5, `fresher résumé budgeted ${thin.max}`)
+  assert.ok(thin.min >= 1 && thin.min <= thin.max)
+})
+
+test('the mining prompt asks for the budget rather than a hardcoded 15-25', async () => {
+  const llm = scripted({ 'profile extraction': FRESHER_PROFILE, 'story mining': { stories: [] } })
+  await runIngest(FRESHER, llm, { now: FIXED_NOW })
+
+  const mining = llm.calls.find((c) => c.label === 'story mining')
+  assert.ok(mining)
+  const budget = storyBudget(normaliseProfile(FRESHER_PROFILE))
+  assert.match(mining.user, new RegExp(`${budget.min}[–-]${budget.max} stories`))
+  assert.ok(!mining.user.includes('15–25'))
+})
+
+test('a fabricated bank on a résumé with no roles reaches nothing', async () => {
+  const { bundle, report } = await runIngest(
+    FRESHER,
+    scripted({
+      'profile extraction': FRESHER_PROFILE,
+      'story mining': FABRICATED,
+      'technical probe': { questions: [] }
+    }),
+    { now: FIXED_NOW }
+  )
+
+  // Not one of the twenty-five survives: the résumé contains no such quote.
+  assert.deepEqual(bundle.stories, [])
+  assert.ok(report.dropped.some((d) => d.field === 'evidence'))
+  assert.ok(report.thin)
+
+  // And the question the user actually saw can no longer be written, because
+  // the scan is never shown a project the candidate did not describe.
+  const scan = bundle.gaps.map((g) => g.question).join(' ')
+  assert.ok(!/capstone|software development project|decision matrix/i.test(scan))
+})
+
+test('the gap scan is never handed a story the document does not support', async () => {
+  const llm = scripted({
+    'profile extraction': FRESHER_PROFILE,
+    'story mining': FABRICATED,
+    'technical probe': { questions: [] }
+  })
+  await runIngest(FRESHER, llm, { now: FIXED_NOW })
+
+  const scan = llm.calls.find((c) => c.label === 'gap scan')
+  assert.ok(scan)
+  assert.ok(!scan.user.includes('capstone'))
+})
+
+test('the mining budget is enforced deterministically, not only asked for', async () => {
+  // A model that ignores the ceiling must not be able to overrun it.
+  const overrun = {
+    stories: Array.from({ length: 25 }, (_, i) =>
+      story(`real-${i + 1}`, null, ['scaling'], {
+        evidence: 'Bachelor of Science in Information Technology'
+      })
+    )
+  }
+  const { bundle } = await runIngest(
+    FRESHER,
+    scripted({
+      'profile extraction': FRESHER_PROFILE,
+      'story mining': overrun,
+      'technical probe': { questions: [] }
+    }),
+    { now: FIXED_NOW }
+  )
+
+  assert.ok(
+    bundle.stories.length <= storyBudget(normaliseProfile(FRESHER_PROFILE)).max,
+    `${bundle.stories.length} stories kept past the budget`
+  )
+})
+
+/* AI-drafted gap answers. */
+
+const DRAFTED = {
+  usable: true,
+  reason: null,
+  draft:
+    'At Northwind Data the ingestion pipeline kept falling behind at peak, and I was the one who had to decide whether to shard or to batch.'
+}
+
+function bundleWithGap(gap: Partial<Gap> = {}): ProfileBundle {
+  return sealBundle(
+    {
+      version: BUNDLE_VERSION,
+      profile: normaliseProfile(EXTRACTED),
+      stories: normaliseStories(MINED),
+      gaps: [
+        {
+          id: 'gap-failure',
+          kind: 'behavioral',
+          competency: 'failure' as Competency,
+          subject: null,
+          roleId: null,
+          question: 'Tell me about a project that did not ship.',
+          status: 'open',
+          storyId: null,
+          ...gap
+        }
+      ]
+    },
+    '2026-08-09T12:00:00.000Z'
+  ) as unknown as ProfileBundle
+}
+
+test('a drafted answer comes back as prose for the user to edit, and saves nothing', async () => {
+  const bundle = bundleWithGap()
+  const llm = fakeLlm({ 'gap draft': DRAFTED })
+  const result = await draftGapAnswer(
+    bundle as unknown as Parameters<typeof draftGapAnswer>[0],
+    'gap-failure',
+    llm
+  )
+
+  assert.equal(result.text, DRAFTED.draft)
+  assert.equal(result.reason, null)
+  // The draft is a proposal. Nothing about the bank may have moved.
+  assert.equal(bundle.stories.length, 3)
+  assert.equal(bundle.gaps[0].status, 'open')
+})
+
+test('the drafter is shown the verified bank and nothing else', async () => {
+  const llm = fakeLlm({ 'gap draft': DRAFTED })
+  await draftGapAnswer(
+    bundleWithGap() as unknown as Parameters<typeof draftGapAnswer>[0],
+    'gap-failure',
+    llm
+  )
+
+  const call = llm.calls[0]
+  assert.ok(call.user.includes('Acme Robotics'))
+  assert.ok(call.user.includes('conflict-manager-roadmap'))
+  assert.ok(call.user.includes('Tell me about a project that did not ship.'))
+})
+
+test('a drafter with no basis says so rather than inventing one', async () => {
+  const llm = fakeLlm({
+    'gap draft': {
+      usable: false,
+      reason: 'Your résumé has nothing about a project that did not ship.',
+      draft: null
+    }
+  })
+  const result = await draftGapAnswer(
+    bundleWithGap() as unknown as Parameters<typeof draftGapAnswer>[0],
+    'gap-failure',
+    llm
+  )
+
+  assert.equal(result.text, null)
+  assert.match(result.reason ?? '', /nothing about/)
+})
+
+test('drafting an unknown gap throws rather than answering a question nobody asked', async () => {
+  await assert.rejects(
+    () =>
+      draftGapAnswer(
+        bundleWithGap() as unknown as Parameters<typeof draftGapAnswer>[0],
+        'gap-nope',
+        fakeLlm({ 'gap draft': DRAFTED })
+      ),
+    /Unknown gap/
+  )
+})
+
+/* Editable questions. */
+
+test('editing a question rewrites its text and nothing else', () => {
+  const before = bundleWithGap({ kind: 'technical', subject: 'Postgres', roleId: 'northwind-data' })
+  const after = editGap(
+    before as unknown as Parameters<typeof editGap>[0],
+    'gap-failure',
+    '  What actually broke on the Northwind pipeline?  '
+  )
+
+  assert.equal(after.gaps[0].question, 'What actually broke on the Northwind pipeline?')
+  // The question is the user's to reword. What it is a question *about* is not.
+  assert.equal(after.gaps[0].kind, 'technical')
+  assert.equal(after.gaps[0].competency, 'failure')
+  assert.equal(after.gaps[0].subject, 'Postgres')
+  assert.equal(after.gaps[0].roleId, 'northwind-data')
+  assert.equal(after.gaps[0].status, 'open')
+  assert.deepEqual(after.stories, before.stories)
+})
+
+test('an edited question reseals the bundle, so the cache key moves with it', () => {
+  const before = bundleWithGap()
+  const after = editGap(
+    before as unknown as Parameters<typeof editGap>[0],
+    'gap-failure',
+    'Something else entirely?'
+  )
+  assert.notEqual(after.hash, before.hash)
+})
+
+test('an empty edit is refused rather than blanking the question', () => {
+  const before = bundleWithGap()
+  assert.throws(
+    () => editGap(before as unknown as Parameters<typeof editGap>[0], 'gap-failure', '   '),
+    /empty/i
+  )
+})
+
+test('editing an unknown gap throws', () => {
+  assert.throws(
+    () => editGap(bundleWithGap() as unknown as Parameters<typeof editGap>[0], 'nope', 'Hello?'),
+    /Unknown gap/
+  )
 })

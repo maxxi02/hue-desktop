@@ -66,6 +66,19 @@ export interface Story {
   result: string
   /** Verbatim metric strings this story is allowed to cite. */
   metrics: string[]
+  /**
+   * A span quoted verbatim from the source document that this story is built on.
+   *
+   * The one field in a story that is not paraphrase, and the only reason a
+   * mined story can be checked at all. `resume-grounding.ts` explains why STAR
+   * prose cannot be: it is a restatement by design, so a substring test on it
+   * rejects correct output. A quote is not a restatement — either the document
+   * contains it or the story was invented.
+   *
+   * Empty on `gap-answer` stories, which exist precisely because the résumé
+   * said nothing, and on bundles written before this field existed.
+   */
+  evidence: string
   source: StorySource
 }
 

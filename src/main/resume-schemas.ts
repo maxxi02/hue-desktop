@@ -103,7 +103,8 @@ export const STORIES_SCHEMA: Record<string, unknown> = {
           'task',
           'action',
           'result',
-          'metrics'
+          'metrics',
+          'evidence'
         ],
         properties: {
           // Slug-like and human-meaningful: this id is the grounding receipt
@@ -115,7 +116,11 @@ export const STORIES_SCHEMA: Record<string, unknown> = {
           task: { type: 'string' },
           action: { type: 'string' },
           result: { type: 'string' },
-          metrics: stringArray
+          metrics: stringArray,
+          // Required, not optional: a model that may omit the quote will omit
+          // it on exactly the stories that have none, which are the ones this
+          // field exists to catch.
+          evidence: { type: 'string' }
         }
       }
     }
@@ -205,6 +210,29 @@ export const GAP_ANSWER_SCHEMA: Record<string, unknown> = {
         metrics: stringArray
       }
     }
+  }
+}
+
+/**
+ * A first draft of an answer, for the user to edit before it is saved.
+ *
+ * Prose rather than a STAR object, because it lands in the textarea the user
+ * types into — handing them four labelled fields to reconcile would be a worse
+ * starting point than a paragraph they can talk over. It becomes a story the
+ * ordinary way, through `GAP_ANSWER_SCHEMA`, once they press Next.
+ */
+export const GAP_DRAFT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['usable', 'reason', 'draft'],
+  properties: {
+    // False is a real answer and the important one. A drafter with nothing to
+    // go on must be able to say so; the alternative is the model writing the
+    // candidate a memory they never had, which is the failure this whole
+    // pipeline is built around.
+    usable: { type: 'boolean' },
+    reason: nullableString,
+    draft: nullableString
   }
 }
 
