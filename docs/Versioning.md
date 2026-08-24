@@ -67,27 +67,39 @@ essentially undiagnosable once shipped.
 
 Practically: **bump before you build, never after.**
 
-## Where 1.5.0 came from, and what comes next
+## Where 1.7.0 came from, and what comes next
 
 `1.5` shipped the gap-coverage merge — source-aware coverage, technical probes,
-saved applications, and the categorised Settings pane.
+saved applications, and the categorised Settings pane. `1.6` shipped assessment
+mode: a second provider role, screen captures routed to it, and the armed
+toggle.
 
-The next release is one of these, and which one depends only on whether it adds
-capability:
+`1.7` is the résumé-grounding release. Every mined story now carries a verbatim
+quote from the source document and is dropped if the document does not contain
+it, and the mining count is derived from what the résumé can anchor rather than
+fixed at 15–25. It also adds two things to the gap flow: an AI first draft built
+only from verified material, and questions the user can reword.
 
-- **`1.5b`** (`1.5.1`) — fixes and tuning against what 1.5 shipped. The known
-  candidates today are the `_omitted` lint error in `memory-policy.test.ts` and
-  anything that surfaces from real use of the new gap questions. No new
+It took a number rather than a letter even though it began as a bug report,
+because the capability rule is about what the release *does*, not about what
+prompted it — drafting and editing are both things the app could not do before.
+
+The next release is one of these:
+
+- **`1.7b`** (`1.7.1`) — fixes and tuning against what 1.7 shipped. The known
+  candidates are the `_omitted` lint error in `memory-policy.test.ts`, still
+  outstanding, and whatever real use of the drafting flow turns up. No new
   capability, so it takes a letter.
-- **`1.6`** (`1.6.0`) — the next content patch. The nearest candidate is
-  teaching `rescanGaps` to emit technical probes: today it regenerates
-  behavioral questions only, so an existing bundle cannot pick up technical
-  questions without a full re-ingest. That is a capability the app does not have
-  yet, so it takes a number.
+- **`1.8`** (`1.8.0`) — the next content patch. The nearest candidate is still
+  teaching `rescanGaps` to emit technical probes: it regenerates behavioral
+  questions only, so an existing bundle cannot pick up technical questions
+  without a full re-ingest. A close second is keeping the résumé's source text
+  in the bundle, which is what a v1 → v2 migration would need in order to
+  re-check an existing story bank instead of only warning about it.
 - **`2.0`** — reserved for a rework. Nothing on the current list qualifies.
 
-So: **1.5b if the next release fixes 1.5, 1.6 if it adds to it.** There is no
-1.5a — 1.5 already is it.
+So: **1.7b if the next release fixes 1.7, 1.8 if it adds to it.** There is no
+1.7a — 1.7 already is it.
 
 ## Checklist for cutting a release
 
