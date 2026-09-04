@@ -38,8 +38,8 @@ function toOpenAiContent(content: LlmMessage['content']): OpenAiContent {
 }
 
 /**
- * Google Gemini, Groq, Mistral, Cohere and DeepSeek all expose an
- * OpenAI-compatible surface (Bearer-auth, POST /chat/completions with SSE
+ * OpenAI itself, plus Google Gemini, Groq, Mistral, Cohere and DeepSeek, all
+ * speak the same surface (Bearer-auth, POST /chat/completions with SSE
  * streaming, GET /models). They differ only by base URL, which settings key
  * holds the credential, and a couple of per-provider quirks, so one client
  * serves them all. No vendor SDKs needed — plain fetch, like ollama.
@@ -61,9 +61,34 @@ interface ProviderConfig {
    * every provider here but DeepSeek takes a screen capture.
    */
   vision?: boolean
+  /**
+   * Which of the ids returned by GET /models can actually serve a chat.
+   *
+   * Absent means "all of them", which is the truth for every provider whose
+   * listing is a model lineup. OpenAI's is a catalogue instead — embeddings,
+   * speech, images and legacy completions models share the endpoint — and
+   * `resolveModel` takes the first id alphabetically, so an unfiltered listing
+   * auto-picks `babbage-002` and fails the user's first question on a key that
+   * is perfectly good. A predicate here rather than a `provider === 'openai'`
+   * check in `fetchOpenAiModels`, for the reason every other quirk on this
+   * interface is data: a name check at the call site is another copy of the
+   * provider list.
+   */
+  modelFilter?: (id: string) => boolean
 }
 
 const PROVIDERS: Record<OpenAiCompatProvider, ProviderConfig> = {
+  openai: {
+    baseUrl: 'https://api.openai.com/v1',
+    keyField: 'openaiApiKey',
+    modelField: 'openaiModel',
+    // GET /models on OpenAI returns the whole account catalogue, not a chat
+    // lineup. Keep the GPT and o-series reasoning families; drop the modality
+    // variants that share their prefixes but reject /chat/completions.
+    modelFilter: (id) =>
+      /^(gpt-|o[1-9])/.test(id) &&
+      !/(image|audio|realtime|transcribe|tts|embedding|search|moderation|instruct)/.test(id)
+  },
   google: {
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     keyField: 'googleApiKey',
@@ -158,6 +183,21 @@ export function sortModelIds(ids: string[]): string[] {
   return [...ids].sort()
 }
 
+/**
+ * A provider's listable chat models: its listing, narrowed to what can serve a
+ * chat completion, in the order they are offered.
+ *
+ * The single place `modelFilter` is applied, so the Settings dropdown and
+ * `resolveModel`'s auto-pick can never disagree about which models exist — the
+ * dropdown offering a model the auto-pick would refuse (or the reverse) is the
+ * kind of split that only shows up as a 400 on someone else's machine.
+ * Exported so the filter can be asserted without a network round trip.
+ */
+export function chatModelsFor(provider: OpenAiCompatProvider, ids: string[]): string[] {
+  const keep = PROVIDERS[provider].modelFilter
+  return sortModelIds(keep ? ids.filter(keep) : ids)
+}
+
 function keyForProvider(provider: OpenAiCompatProvider, s: HueSettings): string {
   return (s[PROVIDERS[provider].keyField] as string).trim()
 }
@@ -176,7 +216,8 @@ export async function fetchOpenAiModels(
     })
     if (!res.ok) return []
     const data = (await res.json()) as { data?: { id?: string }[] }
-    return sortModelIds(
+    return chatModelsFor(
+      provider,
       (data.data ?? []).map((m) => m.id).filter((id): id is string => Boolean(id))
     )
   } catch {

@@ -76,6 +76,23 @@ interface CompatProviderInfo {
 // Cloud providers that share the OpenAI wire format. Each ships a short guide so
 // the user can self-serve an API key. Models are detected live (never hardcoded).
 const COMPAT_PROVIDERS: Record<OpenAiCompatProvider, CompatProviderInfo> = {
+  openai: {
+    label: 'OpenAI',
+    keyField: 'openaiApiKey',
+    modelField: 'openaiModel',
+    keyPlaceholder: 'sk-proj-…',
+    consoleUrl: 'https://platform.openai.com/api-keys',
+    steps: [
+      'Go to platform.openai.com and sign in.',
+      'Open the "API keys" page (link below).',
+      'Click "Create new secret key", name it, and confirm.',
+      'Copy the key (shown only once, starts with "sk-proj-…") and paste it above.',
+      // Same trap as DeepSeek, and it reads the same way from the outside: the
+      // key is valid, the account simply has no credit, and the 429 that comes
+      // back says "quota" rather than "unfunded".
+      'Add credit on the Billing page — a new key on a zero balance returns "You exceeded your current quota", which looks like a rate limit rather than an empty wallet.'
+    ]
+  },
   google: {
     label: 'Google Gemini',
     keyField: 'googleApiKey',
@@ -1733,6 +1750,7 @@ export function Settings({
                   <option value="groq">Groq (cloud, fast)</option>
                   <option value="mistral">Mistral AI (cloud)</option>
                   <option value="cohere">Cohere (cloud)</option>
+                  <option value="openai">OpenAI GPT (cloud)</option>
                   <option value="deepseek">DeepSeek (cloud)</option>
                   <option value="ollama">Ollama (local)</option>
                 </select>
@@ -2545,6 +2563,7 @@ export function Settings({
                   <option value="groq">Groq</option>
                   <option value="mistral">Mistral</option>
                   <option value="cohere">Cohere</option>
+                  <option value="openai">OpenAI</option>
                   <option value="deepseek">DeepSeek</option>
                 </select>
                 {/*
@@ -3016,6 +3035,7 @@ export function Settings({
                   <option value="groq">Groq</option>
                   <option value="mistral">Mistral</option>
                   <option value="cohere">Cohere</option>
+                  <option value="openai">OpenAI</option>
                   <option value="deepseek">DeepSeek</option>
                 </select>
                 <span style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>

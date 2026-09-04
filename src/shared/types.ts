@@ -8,6 +8,7 @@ export type LlmProvider =
   | 'mistral'
   | 'cohere'
   | 'deepseek'
+  | 'openai'
 
 /**
  * Providers that speak the OpenAI Chat Completions wire format (SSE streaming +
@@ -19,7 +20,13 @@ export type LlmProvider =
  * an image at all. Those differences live in the provider tables as data
  * (`extraBody`, `vision`) rather than as name checks at the call sites.
  */
-export type OpenAiCompatProvider = 'google' | 'groq' | 'mistral' | 'cohere' | 'deepseek'
+export type OpenAiCompatProvider =
+  | 'google'
+  | 'groq'
+  | 'mistral'
+  | 'cohere'
+  | 'deepseek'
+  | 'openai'
 
 export type AsrTier = 'auto' | 'on-device' | 'cloud'
 
@@ -105,6 +112,7 @@ export interface HueSettings {
   mistralApiKey: string
   cohereApiKey: string
   deepseekApiKey: string
+  openaiApiKey: string
   /** Selected model per OpenAI-compatible provider. Empty = auto-pick the first
    *  model the provider lists, so nothing is hardcoded to a version. */
   googleModel: string
@@ -112,6 +120,7 @@ export interface HueSettings {
   mistralModel: string
   cohereModel: string
   deepseekModel: string
+  openaiModel: string
   ttsVoice: string
   ttsSpeed: number
   /** Opacity of the floating window's background, 0.4–1. Lower = more see-through. */
@@ -320,11 +329,13 @@ export const DEFAULT_SETTINGS: HueSettings = {
   mistralApiKey: '',
   cohereApiKey: '',
   deepseekApiKey: '',
+  openaiApiKey: '',
   googleModel: '',
   groqModel: '',
   mistralModel: '',
   cohereModel: '',
   deepseekModel: '',
+  openaiModel: '',
   ttsVoice: 'af_heart',
   ttsSpeed: 1.05,
   windowOpacity: 0.9,
@@ -370,7 +381,8 @@ export const SECRET_SETTING_KEYS = [
   'googleApiKey',
   'mistralApiKey',
   'cohereApiKey',
-  'deepseekApiKey'
+  'deepseekApiKey',
+  'openaiApiKey'
 ] as const
 
 /** A plain-text part of a message. */

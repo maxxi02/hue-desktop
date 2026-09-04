@@ -89,7 +89,7 @@ type Dialect = 'openai' | 'anthropic' | 'none'
 
 const DIALECTS: Record<string, Dialect> = {
   anthropic: 'anthropic',
-  // The OpenAI-compatible surface, same five providers as `PROVIDERS` in
+  // The OpenAI-compatible surface, same six providers as `PROVIDERS` in
   // openai-compat.ts. Groq appears once and covers both its chat and its
   // transcription endpoints — same account, same headers.
   google: 'openai',
@@ -97,6 +97,7 @@ const DIALECTS: Record<string, Dialect> = {
   mistral: 'openai',
   cohere: 'openai',
   deepseek: 'openai',
+  openai: 'openai',
   // Local. There is no account and no ceiling.
   ollama: 'none',
   // Cloud ASR that simply does not report quota in headers.

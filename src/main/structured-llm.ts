@@ -256,7 +256,10 @@ export const PROVIDER_BASE_URLS: Record<OpenAiCompatProvider, string> = {
   groq: 'https://api.groq.com/openai/v1',
   mistral: 'https://api.mistral.ai/v1',
   cohere: 'https://api.cohere.ai/compatibility/v1',
-  deepseek: 'https://api.deepseek.com'
+  deepseek: 'https://api.deepseek.com',
+  // Spelled out rather than imported as `OPENAI_BASE_URL`, for the cycle reason
+  // in the comment above. `provider-tables.test.ts` holds the two in step.
+  openai: 'https://api.openai.com/v1'
 }
 
 /**
@@ -443,14 +446,16 @@ export async function clientForSettings(
     groq: s.groqApiKey,
     mistral: s.mistralApiKey,
     cohere: s.cohereApiKey,
-    deepseek: s.deepseekApiKey
+    deepseek: s.deepseekApiKey,
+    openai: s.openaiApiKey
   }
   const models: Record<OpenAiCompatProvider, string> = {
     google: s.googleModel,
     groq: s.groqModel,
     mistral: s.mistralModel,
     cohere: s.cohereModel,
-    deepseek: s.deepseekModel
+    deepseek: s.deepseekModel,
+    openai: s.openaiModel
   }
 
   const apiKey = keys[provider]
