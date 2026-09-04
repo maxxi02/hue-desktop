@@ -24,7 +24,7 @@ Hue listens to speech, transcribes it, asks an LLM for a response, and (optional
 
 ## Audio sources
 - **Microphone** — your mic (echo-cancelled).
-- **System / loopback** — the call audio coming out of your speakers (e.g. the interviewer on Zoom/Meet). Windows-supported via Electron loopback; macOS would need ScreenCaptureKit.
+- **System / loopback** — the call audio coming out of your speakers (e.g. the interviewer on Zoom/Meet). Two different routes, chosen by `src/main/display-capture.ts`: Windows taps it with Electron's `audio: 'loopback'`, and macOS 15+ goes through ScreenCaptureKit's native picker (`useSystemPicker`), where the user chooses the window and must share its audio. macOS 14 and older, and Linux, have no route and fall back to the microphone.
 
 ## Personalization
 Hue does not take a freeform summary any more. A résumé is ingested once into a

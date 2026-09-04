@@ -60,9 +60,10 @@ GPU froze the machine (ADR-004).
 - pnpm, and Node 22.18+ or 23.6+ — `pnpm test` runs `.ts` files directly and
   needs the version of Node whose test runner strips types without a flag
   (developed on 24.x)
-- **System audio capture is Windows only.** Companion mode hears the interviewer
-  through Electron's loopback capture; macOS needs ScreenCaptureKit and it is not
-  implemented yet. Mic capture works everywhere.
+- **System audio capture needs Windows, or macOS 15+.** Companion mode hears the
+  interviewer through the OS. Windows taps it directly; macOS 15+ goes through the
+  native screen-sharing picker, where you choose the window and have to share its
+  audio. macOS 14 and older, and Linux, have no route. Mic capture works everywhere.
 
 ## Setup
 

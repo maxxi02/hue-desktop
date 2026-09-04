@@ -395,7 +395,14 @@ export class VoicePipeline {
       if (audioTracks.length === 0) {
         display.getTracks().forEach((t) => t.stop())
         throw new Error(
-          'No system audio was captured. System-audio loopback is supported on Windows; on other platforms use the microphone source.'
+          // Three different causes, and the user can only act on the one that
+          // applies to them, so the message names all three rather than saying
+          // "no audio". On macOS the likeliest by far is the last: the picker
+          // appeared, a window was chosen, and its audio was left unshared.
+          'No system audio was captured. Capturing the call needs Windows, or macOS 15 or ' +
+            'later. On macOS, also check that you shared the audio of the window you picked. ' +
+            'Otherwise set the audio source to Microphone: Hue will hear the call through ' +
+            'your mic, which works but also picks up the room.'
         )
       }
       // The loopback audio is bound to the desktop-capture session that the video

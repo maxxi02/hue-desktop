@@ -9,6 +9,7 @@ import { startRelay, stopRelay } from './relay-client'
 import { configureUsageStore, flush as flushUsage } from './usage-store'
 import { getSettings } from './settings'
 import { isPermissionAllowed } from './permissions'
+import { displayCapturePolicy } from './display-capture'
 import { applyStealth } from './stealth'
 import { applyWindowAnchor, trackWindowPlacement, watchDisplayChanges } from './window-placement'
 import { probeGpu } from './system-memory'
@@ -128,11 +129,16 @@ function createWindow(): void {
   )
   ses.setPermissionCheckHandler((_wc, permission) => isPermissionAllowed(permission))
 
-  // System/loopback audio capture for Companion mode (the interviewer's voice on
-  // a call). getDisplayMedia in the renderer routes here; we grant loopback audio
-  // and a dummy screen video source (Chromium requires a video track to be
-  // offered — the renderer drops it immediately and keeps only the audio).
-  // NOTE: loopback audio is supported on Windows; macOS needs ScreenCaptureKit.
+  // System audio for Companion mode: the interviewer's voice, coming out of the
+  // speakers. `getDisplayMedia` in the renderer routes here.
+  //
+  // Which mechanism serves it is a per-platform decision with a real difference
+  // behind it, so it lives in `display-capture.ts` as a tested pure function
+  // rather than as a `process.platform` check spelled out at this call site. On
+  // macOS 15+ the native ScreenCaptureKit picker owns the request and THIS
+  // HANDLER IS NEVER INVOKED, so nothing written inside it can affect that path.
+  const capture = displayCapturePolicy(process.platform, process.getSystemVersion())
+  console.log('system audio capture:', capture.reason)
   ses.setDisplayMediaRequestHandler(
     (_request, callback) => {
       // The callback MUST be invoked on every path: getDisplayMedia in the
@@ -140,17 +146,23 @@ function createWindow(): void {
       // rather than fail. An empty source list is possible when screen recording
       // is denied or the session is locked, and `video: undefined` is Chromium's
       // documented "no video track" — audio-only is all Hue actually wants.
+      //
+      // Where no route exists (macOS 14 and older, Linux) the video source is
+      // still granted and the audio simply omitted. The renderer sees a stream
+      // with no audio track and raises the platform message; granting nothing at
+      // all here would surface as a bare permission error instead.
+      const audio = capture.loopbackAudio ? ('loopback' as const) : undefined
       desktopCapturer
         .getSources({ types: ['screen'] })
         .then((sources) => {
-          callback({ video: sources[0], audio: 'loopback' })
+          callback({ video: sources[0], audio })
         })
         .catch((e) => {
           console.error('desktopCapturer.getSources failed:', e)
-          callback({ video: undefined, audio: 'loopback' })
+          callback({ video: undefined, audio })
         })
     },
-    { useSystemPicker: false }
+    { useSystemPicker: capture.useSystemPicker }
   )
 
   // NOTE: cross-origin isolation (COOP/COEP) is deliberately NOT enabled here.

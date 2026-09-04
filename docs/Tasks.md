@@ -7,7 +7,7 @@ created: 2026-06-02
 
 ## 🔜 Backlog
 - [ ] Security: validate & sanitize third-party API responses (LLM/ASR) — [[LLM & ASR Providers]]
-- [ ] macOS: implement system/loopback audio capture (ScreenCaptureKit) — currently Windows-only (see [[Architecture]])
+- [ ] macOS: **verify** system audio capture on a real Mac running macOS 15+. The route is implemented (`src/main/display-capture.ts`, `useSystemPicker`) and the policy is tested, but nothing has run it on Apple hardware — Electron documents the flag as experimental
 - [ ] Code signing — `electron-builder.yml` and icons are configured; signing certificates are not
 - [ ] Split `renderer/components/Settings.tsx` — one component, ~2,500 lines, 42 `useState` hooks, and the file every new provider and setting lands in
 - [ ] Tests for the stateful renderer edges that `shared/` cannot cover: `pipeline.ts`'s `VoicePipeline` class, `App.tsx`, `transcription.ts`
@@ -16,6 +16,8 @@ created: 2026-06-02
 - [ ] _nothing tracked yet_
 
 ## ✅ Done
+- [x] macOS: implement the system-audio route via ScreenCaptureKit's native picker, and make the per-platform decision a tested pure function rather than a `process.platform` check at the call site (2026-09-04) — **unverified on a Mac**, see backlog
+- [x] Split the tables, leaf controls and pure logic out of `Settings.tsx` into `components/settings/`, with 25 tests for the two pure modules (2026-09-04)
 - [x] Add OpenAI GPT as a seventh LLM provider, and filter its `/models` catalogue down to models that can actually serve a chat (2026-09-04)
 - [x] Lift the prompt builders out of `pipeline.ts` into `shared/prompt.ts` with 21 tests — they build every word Hue sends an LLM and had no test beside them (2026-09-04)
 - [x] Fix: ten em dashes inside the prompt strings themselves, including in the rule forbidding them. An exemplar outweighs an abstract rule, which is how dashes reached the answers before (2026-09-04)
