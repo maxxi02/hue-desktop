@@ -10,7 +10,7 @@ created: 2026-06-02
 | | |
 |---|---|
 | **Name** | hue-desktop |
-| **Version** | 1.0.0 |
+| **Version** | 1.7.0 |
 | **Author** | maxxi02 |
 | **App User Model ID** | `com.hue.app` |
 | **Window** | 900 × 670, frameless, transparent, always-on-top, skip-taskbar |
@@ -27,7 +27,22 @@ Hue listens to speech, transcribes it, asks an LLM for a response, and (optional
 - **System / loopback** — the call audio coming out of your speakers (e.g. the interviewer on Zoom/Meet). Windows-supported via Electron loopback; macOS would need ScreenCaptureKit.
 
 ## Personalization
-- Resume summary + job title feed the LLM prompt (`src/renderer/src/lib/resume.ts`).
+Hue does not take a freeform summary any more. A résumé is ingested once into a
+**profile bundle**: structured roles, metrics and mined STAR stories, each with an
+id and a verbatim quote from the document (`src/main/resume-pipeline.ts`). Claims
+that are not in the document are dropped at ingest (`src/main/resume-grounding.ts`).
+
+That bundle reaches the model through `src/shared/prompt.ts`, which builds every
+word Hue sends an LLM, as the exact set of stories it may draw on. The model names
+the story it used on a `story_id:` line; `src/shared/grounding.ts` reads it back
+and marks the answer anchored or not. Gaps the résumé cannot cover become
+questions the user answers once in Settings.
+
+The old `resumeSummary` field still loads, so an install predating the bundle keeps
+working on the weaker guarantee. It is a fallback, not the path.
+
+- A job posting can be analysed into a `JobSpec` and a `JobBrief` that weight
+  answers toward what the role actually asks for (`src/shared/job-spec.ts`).
 - Interview modes: `practice`, `star`, `live`.
 
 ## Build Targets

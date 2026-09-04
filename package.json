@@ -1,10 +1,10 @@
 {
   "name": "hue-desktop",
   "version": "1.7.0",
-  "description": "An Electron application with React and TypeScript",
+  "description": "A real-time, voice-driven interview companion that listens, transcribes, and drafts grounded answers as an always-on-top overlay.",
   "main": "./out/main/index.js",
-  "author": "example.com",
-  "homepage": "https://electron-vite.org",
+  "author": "maxxi02",
+  "homepage": "https://github.com/maxxi02/hue-desktop",
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
