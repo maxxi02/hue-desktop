@@ -67,7 +67,7 @@ essentially undiagnosable once shipped.
 
 Practically: **bump before you build, never after.**
 
-## Where 1.7.0 came from, and what comes next
+## Where 1.8.0 came from, and what comes next
 
 `1.5` shipped the gap-coverage merge — source-aware coverage, technical probes,
 saved applications, and the categorised Settings pane. `1.6` shipped assessment
@@ -84,22 +84,45 @@ It took a number rather than a letter even though it began as a bug report,
 because the capability rule is about what the release *does*, not about what
 prompted it — drafting and editing are both things the app could not do before.
 
+`1.8` is the polish patch, and it takes a number rather than a letter for the
+usual reason: two of the things in it are capabilities the app did not have.
+
+- **OpenAI GPT as a seventh provider.** Its `/models` listing is the whole
+  account catalogue rather than a chat lineup, so `ProviderConfig.modelFilter`
+  exists to stop auto-pick landing on `babbage-002` and failing the first
+  question of an interview on a perfectly good key.
+- **A macOS route to system audio.** `audio: 'loopback'` is Windows only;
+  macOS 15+ reaches it through ScreenCaptureKit's native picker. The per-platform
+  decision is a tested pure function in `display-capture.ts`. Unverified on Apple
+  hardware, which is in [[Tasks]] as a verification item rather than as done.
+
+The rest is not new capability but is not a fix either, so it rides along with
+the number: the prompt builders moved out of `pipeline.ts` into
+`shared/prompt.ts` with 21 tests, which caught ten em dashes inside the prompt
+strings themselves including in the rule forbidding them; the Settings tables,
+controls and pure logic moved into `components/settings/` with 25 more tests;
+and `package.json` and the README stopped describing the app as "An Electron
+application with React and TypeScript".
+
+Tests: 564 at 1.7, 619 here.
+
 The next release is one of these:
 
-- **`1.7b`** (`1.7.1`) — fixes and tuning against what 1.7 shipped. The known
+- **`1.8b`** (`1.8.1`) — fixes and tuning against what 1.8 shipped. The known
   candidates are the `_omitted` lint error in `memory-policy.test.ts`, still
-  outstanding, and whatever real use of the drafting flow turns up. No new
-  capability, so it takes a letter.
-- **`1.8`** (`1.8.0`) — the next content patch. The nearest candidate is still
+  outstanding, and whatever the macOS audio path turns out to do on a real Mac.
+- **`1.9`** (`1.9.0`) — the next content patch. The nearest candidate is still
   teaching `rescanGaps` to emit technical probes: it regenerates behavioral
   questions only, so an existing bundle cannot pick up technical questions
   without a full re-ingest. A close second is keeping the résumé's source text
   in the bundle, which is what a v1 → v2 migration would need in order to
   re-check an existing story bank instead of only warning about it.
-- **`2.0`** — reserved for a rework. Nothing on the current list qualifies.
+- **`2.0`** — reserved for a rework. Splitting the 2,500-line `Settings`
+  component is the largest thing outstanding, but it changes no behaviour, so it
+  does not qualify.
 
-So: **1.7b if the next release fixes 1.7, 1.8 if it adds to it.** There is no
-1.7a — 1.7 already is it.
+So: **1.8b if the next release fixes 1.8, 1.9 if it adds to it.** There is no
+1.8a — 1.8 already is it.
 
 ## Checklist for cutting a release
 

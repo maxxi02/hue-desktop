@@ -1,6 +1,6 @@
 {
   "name": "hue-desktop",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "A real-time, voice-driven interview companion that listens, transcribes, and drafts grounded answers as an always-on-top overlay.",
   "main": "./out/main/index.js",
   "author": "maxxi02",
